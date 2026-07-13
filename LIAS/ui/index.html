@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="utf-8">
+<title>LIAS — לוח בקרה</title>
+<style>
+  :root {
+    --accent:#1f4e79; --bg:#f0f2f5; --card:#fff; --line:#dde4ec;
+    --ok:#2e7d32; --err:#c62828; --warn:#e65100; --ai:#4a0072;
+  }
+  * { box-sizing:border-box; font-family:Arial,"Segoe UI",sans-serif; margin:0; padding:0; }
+  body { background:var(--bg); color:#222; display:flex; flex-direction:column; height:100vh; }
+
+  header {
+    background:var(--accent); color:#fff; padding:6px 12px;
+    display:flex; align-items:center; gap:8px; flex-shrink:0; flex-wrap:wrap;
+  }
+  header h1 { font-size:15px; }
+  header .en { opacity:.7; font-size:10px; direction:ltr; }
+  header .spacer { flex:1; }
+  header .sep { opacity:.4; margin:0 2px; }
+  header .portal-label { font-size:11px; opacity:.8; font-weight:bold; margin-right:2px; }
+  button {
+    background:var(--accent); color:#fff; border:0; border-radius:6px;
+    padding:4px 9px; cursor:pointer; font-size:12px; margin:1px;
+  }
+  button:hover { opacity:.85; }
+  button.ghost { background:#eef2f7; color:var(--accent); }
+  button.ai-btn { background:var(--ai); }
+  button.danger { background:#b71c1c; }
+  button.sm { padding:2px 6px; font-size:11px; }
+
+  .layout {
+    display:grid;
+    grid-template-columns: var(--col-left,240px) 4px 1fr 4px var(--col-right,300px);
+    gap:0; padding:6px; flex:1; overflow:hidden;
+  }
+  .col-drag {
+    cursor:col-resize; background:var(--line); border-radius:2px;
+    transition:background .15s;
+  }
+  .col-drag:hover, .col-drag.dragging { background:var(--accent); opacity:.5; }
+
+  .card {
+    background:var(--card); border:1px solid var(--line); border-radius:8px;
+    padding:8px; overflow-y:auto; display:flex; flex-direction:column; gap:5px;
+  }
+  h2 { font-size:13px; color:var(--accent); margin-bottom:3px; }
+
+  /* Case tree */
+  .tree .client { font-weight:bold; margin-top:5px; cursor:pointer; font-size:13px; }
+  .tree .client:hover { color:var(--accent); }
+  .tree .sub {
+    padding:3px 14px 3px 4px; cursor:pointer; border-radius:5px;
+    font-size:12px; display:flex; align-items:center; gap:4px;
+  }
+  .tree .sub:hover, .tree .sub.active { background:#e8eef7; }
+  .badge {
+    background:#e8eef7; color:var(--accent); border-radius:9px;
+    padding:0 6px; font-size:11px;
+  }
+  .badge.err { background:#fdecea; color:var(--err); }
+
+  /* Docs panel — vertical split */
+  #docs-top { flex:1; overflow-y:auto; min-height:80px; }
+  #pdf-resize-handle {
+    display:none; height:6px; cursor:ns-resize; flex-shrink:0;
+    background:var(--line); border-top:2px solid #c0cad6;
+  }
+  #pdf-resize-handle.visible { display:block; }
+  #pdf-resize-handle:hover, #pdf-resize-handle.dragging { background:var(--accent); opacity:.4; }
+  #pdf-panel { display:flex; flex-direction:column; }
+  #pdf-panel iframe { flex:1; }
+  #md-viewer { flex:1; }
+  #pdf-panel {
+    border-top:2px solid var(--line); overflow:hidden;
+    transition:height .25s; height:0; flex-shrink:0;
+  }
+  #pdf-panel.open { height:42vh; }
+  #pdf-panel iframe { width:100%; height:100%; border:0; }
+  #pdf-bar {
+    display:none; align-items:center; gap:6px; padding:3px 6px;
+    background:#f5f8fc; border-bottom:1px solid var(--line); font-size:12px;
+  }
+  #pdf-panel.open #pdf-bar { display:flex; }
+
+  /* Filters + sort */
+  .filters { display:flex; flex-wrap:wrap; gap:4px; align-items:center; font-size:12px; }
+  .filters input, .filters select {
+    padding:4px 6px; border:1px solid var(--line); border-radius:5px;
+    font-size:12px; min-width:90px;
+  }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { text-align:right; padding:4px 5px; border-bottom:1px solid var(--line); }
+  th {
+    color:var(--accent); position:sticky; top:0; background:var(--card); z-index:1;
+    cursor:pointer; user-select:none; white-space:nowrap;
+  }
+  th:hover { background:#eef2f7; }
+  th .sort-arrow { opacity:.4; font-size:10px; }
+  th.sort-active .sort-arrow { opacity:1; color:var(--accent); }
+  tr { cursor:pointer; }
+  tr:hover td, tr.selected td { background:#f0f6ff; }
+  tr.selected td { font-weight:600; }
+  .chip {
+    display:inline-block; border-radius:9px; padding:1px 7px; font-size:11px;
+  }
+  .chip.COMPLETED { background:#e8f5e9; color:var(--ok); }
+  .chip.ERROR, .chip.MISSING { background:#fdecea; color:var(--err); }
+  .chip.PENDING, .chip.IN_PROGRESS { background:#fff3e0; color:var(--warn); }
+
+  #whats-new { font-size:12px; color:var(--warn); }
+
+  /* Right panel: tabs */
+  .tabs { display:flex; border-bottom:2px solid var(--line); margin-bottom:5px; }
+  .tab {
+    padding:5px 10px; cursor:pointer; font-size:12px;
+    border-bottom:2px solid transparent; margin-bottom:-2px;
+  }
+  .tab.active { border-bottom-color:var(--accent); color:var(--accent); font-weight:bold; }
+
+  /* Jobs */
+  .job { border-bottom:1px solid var(--line); padding:4px 2px; font-size:12px; }
+  .job .bar { height:4px; background:#eef2f7; border-radius:3px; margin-top:3px; }
+  .job .bar i { display:block; height:4px; background:var(--accent); border-radius:3px; transition:width .3s; }
+  #log { font-size:11px; color:#666; direction:ltr; text-align:left; }
+
+  /* Logs tab */
+  #log-panel { flex:1; overflow-y:auto; font-size:11px; direction:ltr;
+    font-family:monospace; color:#444; }
+  .log-line { padding:1px 0; border-bottom:1px solid #f0f0f0; word-break:break-all; }
+  .log-line.err { color:var(--err); }
+  .log-line.warn { color:var(--warn); }
+  .log-line.ok { color:var(--ok); }
+
+  /* AI chat */
+  #ai-panel { display:flex; flex-direction:column; gap:5px; height:100%; }
+  #chat-history {
+    flex:1; overflow-y:auto; font-size:12px;
+    border:1px solid var(--line); border-radius:6px; padding:8px;
+    background:#fafbfc; min-height:0;
+  }
+  .msg { margin-bottom:8px; }
+  .msg.user { text-align:left; direction:ltr; }
+  .msg.user .bubble {
+    display:inline-block; background:var(--accent); color:#fff;
+    border-radius:12px 12px 2px 12px; padding:6px 10px; max-width:90%;
+  }
+  .msg.ai .bubble {
+    display:inline-block; background:#f0e6ff; color:#2a0050;
+    border-radius:12px 12px 12px 2px; padding:6px 10px; max-width:90%;
+    white-space:pre-wrap; direction:rtl;
+  }
+  .msg.ai.loading .bubble { color:#999; }
+  #chat-input-row { display:flex; gap:4px; }
+  #chat-input {
+    flex:1; padding:6px 8px; border:1px solid var(--line); border-radius:6px;
+    font-size:12px; resize:none; direction:rtl;
+  }
+  #ai-key-row { display:flex; gap:4px; font-size:11px; align-items:center; }
+  #ai-key {
+    flex:1; padding:4px 6px; border:1px solid var(--line); border-radius:5px;
+    font-size:11px; direction:ltr; color:#555;
+  }
+  .dot { width:9px; height:9px; border-radius:50%; display:inline-block; background:#bbb; }
+  .dot.on { background:#7CFC00; }
+
+  #toast {
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    background:#1f4e79; color:#fff; padding:10px 20px; border-radius:8px;
+    font-size:13px; box-shadow:0 4px 16px rgba(0,0,0,.25); z-index:9999;
+    display:none; max-width:500px; text-align:center;
+    animation:fadeIn .2s ease;
+  }
+  #toast.err { background:#c62828; }
+  @keyframes fadeIn { from{opacity:0;transform:translateX(-50%) translateY(8px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+
+  dialog {
+    border:1px solid var(--line); border-radius:10px; padding:18px;
+    min-width:280px; font-size:13px; box-shadow:0 4px 20px rgba(0,0,0,.15);
+  }
+  dialog::backdrop { background:rgba(0,0,0,.3); }
+  dialog label { display:block; margin-bottom:8px; }
+  dialog input, dialog select {
+    width:100%; padding:5px 8px; border:1px solid var(--line); border-radius:5px;
+    font-size:13px; margin-top:3px;
+  }
+  dialog .dlg-row { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="sse-dot" title="SSE live"></span>
+  <h1>LIAS <span style="font-size:10px;color:#8fb996;font-weight:400" title="אם לא רואים את מספר הגרסה הזה — רץ קוד ישן, יש לאתחל">v3.1</span></h1>
+  <span class="spacer"></span>
+
+  <!-- NET HaMishpat -->
+  <span class="portal-label">NET המשפט</span>
+  <button onclick="act('open_portal/NET')" title="שלב 1: פתח את פורטל NET בדפדפן — התחבר ונווט לתיק">① פתח פורטל</button>
+  <button onclick="openSyncDlg('NET')" title="שלב 2: הורד את התיק שמוצג כרגע בדפדפן">② הורד תיק זה</button>
+  <button onclick="act('net_auto_update')" title="עדכן את כל התיקים הקיימים מחדש">עדכן הכל</button>
+  <button class="ghost" onclick="openDateSearch()" title="חפש תיקים לפי טווח תאריכים">חיפוש תאריך</button>
+
+  <span class="sep">|</span>
+
+  <!-- BDR Rabbinical Courts -->
+  <span class="portal-label">BDR רבני</span>
+  <button onclick="openBdrDlg()" title="פתח פורטל BDR — בחר מה להוריד">① BDR ▾</button>
+
+  <span class="sep">|</span>
+  <button id="browser-toggle-btn" class="ghost" onclick="toggleBrowser()" title="הצג/הסתר דפדפן הורדות">🖥 דפדפן</button>
+  <span class="sep">|</span>
+  <button class="ghost" onclick="act('reimport')" title="סנכרן DB עם קבצי CSV בתיקיית ההורדות">סנכרן DB</button>
+  <button class="ghost" onclick="openPurgeDlg()" title="הסר רשומות DB שאין להן קבצים בדיסק">🗑 נקה DB</button>
+  <button class="ghost" onclick="openSettings()" title="הגדרות">⚙</button>
+</header>
+
+<!-- OTP dialog -->
+<dialog id="otp-dlg" style="min-width:300px;max-width:380px;padding:20px;text-align:right;">
+  <b style="font-size:15px;">🔐 קוד אימות (OTP)</b>
+  <p style="margin:10px 0;font-size:13px;color:#555;">הזן את קוד האימות שנשלח לאימייל / טלפון:</p>
+  <input id="otp-input" type="text" inputmode="numeric" pattern="[0-9]*"
+    placeholder="123456" autofocus
+    style="width:100%;font-size:18px;text-align:center;padding:8px;letter-spacing:4px;border:2px solid #1f4e79;border-radius:6px;margin-bottom:12px;"
+    onkeydown="if(event.key==='Enter') submitOtp()">
+  <div style="display:flex;gap:8px;justify-content:flex-end;">
+    <button class="ghost" onclick="$('otp-dlg').close()">ביטול</button>
+    <button onclick="submitOtp()">אישור →</button>
+  </div>
+</dialog>
+
+<!-- Purge DB dialog -->
+<dialog id="purge-dlg" style="min-width:320px;max-width:420px;padding:16px;">
+  <b style="font-size:14px;">🗑 ניקוי DB</b>
+  <p style="margin:10px 0;font-size:13px;color:#555;">בחר מה למחוק מה-DB:</p>
+  <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;">
+    <label style="display:flex;align-items:flex-start;gap:8px;">
+      <input type="radio" name="purge-mode" value="missing" checked style="margin-top:2px;">
+      <span><b>מסמכים חסרים בלבד</b> — הסר רשומות DB שהקבצים שלהן אינם בדיסק</span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:8px;">
+      <input type="radio" name="purge-mode" value="all" style="margin-top:2px;">
+      <span style="color:#c62828;"><b>מחק הכל</b> — נקה את כל הלקוחות, התיקים והמסמכים מה-DB לחלוטין</span>
+    </label>
+  </div>
+  <div id="purge-status" style="font-size:11px;color:#888;margin-top:10px;min-height:14px;"></div>
+  <div class="dlg-row" style="margin-top:10px;">
+    <button class="ghost" onclick="$('purge-dlg').close()">ביטול</button>
+    <button class="danger" onclick="confirmPurge()">מחק</button>
+  </div>
+</dialog>
+
+<!-- BDR portal dialog -->
+<dialog id="bdr-dlg" style="min-width:320px;max-width:420px;padding:16px;">
+  <b style="font-size:14px;">BDR — בתי הדין הרבניים</b>
+  <p style="margin:10px 0 12px;font-size:13px;color:#555;">מה ברצונך לעשות?</p>
+  <div style="display:flex;flex-direction:column;gap:8px;">
+    <button onclick="$('bdr-dlg').close();act('bdr_batch',{force_rerun:$('bdr-force').checked})" style="text-align:right;padding:10px 14px;font-size:13px;">
+      ⬇ הורד את <b>כל</b> התיקים (אצווה מלאה)
+    </button>
+    <button class="ghost" onclick="$('bdr-dlg').close();act('open_portal/BDR')" style="text-align:right;padding:10px 14px;font-size:13px;">
+      🖥 פתח פורטל — אנווט ידנית ואוריד תיק ספציפי
+    </button>
+  </div>
+  <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#666;margin-top:10px;cursor:pointer;">
+    <input type="checkbox" id="bdr-force"> הורד מחדש גם קבצים שכבר הורדו בעבר
+  </label>
+  <div class="dlg-row" style="margin-top:8px;">
+    <button class="ghost" onclick="$('bdr-dlg').close()">ביטול</button>
+  </div>
+</dialog>
+
+<!-- Pre-download dialog -->
+<dialog id="sync-dlg" style="min-width:340px;max-width:440px;padding:16px;">
+  <b id="sync-dlg-title" style="font-size:14px;"></b>
+  <div id="sync-dlg-body" style="margin-top:10px;display:flex;flex-direction:column;gap:8px;font-size:13px;"></div>
+  <div id="sync-dlg-status" style="font-size:11px;color:#888;margin-top:8px;min-height:14px;"></div>
+  <div class="dlg-row" style="margin-top:10px;">
+    <button class="ghost" onclick="$('sync-dlg').close()">ביטול</button>
+    <button id="sync-dlg-ok" onclick="confirmSync()">▶ הפעל הורדה</button>
+  </div>
+</dialog>
+
+<!-- Date-search dialog -->
+<dialog id="date-dlg">
+  <b>חיפוש NET לפי טווח תאריכים</b>
+  <p style="margin:8px 0;font-size:12px;color:#555;">יוריד את כל התיקים הגלויים ללקוח בטווח השנים שנבחר.</p>
+  <label>כמה שנים אחורה?
+    <input id="years-input" type="number" min="1" max="30" value="10">
+  </label>
+  <div class="dlg-row">
+    <button class="ghost" onclick="$('date-dlg').close()">ביטול</button>
+    <button onclick="submitDateSearch()">הפעל חיפוש</button>
+  </div>
+</dialog>
+
+<!-- Settings dialog -->
+<dialog id="settings-dlg" style="min-width:380px;max-width:500px;padding:16px;">
+  <b style="font-size:14px;">⚙ הגדרות</b>
+
+  <fieldset style="margin-top:10px;border:1px solid #dde4ec;border-radius:6px;padding:8px 12px;">
+    <legend style="font-size:11px;color:#666;padding:0 4px;">📥 הורדה</legend>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;">
+      <span style="flex:1;">מצב הורדה</span>
+      <select id="s-mode" style="font-size:12px;padding:2px 4px;">
+        <option value="1">עדכונים בלבד</option>
+        <option value="2">הורדה מחדש (הכל)</option>
+      </select>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;">
+      <input id="s-related" type="checkbox" style="width:15px;height:15px;">
+      <span>הורד תיקים קשורים (NET related cases)</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+      <input id="s-viewers" type="checkbox" style="width:15px;height:15px;">
+      <span>בדוק צופים במסמכים לאחר הורדה</span>
+    </label>
+  </fieldset>
+
+  <fieldset style="margin-top:8px;border:1px solid #dde4ec;border-radius:6px;padding:8px 12px;">
+    <legend style="font-size:11px;color:#666;padding:0 4px;">☁ אחסון</legend>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;">
+      <span style="flex:1;">Google Drive</span>
+      <select id="s-storage" style="font-size:12px;padding:2px 4px;">
+        <option value="local">מקומי בלבד</option>
+        <option value="both">מקומי + Drive</option>
+        <option value="cloud">Drive בלבד</option>
+      </select>
+    </label>
+    <label style="font-size:13px;display:block;">
+      <span style="display:block;margin-bottom:3px;">נתיב תיקיית court_documents:</span>
+      <input id="docs-dir-input" type="text" placeholder="/Users/…/court_documents" style="width:100%;font-size:12px;padding:3px 6px;border:1px solid #ccc;border-radius:4px;">
+    </label>
+    <label style="font-size:13px;display:block;margin-top:6px;">
+      <span style="display:block;margin-bottom:3px;">שיתוף Drive לצפייה בלבד עם המייל:</span>
+      <input id="s-share-email" type="email" placeholder="name@gmail.com — יקבל גישת צפייה, בלי עריכה" style="width:100%;font-size:12px;padding:3px 6px;border:1px solid #ccc;border-radius:4px;">
+    </label>
+  </fieldset>
+
+  <fieldset style="margin-top:8px;border:1px solid #dde4ec;border-radius:6px;padding:8px 12px;">
+    <legend style="font-size:11px;color:#666;padding:0 4px;">🔐 כניסה</legend>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;">
+      <span style="flex:1;">שיטת כניסה</span>
+      <select id="s-login" style="font-size:12px;padding:2px 4px;">
+        <option value="standard">סיסמה + OTP</option>
+        <option value="passkey">Passkey (מהיר)</option>
+      </select>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;">
+      <span style="flex:1;">קבלת קוד אימות</span>
+      <select id="s-otp" style="font-size:12px;padding:2px 4px;">
+        <option value="email">מייל — אוטומטי</option>
+        <option value="sms">טלפון (SMS) — הזנה ידנית</option>
+      </select>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+      <span style="flex:1;">מצב משתמש</span>
+      <select id="s-usermode" style="font-size:12px;padding:2px 4px;">
+        <option value="private">פרטי</option>
+        <option value="lawyer">עו"ד</option>
+      </select>
+    </label>
+    <div style="border-top:1px dashed #dde4ec;margin:8px 0 6px;"></div>
+    <div id="s-govil-status" style="font-size:11.5px;color:#666;margin-bottom:5px;"></div>
+    <label style="font-size:13px;display:block;margin-bottom:5px;">
+      <span style="display:block;margin-bottom:2px;">החלפת תעודת זהות (gov.il):</span>
+      <input id="s-govil-id" type="text" inputmode="numeric" placeholder="9 ספרות — השאר ריק אם אין שינוי"
+        autocomplete="off" style="width:100%;font-size:12px;padding:3px 6px;border:1px solid #ccc;border-radius:4px;">
+    </label>
+    <label style="font-size:13px;display:block;">
+      <span style="display:block;margin-bottom:2px;">החלפת סיסמת gov.il:</span>
+      <input id="s-govil-pw" type="password" placeholder="השאר ריק אם אין שינוי"
+        autocomplete="new-password" style="width:100%;font-size:12px;padding:3px 6px;border:1px solid #ccc;border-radius:4px;">
+    </label>
+    <div style="font-size:10.5px;color:#999;margin-top:4px;">נשמר ישירות ל-Keychain של המחשב — לא לקבצים, ולא ניתן לצפייה חוזרת.</div>
+  </fieldset>
+
+  <div id="settings-status" style="font-size:11px;color:#888;margin-top:8px;min-height:16px;"></div>
+  <div class="dlg-row" style="margin-top:8px;">
+    <button class="ghost" onclick="$('settings-dlg').close()">ביטול</button>
+    <button onclick="saveSettings()">שמור</button>
+  </div>
+</dialog>
+
+<div id="toast"></div>
+<div class="layout" id="main-layout">
+  <!-- Left: case tree -->
+  <section class="card">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+      <h2 style="flex:1;margin:0;">לקוחות ותיקים</h2>
+<!-- כפתור הריענון הוסר — העץ מתרענן אוטומטית (SSE + חזרה לטאב + כל דקה) -->
+    </div>
+    <div class="tree" id="tree">טוען…</div>
+  </section>
+
+  <div class="col-drag" id="drag-left" title="גרור לשינוי רוחב"></div>
+
+  <!-- Center: documents + PDF viewer -->
+  <section class="card" style="overflow:hidden;">
+    <h2 id="docs-title">מסמכים / Documents</h2>
+    <div class="filters">
+      <input id="f-q" placeholder="חיפוש שם" oninput="loadDocs()">
+      <select id="f-status" onchange="loadDocs()">
+        <option value="">כל הסטטוסים</option>
+        <option>COMPLETED</option><option>PENDING</option>
+        <option>ERROR</option><option>MISSING</option>
+      </select>
+      <input id="f-type" placeholder="סוג (החלטה…)" oninput="loadDocs()">
+      <button class="ghost" onclick="scanCurrent()">סרוק גריד פתוח</button>
+    </div>
+    <div id="whats-new"></div>
+
+    <div id="docs-top">
+      <table>
+        <thead>
+          <tr>
+            <th onclick="toggleSort('physical_name')">שם קובץ <span class="sort-arrow" id="arr-physical_name"></span></th>
+            <th onclick="toggleSort('doc_type')">סוג <span class="sort-arrow" id="arr-doc_type"></span></th>
+            <th onclick="toggleSort('submission_date')">תאריך <span class="sort-arrow" id="arr-submission_date"></span></th>
+            <th onclick="toggleSort('submitter_est')">מגיש <span class="sort-arrow" id="arr-submitter_est"></span></th>
+            <th onclick="toggleSort('pages')">עמ' <span class="sort-arrow" id="arr-pages"></span></th>
+            <th onclick="toggleSort('download_status')">סטטוס <span class="sort-arrow" id="arr-download_status"></span></th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="docs"></tbody>
+      </table>
+    </div>
+
+    <!-- PDF viewer -->
+    <div id="pdf-resize-handle" title="גרור לשינוי גובה"></div>
+    <div id="pdf-panel">
+      <div id="pdf-bar">
+        <span id="pdf-title" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+        <button id="view-pdf-btn" class="ghost sm" style="display:none;" onclick="switchView('pdf')">PDF</button>
+        <button id="view-md-btn"  class="ghost sm" style="display:none;" onclick="switchView('md')">👁 MD</button>
+        <a id="md-download-btn" style="display:none;" class="ghost sm" title="הורד MD">⬇ MD</a>
+        <button id="reveal-btn" class="ghost sm" style="display:none;" onclick="revealInFinder()" title="גלה בFinder">📂</button>
+        <button class="ghost sm" onclick="closePdf()">✕ סגור</button>
+      </div>
+      <iframe id="pdf-frame" title="מסמך" style="width:100%;height:100%;border:0;"></iframe>
+      <div id="md-viewer" style="display:none;flex:1;overflow-y:auto;padding:16px 20px;background:#fff;direction:rtl;text-align:right;font-size:13px;line-height:1.7;white-space:pre-wrap;font-family:Arial,sans-serif;"></div>
+      <div id="pdf-missing" style="display:none;padding:20px;text-align:center;color:#c62828;font-size:14px;">
+        הקובץ לא הורד עדיין — לחץ "עדכן הכל" להורדה
+      </div>
+    </div>
+  </section>
+
+  <div class="col-drag" id="drag-right" title="גרור לשינוי רוחב"></div>
+
+  <!-- Right: tabs (Jobs / Logs / AI) -->
+  <section class="card" style="overflow:hidden;">
+    <div class="tabs">
+      <div class="tab active" id="tab-jobs" onclick="showTab('jobs')">📋 משימות</div>
+      <div class="tab" id="tab-logs" onclick="showTab('logs')">📜 לוגים</div>
+      <div class="tab" id="tab-ai" onclick="showTab('ai')">🤖 AI</div>
+    </div>
+
+    <div id="pane-jobs" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:5px;">
+      <div id="jobs"></div>
+      <h2 style="margin-top:6px;">יומן אירועים</h2>
+      <div id="log"></div>
+    </div>
+
+    <div id="pane-logs" style="display:none;flex:1;overflow:hidden;flex-direction:column;gap:4px;">
+      <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
+        <h2 style="flex:1;">לוגים</h2>
+        <select id="log-source" onchange="loadLogs()" style="font-size:11px;padding:2px 4px;">
+          <option value="main">ראשי</option>
+          <option value="drive">Drive</option>
+        </select>
+        <button class="ghost sm" onclick="loadLogs()">רענן</button>
+      </div>
+      <div id="log-path" style="font-size:10px;color:#aaa;direction:ltr;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+      <div id="log-panel"></div>
+    </div>
+
+    <div id="pane-ai" style="display:none;flex:1;overflow:hidden;">
+      <div id="ai-panel">
+        <div id="ai-key-row">
+          <span>Gemini Key:</span>
+          <input id="ai-key" type="password" placeholder="מהגדרות (אוטומטי) או הכנס ידנית">
+        </div>
+        <div id="chat-context-note" style="font-size:11px;color:#888;"></div>
+        <div id="chat-history"></div>
+        <div id="chat-input-row">
+          <textarea id="chat-input" rows="2" placeholder="שאל שאלה על התיק…" onkeydown="chatKey(event)"></textarea>
+          <button class="ai-btn" onclick="sendChat()">שלח</button>
+        </div>
+        <div style="font-size:10px;color:#aaa;">Enter=שלח | Shift+Enter=שורה חדשה</div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+<script>
+let currentSub = null;
+let currentSubName = '';
+let selectedDocId = null;
+let sortCol = 'physical_name';
+let sortDir = 'asc';
+
+/* ── Column resize ──────────────────────────────────────────────── */
+(function() {
+  function makeDragger(dragId, side) {
+    const handle = document.getElementById(dragId);
+    if (!handle) return;
+    let startX, startW;
+    handle.addEventListener('mousedown', e => {
+      const layout = document.getElementById('main-layout');
+      const cols = getComputedStyle(layout).gridTemplateColumns.split(' ');
+      // cols: [leftW, 4px, 1fr, 4px, rightW]
+      startX = e.clientX;
+      startW = parseFloat(side === 'left' ? cols[0] : cols[4]);
+      handle.classList.add('dragging');
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      e.preventDefault();
+    });
+    function onMove(e) {
+      const delta = startX - e.clientX; // RTL: drag right = smaller
+      const newW = Math.max(120, Math.min(600, startW + (side === 'left' ? -delta : delta)));
+      document.getElementById('main-layout').style.setProperty(
+        side === 'left' ? '--col-left' : '--col-right', newW + 'px'
+      );
+    }
+    function onUp() {
+      handle.classList.remove('dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+  }
+  makeDragger('drag-left', 'left');
+  makeDragger('drag-right', 'right');
+})();
+
+const $ = id => document.getElementById(id);
+const j = async (u, opt) => { const r = await fetch(u, opt); return r.json(); };
+
+/* ── Case tree ──────────────────────────────────────────────────── */
+async function loadTree() {
+  // Remember state before rebuild
+  const expandedClients = new Set(
+    [...$('tree').querySelectorAll('.client.expanded')].map(d => d.dataset.clientId)
+  );
+  const clients = await j('/api/clients');
+  const el = $('tree'); el.innerHTML = '';
+  for (const c of clients) {
+    const div = document.createElement('div');
+    div.className = 'client';
+    div.dataset.clientId = c.client_id;
+    div.innerHTML = `${c.display_name} <span class="badge">${c.documents}</span>`;
+    el.appendChild(div);
+    const kids = document.createElement('div');
+
+    async function expandClient(clientObj, kidsEl, clientDiv) {
+      clientDiv.classList.add('expanded');
+      kidsEl.innerHTML = '';
+      const cases = await j(`/api/clients/${clientObj.client_id}/tree`);
+      for (const k of cases) for (const s of k.sub_cases) {
+        const sd = document.createElement('div');
+        sd.className = 'sub' + (s.sub_case_id === currentSub ? ' active' : '');
+        sd.dataset.subId = s.sub_case_id;
+        sd.innerHTML = `<span>${s.sub_number}</span><span class="badge">${s.documents}</span>`
+          + (s.errors ? `<span class="badge err">${s.errors}✗</span>` : '');
+        sd.onclick = e => { e.stopPropagation(); selectSub(s, sd); };
+        kidsEl.appendChild(sd);
+      }
+    }
+
+    div.onclick = async () => {
+      if (kids.hasChildNodes()) { kids.innerHTML = ''; div.classList.remove('expanded'); return; }
+      await expandClient(c, kids, div);
+    };
+    el.appendChild(kids);
+
+    // Re-expand if it was open before, or if it contains the active sub-case
+    if (expandedClients.has(String(c.client_id))) {
+      await expandClient(c, kids, div);
+    }
+  }
+}
+
+async function selectSub(s, el) {
+  document.querySelectorAll('.sub.active').forEach(x => x.classList.remove('active'));
+  el.classList.add('active');
+  currentSub = s.sub_case_id;
+  currentSubName = s.sub_number;
+  $('docs-title').textContent = `מסמכים — ${s.sub_number}`;
+  $('chat-context-note').textContent = `הקשר: ${s.sub_number}`;
+  closePdf();
+  loadDocs();
+  loadWhatsNew();
+}
+
+/* ── Documents + sorting ────────────────────────────────────────── */
+function toggleSort(col) {
+  if (sortCol === col) sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+  else { sortCol = col; sortDir = 'desc'; }
+  loadDocs();
+}
+
+function updateSortArrows() {
+  document.querySelectorAll('th .sort-arrow').forEach(el => {
+    const col = el.id.replace('arr-', '');
+    const th = el.closest('th');
+    if (col === sortCol) {
+      el.textContent = sortDir === 'desc' ? ' ▼' : ' ▲';
+      th.classList.add('sort-active');
+    } else {
+      el.textContent = ' ⇅';
+      th.classList.remove('sort-active');
+    }
+  });
+}
+
+async function loadDocs() {
+  if (!currentSub) return;
+  updateSortArrows();
+  const q = new URLSearchParams({
+    q: $('f-q').value, status: $('f-status').value, doc_type: $('f-type').value,
+    sort: sortCol, order: sortDir,
+  });
+  const docs = await j(`/api/sub_cases/${currentSub}/documents?` + q);
+  if (!docs.length) {
+    $('docs').innerHTML = `<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;font-size:13px;">אין מסמכים</td></tr>`;
+    closePdf();
+    return;
+  }
+  $('docs').innerHTML = docs.map(d => {
+    const isPdf = d.download_status === 'COMPLETED' && d.local_path && d.local_path.toLowerCase().endsWith('.pdf');
+    const hasFile = d.download_status === 'COMPLETED' && d.local_path;
+    const hasPdf = isPdf;
+    const sel = d.document_id === selectedDocId ? ' selected' : '';
+    const isDocx = hasFile && d.local_path && /\.(docx?)$/i.test(d.local_path);
+    const md = (isPdf || isDocx)
+      ? `<button class="ghost sm" onclick="convertMd(event,${d.document_id})" title="המר ל-MD">MD</button>`
+      : '';
+    const stem = (d.physical_name||'').replace(/\.[^.]+$/, '');
+    // Use data-* attributes to avoid apostrophe/quote injection in onclick
+    return `<tr class="${sel}" data-doc="${d.document_id}" data-name="${(d.physical_name||'').replace(/"/g,'&quot;')}" data-pdf="${hasPdf?1:0}" data-file="${hasFile?1:0}">
+      <td title="${(d.physical_name||'').replace(/"/g,'&quot;')}">${stem.slice(0,48)}${d.has_attachments ? ' <span title="יש נספחים" style="color:#1f4e79;font-weight:bold">+</span>' : ''}</td>
+      <td>${d.doc_type||''}</td>
+      <td>${d.submission_date||''}</td>
+      <td style="font-size:11px;color:#666;">${(d.submitter_est||'').slice(0,18)}</td>
+      <td>${d.pages||''}</td>
+      <td><span class="chip ${d.download_status}">${d.download_status}</span></td>
+      <td>${md}</td>
+    </tr>`;
+  }).join('');
+}
+
+// Event delegation for doc rows (avoids apostrophe injection in onclick)
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('docs').addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    const row = e.target.closest('tr[data-doc]');
+    if (btn || !row) return;
+    const docId = +row.dataset.doc;
+    const name  = row.dataset.name || '';
+    const hasPdf  = row.dataset.pdf  === '1';
+    const hasFile = row.dataset.file === '1';
+    openDoc(docId, name, hasPdf, hasFile, row);
+  });
+});
+
+let _preViewScroll = null;   // doc-list scroll before the viewer opened / גלילה לפני פתיחת התצוגה
+
+function openDoc(docId, title, hasPdf, hasFile, rowEl) {
+  // Remember list position only when the viewer transitions closed -> open,
+  // so closing returns exactly to where the user was.
+  if (!$('pdf-panel').classList.contains('open')) {
+    _preViewScroll = { list: $('docs-top')?.scrollTop ?? 0, win: window.scrollY };
+  }
+  selectedDocId = docId;
+  document.querySelectorAll('#docs tr').forEach(r => r.classList.remove('selected'));
+  (rowEl || document.querySelector(`#docs tr[data-doc="${docId}"]`))?.classList.add('selected');
+  // Show filename stem in title (strip path separators and extension)
+  // title may be empty if row was created before data-name was added — fallback to docId
+  const titleSrc = (title && isNaN(+title)) ? title : (document.querySelector(`#docs tr[data-doc="${docId}"]`)?.dataset.name || String(docId));
+  const titleStem = titleSrc.replace(/\.[^.]+$/, '').split('/').pop().split('\\').pop();
+  $('pdf-title').textContent = titleStem;
+  $('pdf-frame').src = '';
+  $('pdf-frame').style.display = 'block';
+  $('md-viewer').style.display = 'none';
+  $('md-viewer').innerHTML = '';
+  delete $('md-viewer').dataset.loaded;
+  $('pdf-missing').style.display = 'none';
+  $('md-download-btn').style.display = 'none';
+  $('view-md-btn').style.display = 'none';
+  $('view-pdf-btn').style.display = 'none';
+  $('reveal-btn').style.display = 'none';
+  _currentView = 'pdf';
+  const panel = $('pdf-panel');
+  const handle = $('pdf-resize-handle');
+  if (!panel.classList.contains('open')) {
+    panel.style.height = '42vh';
+  }
+  panel.classList.add('open');
+  handle.classList.add('visible');
+  const ext = title.split('.').pop().toLowerCase();
+  if (hasPdf) {
+    fetch(`/api/doc/${docId}`, {method:'HEAD'}).then(r => {
+      if (r.ok) {
+        $('pdf-frame').src = `/api/doc/${docId}`;
+        $('reveal-btn').style.display = 'inline-block';
+        checkMdExists(docId);
+      } else {
+        closePdf();
+        logLine('⚠ קובץ לא קיים בדיסק: ' + title);
+      }
+    }).catch(() => { closePdf(); logLine('⚠ קובץ לא קיים בדיסק: ' + title); });
+  } else if (hasFile && (ext === 'docx' || ext === 'doc')) {
+    // Render Word inline with mammoth.js
+    $('pdf-frame').style.display = 'none';
+    $('md-viewer').style.display = 'block';
+    $('md-viewer').style.whiteSpace = 'normal';
+    $('md-viewer').innerHTML = '<span style="color:#aaa">טוען מסמך Word…</span>';
+    $('reveal-btn').style.display = 'inline-block';
+    fetch(`/api/doc/${docId}`)
+      .then(r => r.arrayBuffer())
+      .then(buf => mammoth.convertToHtml({arrayBuffer: buf}))
+      .then(result => {
+        $('md-viewer').innerHTML = result.value || '<span style="color:#aaa">אין תוכן להצגה</span>';
+        checkMdExists(docId);
+      })
+      .catch(e => {
+        $('md-viewer').innerHTML = `<span style="color:#c62828">שגיאה בטעינת Word: ${e}</span>`;
+      });
+  } else if (hasFile) {
+    $('pdf-missing').style.display = 'block';
+    $('pdf-missing').innerHTML = `קובץ ${ext.toUpperCase()} — <button class="ghost sm" onclick="openInApp(${docId})" style="color:#1f4e79;margin-left:6px;">פתח בתוכנה</button> <a href="/api/doc/${docId}" download="${title}" style="color:#666;font-size:11px;margin-left:6px;">הורד</a>`;
+    $('reveal-btn').style.display = 'inline-block';
+  } else {
+    $('pdf-missing').style.display = 'block';
+    $('pdf-missing').textContent = 'הקובץ לא הורד עדיין — לחץ "עדכן הכל" להורדה';
+  }
+}
+
+function closePdf() {
+  $('pdf-panel').classList.remove('open');
+  $('pdf-resize-handle').classList.remove('visible');
+  // Restore the exact position the user was at before opening the viewer.
+  if (_preViewScroll) {
+    const s = _preViewScroll; _preViewScroll = null;
+    requestAnimationFrame(() => {
+      const dt = $('docs-top'); if (dt) dt.scrollTop = s.list;
+      window.scrollTo(0, s.win);
+    });
+  }
+  $('pdf-frame').src = '';
+  $('pdf-frame').style.display = 'block';
+  $('md-viewer').style.display = 'none';
+  $('md-viewer').innerHTML = '';
+  delete $('md-viewer').dataset.loaded;
+  $('md-download-btn').style.display = 'none';
+  $('view-md-btn').style.display = 'none';
+  $('view-pdf-btn').style.display = 'none';
+  $('reveal-btn').style.display = 'none';
+  _currentView = 'pdf';
+  selectedDocId = null;
+}
+
+async function revealInFinder() {
+  if (!selectedDocId) return;
+  try { await fetch(`/api/doc/${selectedDocId}/reveal`, {method:'POST'}); }
+  catch(e) { logLine('✗ Finder: ' + e); }
+}
+
+async function openInApp(docId) {
+  try { await fetch(`/api/doc/${docId}/open`, {method:'POST'}); }
+  catch(e) { logLine('✗ פתיחה: ' + e); }
+}
+
+async function checkMdExists(docId) {
+  try {
+    const r = await fetch(`/api/doc_md/${docId}`, {method:'GET'});
+    if (r.ok) showMdDownload(docId);
+  } catch(_) {}
+}
+
+function showMdDownload(docId) {
+  const btn = $('md-download-btn');
+  btn.href = `/api/doc_md/${docId}`;
+  btn.download = '';
+  btn.style.display = 'inline-block';
+  $('view-md-btn').style.display = 'inline-block';
+  $('view-pdf-btn').style.display = 'inline-block';
+}
+
+let _currentView = 'pdf';
+
+function switchView(mode) {
+  _currentView = mode;
+  if (mode === 'md') {
+    $('pdf-frame').style.display = 'none';
+    $('md-viewer').style.display = 'block';
+    $('view-md-btn').style.fontWeight = 'bold';
+    $('view-pdf-btn').style.fontWeight = '';
+    if (!$('md-viewer').dataset.loaded) loadMdContent();
+  } else {
+    $('md-viewer').style.display = 'none';
+    $('pdf-frame').style.display = 'block';
+    $('view-pdf-btn').style.fontWeight = 'bold';
+    $('view-md-btn').style.fontWeight = '';
+  }
+}
+
+async function loadMdContent() {
+  if (!selectedDocId) return;
+  $('md-viewer').textContent = 'טוען…';
+  try {
+    const r = await fetch(`/api/doc_md/${selectedDocId}?view=text`);
+    if (!r.ok) { $('md-viewer').textContent = 'שגיאה בטעינת MD'; return; }
+    const text = await r.text();
+    $('md-viewer').dataset.loaded = '1';
+    // basic markdown render: headers, bold, line breaks
+    $('md-viewer').innerHTML = text
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/^#{3} (.+)$/gm,'<h3>$1</h3>')
+      .replace(/^#{2} (.+)$/gm,'<h2>$1</h2>')
+      .replace(/^# (.+)$/gm,'<h1 style="font-size:16px;margin:8px 0 4px">$1</h1>')
+      .replace(/\*\*(.+?)\*\*/g,'<b>$1</b>')
+      .replace(/\n/g,'<br>');
+  } catch(e) { $('md-viewer').textContent = 'שגיאה: ' + e; }
+}
+
+/* ── PDF panel resize ───────────────────────────────────────────── */
+(function() {
+  const handle = document.getElementById('pdf-resize-handle');
+  if (!handle) return;
+  let startY, startH;
+  handle.addEventListener('mousedown', e => {
+    startY = e.clientY;
+    startH = $('pdf-panel').offsetHeight;
+    handle.classList.add('dragging');
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    e.preventDefault();
+  });
+  function onMove(e) {
+    const delta = startY - e.clientY; // drag up = bigger panel
+    const newH = Math.max(80, Math.min(window.innerHeight * 0.85, startH + delta));
+    $('pdf-panel').style.height = newH + 'px';
+  }
+  function onUp() {
+    handle.classList.remove('dragging');
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  }
+})();
+
+async function convertMd(ev, docId) {
+  ev.stopPropagation();
+  const btn = ev.target;
+  btn.textContent = '…';
+  try {
+    const r = await j(`/api/actions/convert_md/${docId}`, { method:'POST' });
+    logLine(`→ המרה ל-MD job #${r.job_id||'?'}`);
+    btn.textContent = '✓';
+    setTimeout(() => btn.textContent = 'MD', 3000);
+    if (selectedDocId === docId) showMdDownload(docId);
+  } catch(e) {
+    btn.textContent = '✗';
+    logLine(`✗ MD: ${e}`);
+  }
+}
+
+async function loadWhatsNew() {
+  const d = await j(`/api/sub_cases/${currentSub}/whats_new`);
+  $('whats-new').textContent = d.taken_at
+    ? `חדש (${d.taken_at}): +${d.counts.added} שינויים:${d.counts.changed} נמחקו:${d.counts.removed}`
+    : '';
+}
+
+/* ── Jobs ──────────────────────────────────────────────────────── */
+async function loadJobs() {
+  const rows = await j('/api/jobs');
+  $('jobs').innerHTML = rows.slice(0,15).map(x => `
+    <div class="job">
+      <b>#${x.job_id}</b> ${x.kind}
+      <span class="chip ${x.state==='COMPLETED'?'COMPLETED':x.state==='ERROR'?'ERROR':'PENDING'}">${x.state}</span>
+      <div class="msg" style="color:#666;font-size:11px;">${x.message||x.error||''}</div>
+      <div class="bar"><i style="width:${(x.progress*100)|0}%"></i></div>
+    </div>`).join('');
+}
+
+function logLine(t) {
+  const d = document.createElement('div');
+  d.textContent = new Date().toLocaleTimeString('he-IL') + ' ' + t;
+  $('log').prepend(d);
+  while ($('log').childNodes.length > 80) $('log').lastChild.remove();
+}
+
+async function act(path, params) {
+  try {
+    let url = '/api/actions/' + path;
+    if (params) url += '?' + new URLSearchParams(params);
+    const r = await j(url, { method:'POST' });
+    logLine(`→ job #${r.job_id||'?'} (${path})`);
+    loadJobs();
+  } catch(e) { logLine(`✗ ${path}: ${e}`); }
+}
+
+/* ── OTP dialog ────────────────────────────────────────────────── */
+async function submitOtp() {
+  const code = $('otp-input').value.trim();
+  if (!code) return;
+  $('otp-dlg').close();
+  try {
+    await j('/api/actions/submit_otp?' + new URLSearchParams({otp: code}), {method:'POST'});
+    logLine('🔐 OTP נשלח');
+  } catch(e) { logLine('✗ OTP: ' + e); }
+}
+
+/* ── Browser visibility toggle ─────────────────────────────────── */
+let _browserHeadless = true;
+
+async function refreshBrowserStatus() {
+  try {
+    const s = await j('/api/browser/status');
+    _browserHeadless = s.headless;
+    const btn = $('browser-toggle-btn');
+    if (btn) {
+      btn.textContent = s.headless ? '🖥 דפדפן' : '🙈 הסתר';
+      btn.title = s.headless ? 'הצג חלון דפדפן ההורדות' : 'הסתר חלון דפדפן';
+      btn.style.color = s.headless ? '' : '#1f4e79';
+      btn.style.fontWeight = s.headless ? '' : 'bold';
+    }
+  } catch(e) {}
+}
+
+async function toggleBrowser() {
+  try {
+    if (_browserHeadless) {
+      // Check if a download job is running
+      const jobs = await j('/api/jobs?limit=5');
+      const running = jobs.find(x => x.state === 'RUNNING' &&
+        (x.kind === 'bdr_batch' || x.kind === 'net_scan' || x.kind === 'net_sync_current'));
+      if (running) {
+        const ok = confirm('⚠ הורדה פעילה כרגע.\nפתיחת הדפדפן תפסיק אותה ותאפשר המשך ידני.\nלהמשיך?');
+        if (!ok) return;
+      }
+      await j('/api/actions/browser/show', { method: 'POST' });
+      logLine('🖥 דפדפן נפתח');
+    } else {
+      await j('/api/actions/browser/hide', { method: 'POST' });
+      logLine('🙈 דפדפן הוסתר');
+    }
+    setTimeout(refreshBrowserStatus, 800);
+  } catch(e) { logLine('✗ דפדפן: ' + e); }
+}
+
+// poll browser status every 10s
+setInterval(refreshBrowserStatus, 10000);
+
+function openBdrDlg() {
+  const dlg = $('bdr-dlg');
+  dlg.showModal();
+  // position near the BDR button (top-left area of toolbar)
+  const btn = document.querySelector('button[onclick="openBdrDlg()"]');
+  if (btn) {
+    const r = btn.getBoundingClientRect();
+    dlg.style.margin = '0';
+    dlg.style.position = 'fixed';
+    dlg.style.left = r.left + 'px';
+    dlg.style.top  = (r.bottom + 4) + 'px';
+    dlg.style.right = 'auto';
+  }
+}
+
+/* ── Toast ─────────────────────────────────────────────────────── */
+let _toastTimer = null;
+function showToast(msg, ms=5000, isErr=false) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = isErr ? 'err' : '';
+  t.style.display = 'block';
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { t.style.display = 'none'; }, ms);
+}
+
+/* ── Purge DB dialog ───────────────────────────────────────────── */
+function openPurgeDlg() {
+  $('purge-status').textContent = '';
+  document.querySelector('input[name="purge-mode"][value="missing"]').checked = true;
+  $('purge-dlg').showModal();
+}
+
+async function confirmPurge() {
+  const mode = document.querySelector('input[name="purge-mode"]:checked').value;
+  if (mode === 'all' && !confirm('למחוק את כל הנתונים מה-DB לחלוטין?')) return;
+  $('purge-status').textContent = 'מנקה…';
+  try {
+    const r = await j(`/api/actions/purge_stale?mode=${mode}`, {method:'POST'});
+    $('purge-status').textContent = `✓ job #${r.job_id}`;
+    setTimeout(() => { $('purge-dlg').close(); loadTree(); }, 1500);
+  } catch(e) { $('purge-status').textContent = '✗ ' + e; }
+}
+
+/* ── Pre-download dialog ───────────────────────────────────────── */
+let _syncPortal = '';
+
+async function openSyncDlg(portal) {
+  _syncPortal = portal;
+  const s = await j('/api/settings');
+  $('sync-dlg-title').textContent = portal === 'NET'
+    ? '⬇ הורדת תיק NET המשפט — הגדרות'
+    : '⬇ הורדת תיק BDR רבני — הגדרות';
+  const body = $('sync-dlg-body');
+  body.innerHTML = '';
+
+  if (portal === 'NET') {
+    body.innerHTML = `
+      <label style="display:flex;align-items:center;gap:8px;">
+        <input id="sd-related" type="checkbox" style="width:15px;height:15px;" ${s.download_related_cases ? 'checked' : ''}>
+        <span>הורד תיקים קשורים (related cases)</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;">
+        <input id="sd-viewers" type="checkbox" style="width:15px;height:15px;" ${s.check_viewers !== false ? 'checked' : ''}>
+        <span>בדוק צופים לאחר הורדה</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;">
+        <span style="flex:1;">מצב הורדה</span>
+        <select id="sd-mode" style="font-size:12px;padding:2px 4px;">
+          <option value="1" ${(s.mode||'1')==='1'?'selected':''}>עדכונים בלבד</option>
+          <option value="2" ${s.mode==='2'?'selected':''}>הורדה מחדש (הכל)</option>
+        </select>
+      </label>`;
+  } else {
+    // BDR
+    body.innerHTML = `
+      <label style="display:flex;align-items:center;gap:8px;">
+        <span style="flex:1;">מצב הורדה</span>
+        <select id="sd-mode" style="font-size:12px;padding:2px 4px;">
+          <option value="1" ${(s.mode||'1')==='1'?'selected':''}>עדכונים בלבד</option>
+          <option value="2" ${s.mode==='2'?'selected':''}>הורדה מחדש (הכל)</option>
+        </select>
+      </label>
+      <div style="font-size:11px;color:#888;">התיק שמוצג כרגע בדפדפן BDR יורד.</div>`;
+  }
+
+  $('sync-dlg-status').textContent = '';
+  $('sync-dlg').showModal();
+}
+
+async function confirmSync() {
+  // save any changed settings first
+  const payload = { mode: ($('sd-mode')||{value:'1'}).value };
+  if (_syncPortal === 'NET') {
+    payload.download_related_cases = !!($('sd-related') && $('sd-related').checked);
+    payload.check_viewers          = !!($('sd-viewers') && $('sd-viewers').checked);
+  }
+  try {
+    await j('/api/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  } catch(_) {}
+  $('sync-dlg').close();
+  act('sync_current/' + _syncPortal);
+}
+
+function openDateSearch() { $('date-dlg').showModal(); }
+function submitDateSearch() {
+  const years = parseInt($('years-input').value) || 10;
+  $('date-dlg').close();
+  act('net_date_search', { years_back: years });
+}
+
+function scanCurrent() {
+  if (!currentSub) { alert('בחר תת-תיק קודם'); return; }
+  act('net_scan/' + currentSub);
+}
+
+/* ── Logs tab ──────────────────────────────────────────────────── */
+async function loadLogs() {
+  try {
+    const src = ($('log-source') || {value:'main'}).value;
+    const data = await j(`/api/log?lines=300&source=${src}`);
+    if ($('log-path')) $('log-path').textContent = data.path || '';
+    const el = $('log-panel'); el.innerHTML = '';
+    for (const line of data.lines) {
+      const d = document.createElement('div');
+      d.className = 'log-line'
+        + (/error|ERROR|FAIL/i.test(line) ? ' err'
+           : /WARN|warn/i.test(line) ? ' warn'
+           : /OK|SUCCESS|ok\b/i.test(line) ? ' ok' : '');
+      d.textContent = line;
+      el.appendChild(d);
+    }
+    el.scrollTop = el.scrollHeight;
+  } catch(e) { /* server may not have logs yet */ }
+}
+
+/* ── Tabs ──────────────────────────────────────────────────────── */
+function showTab(name) {
+  ['jobs','logs','ai'].forEach(t => {
+    $('tab-'+t).classList.toggle('active', t===name);
+    const p = $('pane-'+t);
+    const isAi = t === 'ai';
+    p.style.display = t===name ? (isAi ? 'block' : 'flex') : 'none';
+  });
+  if (name === 'ai') $('pane-ai').style.flex = '1';
+  if (name === 'logs') loadLogs();
+}
+
+/* ── AI Chat ───────────────────────────────────────────────────── */
+function chatKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+
+function appendMsg(role, text) {
+  const d = document.createElement('div');
+  d.className = `msg ${role}`;
+  const b = document.createElement('div');
+  b.className = 'bubble';
+  b.textContent = text;
+  d.appendChild(b);
+  $('chat-history').appendChild(d);
+  $('chat-history').scrollTop = $('chat-history').scrollHeight;
+  return b;
+}
+
+async function sendChat() {
+  const q = $('chat-input').value.trim();
+  if (!q) return;
+  $('chat-input').value = '';
+  appendMsg('user', q);
+  const loadingBubble = appendMsg('ai loading', '…');
+  try {
+    const r = await fetch('/api/ai/ask', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ question:q, sub_case_id:currentSub, api_key:$('ai-key').value.trim() }),
+    });
+    const data = await r.json();
+    loadingBubble.closest('.msg').classList.remove('loading');
+    if (data.error) {
+      loadingBubble.textContent = '⚠ ' + data.error;
+      loadingBubble.style.background = '#fdecea';
+    } else {
+      loadingBubble.textContent = data.answer;
+      if (data.docs_used) {
+        const note = document.createElement('div');
+        note.style.cssText = 'font-size:10px;color:#888;margin-top:2px;';
+        note.textContent = `📂 ${data.docs_used} docs | ${data.txt_chars||0} chars text`;
+        loadingBubble.closest('.msg').appendChild(note);
+      }
+    }
+  } catch(e) { loadingBubble.textContent = '✗ ' + e; }
+  $('chat-history').scrollTop = $('chat-history').scrollHeight;
+}
+
+/* ── SSE ────────────────────────────────────────────────────────── */
+function connectSSE() {
+  const es = new EventSource('/events');
+  let _sseWasDown = false;
+  es.onopen = () => {
+    $('sse-dot').classList.add('on');
+    // Reconnected after a gap — events may have been missed while offline,
+    // so force a full data reload. / התחברות מחדש — ריענון מלא של הנתונים.
+    if (_sseWasDown) { loadTree(); loadDocs(); loadJobs(); }
+    _sseWasDown = false;
+  };
+  es.onerror = () => { $('sse-dot').classList.remove('on'); _sseWasDown = true; };
+  es.onmessage = ev => {
+    const e = JSON.parse(ev.data);
+    if (e.type === 'job') {
+      loadJobs();
+      if (e.state === 'COMPLETED') {
+        loadDocs(); loadTree();
+        if (e.kind === 'open_portal') {
+          const portal = (e.message||'').includes('BDR') ? 'BDR' : 'NET';
+          const msg = portal === 'BDR'
+            ? '✅ פורטל BDR נפתח — נווט לתיק הרצוי בדפדפן ואז לחץ ② הורד תיק זה'
+            : '✅ פורטל NET נפתח — נווט לתיק הרצוי בדפדפן ואז לחץ ② הורד תיק זה';
+          showToast(msg, 8000);
+        }
+      }
+      if (e.state === 'ERROR' && e.kind === 'open_portal') {
+        showToast('⚠ פתיחת הפורטל נכשלה — בדוק לוגים', 5000, true);
+      }
+    }
+    if (e.type === 'file') {
+      logLine(`📄 ${e.name} → ${e.status}`);
+      loadDocs();
+      // refresh logs if tab open
+      if ($('tab-logs').classList.contains('active')) loadLogs();
+    }
+    if (e.type === 'diff') { logLine(`🔀 diff ${JSON.stringify(e.counts)}`); loadWhatsNew(); }
+    if (e.type === 'otp_required') {
+      $('otp-input').value = '';
+      $('otp-dlg').showModal();
+      setTimeout(() => $('otp-input').focus(), 100);
+      logLine('🔐 נדרש קוד OTP — הזן בחלון');
+    }
+    if (e.message) logLine(`#${e.job_id||''} ${e.message}`);
+  };
+}
+
+/* ── Settings ──────────────────────────────────────────────────── */
+async function openSettings() {
+  const s = await j('/api/settings');
+  $('docs-dir-input').value = s.court_docs_dir || '';
+  $('s-viewers').checked  = s.check_viewers !== false;
+  $('s-related').checked  = s.download_related_cases === true;
+  $('s-mode').value       = s.mode || '1';
+  $('s-storage').value    = s.storage_mode || 'local';
+  $('s-login').value      = s.login_method || 'standard';
+  $('s-usermode').value   = s.user_mode || 'private';
+  $('s-otp').value        = s.otp_method || 'email';
+  $('s-share-email').value = s.share_email || '';
+  $('settings-status').textContent = s.downloads_exists
+    ? '✓ ' + s.court_docs_dir_effective
+    : '✗ downloads/ לא קיים: ' + s.court_docs_dir_effective;
+  $('s-govil-status').textContent = s.govil_configured
+    ? '✓ אישורי gov.il שמורים ב-Keychain — מילוי השדות יחליף אותם'
+    : '✗ אין אישורי gov.il שמורים — מלא ת"ז וסיסמה ושמור';
+  $('s-govil-id').value = ''; $('s-govil-pw').value = '';
+  $('settings-dlg').showModal();
+}
+
+async function saveSettings() {
+  const payload = {
+    court_docs_dir:          $('docs-dir-input').value.trim(),
+    check_viewers:           $('s-viewers').checked,
+    download_related_cases:  $('s-related').checked,
+    mode:                    $('s-mode').value,
+    storage_mode:            $('s-storage').value,
+    login_method:            $('s-login').value,
+    otp_method:              $('s-otp').value,
+    user_mode:               $('s-usermode').value,
+    share_email:             $('s-share-email').value.trim(),
+  };
+  const gid = $('s-govil-id').value.trim(), gpw = $('s-govil-pw').value;
+  if (gid && !/^\d{9}$/.test(gid)) { $('settings-status').textContent = '✗ ת"ז חייבת להיות 9 ספרות'; return; }
+  if (gid) payload.govil_id = gid;
+  if (gpw) payload.govil_password = gpw;
+  try {
+    const data = await j('/api/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    if (data.ok === false) { $('settings-status').textContent = '✗ ' + (data.error||'שגיאה'); return; }
+    $('settings-status').textContent = '✓ נשמר: ' + data.court_docs_dir_effective
+      + ((gid||gpw) ? ' · אישורי gov.il עודכנו ב-Keychain' : '');
+    $('s-govil-id').value=''; $('s-govil-pw').value='';
+    setTimeout(() => $('settings-dlg').close(), 1200);
+    logLine('⚙ הגדרות נשמרו');
+    loadTree();
+  } catch(e) { $('settings-status').textContent = '✗ ' + e; }
+}
+
+// Init
+loadTree();
+loadJobs();
+connectSSE();
+updateSortArrows();
+refreshBrowserStatus();
+setInterval(loadJobs, 8000);
+setInterval(() => { if ($('tab-logs').classList.contains('active')) loadLogs(); }, 5000);
+// Always-fresh case data: reload when the user returns to the tab, and a
+// gentle 60s background refresh. / נתוני תיק תמיד טריים — בלי כפתור רענן.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { loadTree(); loadDocs(); loadJobs(); }
+});
+setInterval(() => {
+  const a = document.activeElement;
+  const busy = a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT');
+  if (!document.hidden && !busy) loadDocs();
+}, 60000);
+
+/* ── Keyboard navigation in document list ───────────────────────── */
+document.addEventListener('keydown', e => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  if (document.activeElement && ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
+  const rows = [...document.querySelectorAll('#docs tr[data-doc]')];
+  if (!rows.length) return;
+  const cur = document.querySelector('#docs tr.selected');
+  let idx = cur ? rows.indexOf(cur) : -1;
+  idx = e.key === 'ArrowDown' ? Math.min(idx + 1, rows.length - 1) : Math.max(idx - 1, 0);
+  if (rows[idx]) rows[idx].click();
+  e.preventDefault();
+});
+</script>
+</body>
+</html>

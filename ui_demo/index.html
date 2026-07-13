@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LIAS — ניהול תיקים</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ═══ Login ═══ -->
+<div class="login-bg hide" id="login">
+  <form class="login" onsubmit="doLogin(event)">
+    <div class="logo"><div class="logo-badge">⚖</div> LIAS</div>
+    <p class="sub">מי מתחבר למערכת?</p>
+    <label>סוג משתמש</label>
+    <select id="l-role">
+      <option value="LAWYER">💼 עורך דין</option>
+      <option value="PLEADER">📜 טוען רבני</option>
+      <option value="CLIENT">👤 לקוח פרטי</option>
+    </select>
+    <label>שם מלא</label><input id="l-name" required placeholder="למשל: דוד פונברשטיין">
+    <label>אימייל</label><input id="l-email" type="email" required placeholder="you@example.com">
+    <label>שם משתמש</label><input id="l-user" required autocomplete="username">
+    <label>סיסמה</label><input id="l-pass" type="password" required autocomplete="current-password">
+    <label class="rem" style="display:flex"><input type="checkbox" id="l-rem" checked style="width:auto"> זכור אותי במחשב הזה</label>
+    <button class="btn-accent" type="submit">כניסה</button>
+    <div class="note"><b>שים לב:</b> אלה פרטי הכניסה למערכת LIAS בלבד —<br>
+      <b>לא</b> הסיסמה של gov.il (היא נשמרת בנפרד ב-Keychain).<br>
+      הבחירה עו״ד/טו״ר/פרטי משמשת גם לכניסה לפורטל הרבני (BDR).<br>
+      דמו: נשמר מקומית בלבד; אימות מלא — שלב 1 באפיון §2.</div>
+  </form>
+</div>
+
+<!-- ═══ Top bar ═══ -->
+<div class="topbar" id="topbar">
+  <div class="logo"><div class="logo-badge">⚖</div> LIAS <span style="font-size:10px;color:var(--ink-soft);font-weight:400" title="אם לא רואים את מספר הגרסה — רץ קוד ישן, יש לאתחל">v3.1</span></div>
+  <nav class="nav">
+    <button class="active" data-nav="home" onclick="go('home')">דשבורד</button>
+    <button onclick="openDrawer('cases')">תיקים</button>
+    <button data-nav="sync" onclick="go('sync')">סנכרון</button>
+    <button data-nav="transcribe" onclick="go('transcribe')">תמלול</button>
+    <button title="בשלב הבא">מסמכים <span class="soon">בקרוב</span></button>
+    <button title="בשלב הבא">עוזר AI <span class="soon">בקרוב</span></button>
+  </nav>
+  <div class="search">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+    <input placeholder="חפש לקוח, תיק או מסמך…">
+  </div>
+  <button class="iconbtn" title="המרכזייה שלי — מסמכים מתויקים" onclick="openPinboard()" style="width:36px;height:36px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-soft)">📌</button>
+  <button class="iconbtn" title="הגדרות" onclick="openSettings()" style="width:36px;height:36px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-soft)">⚙</button>
+  <button class="iconbtn" title="סגירה בטוחה — עוצר את המנוע וסוגר את כל החלונות" onclick="safeShutdown()" style="width:36px;height:36px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-soft)">⏻</button>
+  <div class="avatar">
+    <div class="pic" id="av-letter">ד</div>
+    <div class="who"><b id="av-name">—</b><span id="av-role">—</span>
+      <span class="out" onclick="logout()">התנתק</span></div>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="crumbs" id="crumbs"></div>
+  <div id="view"></div>
+  <div class="footer" id="foot">LIAS · קריאה בלבד מ-lias.db · מתרענן אוטומטית</div>
+</div>
+
+<!-- ═══ Settings ═══ -->
+<div class="drawer-bg" id="set-bg" onclick="closeSettings()"></div>
+<div class="login" id="settings" style="position:fixed;top:50%;right:50%;transform:translate(50%,-50%);z-index:95;display:none">
+  <div class="logo"><div class="logo-badge">⚙</div> הגדרות</div>
+  <p class="sub">חיבור ל-gov.il — נשמר ישירות ב-Keychain של המחשב</p>
+  <div id="gov-status" class="sub" style="text-align:center;margin-bottom:8px;font-weight:700"></div>
+  <label>תעודת זהות (9 ספרות — איתה נכנסים ל-gov.il)</label>
+  <input id="g-id" inputmode="numeric" placeholder="לדוגמה: 012345678">
+  <label>סיסמת gov.il (הסיסמה של האזור האישי הממשלתי)</label>
+  <div style="position:relative">
+    <input id="g-pw" type="password" autocomplete="off" style="padding-left:42px">
+    <button type="button" onclick="togglePw()" id="pw-eye" title="הצג/הסתר סיסמה"
+      style="position:absolute;left:8px;top:8px;font-size:16px">👁</button>
+  </div>
+  <button class="btn-accent" onclick="saveGovil()">שמור ב-Keychain</button>
+  <label style="margin-top:12px">שיטת התחברות לפורטלים</label>
+  <select id="g-method" onchange="saveLoginMethod(this.value)" style="width:100%">
+    <option value="standard">מהירה — ת״ז + סיסמה אוטומטית (מומלץ)</option>
+    <option value="passkey">Passkey — אישור ביומטרי ידני בטלפון</option>
+    <option value="manual">ידנית — התחברות עצמאית דרך הדפדפן או האתר</option>
+  </select>
+  <label style="margin-top:12px">קבלת קוד אימות</label>
+  <select id="g-otp" onchange="saveOtpMethod(this.value)" style="width:100%">
+    <option value="email">מייל — נקרא אוטומטית, בלי מגע</option>
+    <option value="sms">טלפון (SMS) — הקוד יוזן ידנית בחלון שיקפוץ כאן, או ישירות בדף gov.il</option>
+  </select>
+  <div class="note" id="g-method-note">בשיטה המהירה ההתחברות רצה לבד; במצב SMS יופיע חלון להזנת הקוד מהטלפון.</div>
+  <div id="manual-auth-note" style="display:none;margin-top:10px;padding:10px 14px;background:rgba(255,200,50,.18);border:2px solid #e6a800;border-radius:10px;font-size:13px;line-height:1.6">
+    <b style="font-size:14px">⚠️ אימות ידני</b><br>
+    במצב זה הדפדפן ייפתח ותצטרך <b>להתחבר בעצמך</b> דרך אתר gov.il — באמצעות הטלפון, ביומטרי, או כל שיטה אחרת.<br>
+    לאחר ההתחברות הפורטל ייפתח אוטומטית וההורדה תתחיל — <b>גם אם הדפדפן ייסגר אחר כך</b>.
+  </div>
+  <label style="margin-top:12px">שיתוף Drive לצפייה בלבד — מיילים</label>
+  <input id="g-share" type="text" placeholder="name@gmail.com, other@gmail.com — מופרדים בפסיק" onchange="saveShareEmail(this.value)">
+  <div class="note">אפשר כמה מיילים מופרדים בפסיק. כל מה שעולה לדרייב ישותף איתם אוטומטית בצפייה בלבד — בלי עריכה או תגובות. אישור יופיע כאן:</div>
+  <div id="g-share-ok" class="sub" style="min-height:16px;color:var(--accent-strong)"></div>
+  <label style="margin-top:12px">סוג משתמש (BDR — בתי הדין הרבניים)</label>
+  <select id="g-usermode" onchange="saveUserMode(this.value)" style="width:100%">
+    <option value="private">גורם פרטי</option>
+    <option value="lawyer">עו״ד מייצג</option>
+    <option value="pleader">טו״ר מייצג</option>
+  </select>
+  <label style="margin-top:12px">היקף הורדה (נט המשפט בלבד)</label>
+  <select id="g-scope" onchange="saveCaseScope(this.value)" style="width:100%">
+    <option value="all">כל התיקים (מוריד הכל ללא בחירה)</option>
+    <option value="selected">תיקים מסוימים (בחירה מתוך רשימת הפורטל)</option>
+    <option value="related">תיקים + קשורים (בחירה + הרחבה אוטומטית)</option>
+  </select>
+  <div class="note">ההגדרה משפיעה על לחצן "הורד מנט המשפט" בלשונית סנכרון. BDR תמיד מוריד הכל.</div>
+  <label style="margin-top:12px">מפתח Groq — המרת מסמכים לטקסט (חינמי)</label>
+  <input id="g-groq" type="password" autocomplete="off" placeholder="gsk_…  (מ-console.groq.com)">
+  <div style="display:flex;gap:6px;margin-top:6px">
+    <button class="btn-accent" style="flex:1" onclick="saveGroq()">שמור מפתח Groq</button>
+    <button class="btn-accent" style="flex:1" onclick="testGroq()">בדוק מפתח</button>
+  </div>
+  <div id="g-groq-status" class="sub" style="min-height:16px"></div>
+  <div class="note">עם מפתח שמור, כל PDF סרוק יומר אוטומטית לטקסט בעברית אחרי ההורדה — בלי לחיצה.</div>
+  <div class="note">הסיסמה נכתבת ל-Keychain בלבד — לא נשמרת בקבצים,
+    לא ב-DB, ולא ניתנת לצפייה חוזרת מה-UI.<br>
+    בה משתמשת ההתחברות האוטומטית לפורטלים (NET + BDR).</div>
+  <button style="width:100%;margin-top:10px;font-size:12.5px;color:var(--ink-soft)" onclick="closeSettings()">סגור</button>
+</div>
+
+<!-- ═══ Drawer ═══ -->
+<div class="drawer-bg" id="drawer-bg" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer" style="position:fixed">
+  <button class="x" onclick="closeDrawer()">✕</button>
+  <button class="x" style="right:46px" onclick="minimizeOverlay('drawer')" title="מזער למטה">—</button>
+  <div id="drawer-body"></div>
+</div>
+
+<!-- ═══ Floating document viewer ═══ -->
+<div class="fv-bg" id="fv-bg" onclick="closeTopOverlay()"></div>
+<div class="fv" id="fv" role="dialog" aria-modal="true">
+  <div class="fv-top" id="fv-top">
+    <button class="fv-btn" onclick="closeViewer()" title="סגור (Esc)">✕</button>
+    <button class="fv-btn" onclick="minimizeOverlay('fv')" title="מזער למטה">—</button>
+    <div class="fv-title" id="fv-title"></div>
+    <button class="fv-btn" id="fv-prev" onclick="viewerStep(1)" title="המסמך הקודם">→</button>
+    <button class="fv-btn" id="fv-next" onclick="viewerStep(-1)" title="המסמך הבא">←</button>
+    <button class="fv-btn" onclick="pinDoc(+($('fv-frame').dataset.url.split('/').pop()), $('fv-title').textContent, K?.sub_number||'')" title="תייק עם הערה — נשמרת בסימנייה עם מצביע למקור, בלי לשכפל את הקובץ">📌 תייק</button>
+    <button class="fv-btn" id="fv-open" onclick="const u=$('fv-frame').dataset.url; if(u) window.open(u,'_blank'); else toast('אין קובץ לפתיחה', true);" title="פתח בטאב נפרד">⤢</button>
+  </div>
+  <iframe id="fv-frame" data-url=""></iframe>
+  <div class="fv-doc" id="fv-doc"></div>
+  <div class="fv-fallback" id="fv-fallback"></div>
+</div>
+<div class="fvl" id="fvl" role="dialog" aria-modal="true">
+  <div class="fv-top" id="fvl-top">
+    <button class="fv-btn" onclick="closeDocList()" title="סגור (Esc)">✕</button>
+    <button class="fv-btn" onclick="minimizeOverlay('fvl')" title="מזער למטה">—</button>
+    <div class="fv-title" id="fvl-title"></div>
+    <span class="sub" id="fvl-count" style="flex:0 0 auto"></span>
+  </div>
+  <div class="fvl-body" id="fvl-body"></div>
+</div>
+<div id="mini-tray"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.4.2/mammoth.browser.min.js"></script>
+
+<script src="app.js"></script>
+<script src="viewer.js"></script>
+<script src="settings.js"></script>
+<script src="engine.js"></script>
+<script src="views.js"></script>
+<script>
+if(curUser()) boot(); else $('login').classList.remove('hide');
+</script>
+</body>
+</html>

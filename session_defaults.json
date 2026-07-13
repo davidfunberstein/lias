@@ -1,0 +1,14 @@
+{
+  "lang": "en",
+  "mode": "1",
+  "date_filter": "n",
+  "storage_mode": "both",
+  "login_method": "standard",
+  "bdr_entity_type": "עו\"ד מייצג",
+  "user_mode": "lawyer",
+  "email_enabled": false,
+  "download_related_cases": true,
+  "check_viewers": false,
+  "otp_method": "sms",
+  "share_email": "jstern@law-stern.com"
+}

@@ -1,0 +1,14 @@
+*.pyc
+__pycache__/
+*.db
+*.db-*
+.uploads/
+browser_profile/
+court_documents/
+lias_engine.log
+token.json
+credentials.json
+email_config.json
+
+*.DS_Store
+.fuse_hidden*
