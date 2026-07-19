@@ -9,6 +9,7 @@
   "email_enabled": false,
   "download_related_cases": true,
   "check_viewers": false,
-  "otp_method": "sms",
-  "share_email": "jstern@law-stern.com"
+  "otp_method": "email",
+  "share_email": "",
+  "case_scope": "related"
 }

@@ -323,8 +323,8 @@ def act_submit_otp(otp: str = ""):
 
 @app.post("/api/actions/open_portal/{portal}")
 def act_open_portal(portal: str):
-    if portal not in ("NET", "BDR"):
-        raise HTTPException(400, "portal must be NET or BDR")
+    if portal not in ("NET", "BDR", "ECA"):
+        raise HTTPException(400, "portal must be NET, BDR or ECA")
     return {"job_id": jobs.submit("open_portal", {"portal": portal})}
 
 
@@ -341,11 +341,10 @@ def act_net_list_cases(years_back: int = 20):
 
 
 @app.post("/api/actions/net_smart_download")
-def act_net_smart_download(request: Request):
-    import json as _json
+async def act_net_smart_download(request: Request):
     body = {}
     try:
-        body = request.json()
+        body = await request.json()
     except Exception:
         pass
     return {"job_id": jobs.submit("net_smart_download", body)}
@@ -381,6 +380,12 @@ def act_net_auto_update():
 def act_bdr_batch(force_rerun: bool = False, client_filter: str = ""):
     return {"job_id": jobs.submit("bdr_batch", {"force_rerun": force_rerun,
                                                 "client_filter": client_filter})}
+
+
+@app.post("/api/actions/eca_sync")
+def act_eca_sync():
+    """הורדת כל תיקי ההוצאה לפועל לפי לקוח."""
+    return {"job_id": jobs.submit("eca_sync", {})}
 
 
 @app.post("/api/actions/net_date_search")

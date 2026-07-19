@@ -63,6 +63,12 @@ class NetScraper:
     def __init__(self, page: Page, logger: "Logger | None" = None) -> None:
         self.page = page
         self.logger = logger
+        # Native JS alert/confirm dialogs block Playwright clicks entirely —
+        # auto-accept them so an unavailable-document alert never hangs the run.
+        try:
+            page.on("dialog", lambda d: d.accept())
+        except Exception:
+            pass
 
     def _log(self, msg: str, level: str = "info") -> None:
         prefixed = f"[NET Scraper] {msg}"
@@ -149,21 +155,42 @@ class NetScraper:
         return False
 
     def _check_unavailable_popup(self) -> bool:
-        """Check all frames for 'מסמך אינו זמין כעת' popup and dismiss if found."""
+        """Check all frames for 'מסמך אינו זמין כעת' popup and dismiss if found.
+
+        Dismiss order: click אישור → if the modal is STILL visible, reload the
+        page (the portal sometimes leaves a stuck overlay that blocks all
+        further clicks — the user-reported "צריך אישור או לרענן" case).
+        """
         for ctx in [self.page] + list(self.page.frames):
             try:
                 if hasattr(ctx, "is_detached") and ctx.is_detached():
                     continue
-                if ctx.locator("#MessageLS_DocumentNotAvailable").count() > 0 or \
-                   ctx.locator("*:has-text('אינו זמין')").count() > 0:
-                    close = ctx.locator(self._MODAL_CLOSE_SEL).first
-                    if close.count() > 0:
-                        try:
-                            close.click()
-                            time.sleep(0.3)
-                        except Exception:
-                            pass
-                    return True
+                marker = ctx.locator("#MessageLS_DocumentNotAvailable")
+                found = marker.count() > 0 and marker.first.is_visible(timeout=300)
+                if not found:
+                    txt = ctx.locator("div:has-text('אינו זמין'), span:has-text('אינו זמין')")
+                    found = txt.count() > 0 and txt.first.is_visible(timeout=300)
+                if not found:
+                    continue
+                # Step 1: try to close via אישור / X
+                dismissed = False
+                close = ctx.locator(self._MODAL_CLOSE_SEL).first
+                if close.count() > 0:
+                    try:
+                        close.click()
+                        time.sleep(0.5)
+                        dismissed = not (marker.count() > 0 and marker.first.is_visible(timeout=300))
+                    except Exception:
+                        pass
+                # Step 2: modal still stuck → reload the page to clear the overlay
+                if not dismissed:
+                    self._log("Popup stuck after אישור — reloading page to clear overlay.", "warn")
+                    try:
+                        self.page.reload(wait_until="domcontentloaded", timeout=20000)
+                        time.sleep(2)
+                    except Exception:
+                        pass
+                return True
             except Exception:
                 continue
         return False

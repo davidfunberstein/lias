@@ -187,7 +187,8 @@ def net_sync_current(payload: dict, ctx: JobContext) -> str:
 @handler("bdr_sync_current")
 def bdr_sync_current(payload: dict, ctx: JobContext) -> str:
     """Same as above for BDR (menu option 1) / כנ"ל עבור בתי הדין הרבניים."""
-    if ctx.browser is None:
+    bdr = ctx.bdr_browser or ctx.browser
+    if bdr is None:
         raise RuntimeError("no browser attached / אין דפדפן מחובר")
     ctx.progress(0.05, "starting legacy BDR sync / מפעיל סנכרון בתי הדין")
 
@@ -196,7 +197,10 @@ def bdr_sync_current(payload: dict, ctx: JobContext) -> str:
         run_bdr_download(page, output_dir=config.COURT_DOCS_DIR)
         return "legacy sync done"
 
+    _saved = ctx.browser
+    ctx.browser = bdr
     _run_portal(ctx, "bdr_sync", _run, timeout=3600)
+    ctx.browser = _saved
     ctx.progress(0.85, "re-importing CSVs / מייבא CSV מחדש")
     n = _reimport_folder(config.COURT_DOCS_DIR / "downloads")
     _drive_sync(ctx, "אחרי סנכרון בד\"ר")
@@ -204,19 +208,39 @@ def bdr_sync_current(payload: dict, ctx: JobContext) -> str:
     return f"bdr sync ok, {n} docs re-imported"
 
 
+@handler("eca_sync")
+def eca_sync(payload: dict, ctx: JobContext) -> str:
+    """EN: download all ECA (הוצאה לפועל) cases — motions + decisions per
+        process — into downloads/{client}/הוצאה לפועל/{case}/{process}/.
+    HE: הורדת כל תיקי ההוצאה לפועל, בקשות והחלטות לפי הליך, לתיקיית הלקוח."""
+    if ctx.browser is None:
+        raise RuntimeError("no browser attached / אין דפדפן מחובר")
+    ctx.progress(0.05, "מתחבר להוצאה לפועל…")
+
+    def _run(page):
+        import sys
+        sys.path.insert(0, str(config.PROJECT_ROOT))
+        from eca_download import run_eca_download
+        cases = payload.get("cases") or None
+        return run_eca_download(page, config.COURT_DOCS_DIR, cases_filter=cases)
+
+    result = _run_portal(ctx, "eca_sync", _run, timeout=3600)
+    _drive_sync(ctx, "אחרי סנכרון הוצל\"פ")
+    return str(result)
+
+
 @handler("open_portal")
 def open_portal(payload: dict, ctx: JobContext) -> str:
     """Open the court portal in a visible Playwright browser with auto-login."""
-    if ctx.browser is None:
-        raise RuntimeError("no browser attached")
     portal = payload.get("portal", "NET")
-    url = config.NET_HOME_URL if portal == "NET" else config.BDR_FILES_URL
+    target_browser = (ctx.bdr_browser or ctx.browser) if portal == "BDR" else ctx.browser
+    if target_browser is None:
+        raise RuntimeError("no browser attached")
+    url = {"NET": config.NET_HOME_URL, "BDR": config.BDR_FILES_URL,
+           "ECA": config.ECA_URL}.get(portal, config.NET_HOME_URL)
 
-    # Headless by default — the NEW UI shows a live embedded browser window
-    # instead of a real popup. Pass visible=true to force a real window.
-    # ברירת מחדל: בלי חלון אמיתי — יש חלון מוטמע חי ב-UI החדש.
-    if payload.get("visible") and ctx.browser._headless:
-        ctx.browser.show()
+    if payload.get("visible") and target_browser._headless:
+        target_browser.show()
 
     def _open_and_login(page):
         from core.connection import ensure_logged_in
@@ -226,7 +250,10 @@ def open_portal(payload: dict, ctx: JobContext) -> str:
         return "opened"
 
     # 300s — email-OTP login can take a couple of minutes / התחברות עם OTP איטית
+    _saved = ctx.browser
+    ctx.browser = target_browser
     _run_portal(ctx, "open_portal", _open_and_login, timeout=300)
+    ctx.browser = _saved
     return f"opened {portal} with auto-login"
 
 
@@ -380,7 +407,7 @@ def net_download_all(payload: dict, ctx: JobContext) -> str:
     HE: הורדת כל התיקים דרך חיפוש טווח תאריכים — ללא תלות בתיקים קשורים."""
     if ctx.browser is None:
         raise RuntimeError("no browser attached / אין דפדפן מחובר")
-    years_back = int(payload.get("years_back", 20))
+    years_back = min(int(payload.get("years_back", 10)), 10)
     ctx.progress(0.05, f"הורדת כל התיקים — {years_back} שנים אחורה (ללא תלות בקשורים)")
 
     def _run(page):
@@ -647,8 +674,10 @@ def net_auto_update(payload: dict, ctx: JobContext) -> str:
 
 @handler("bdr_batch")
 def bdr_batch(payload: dict, ctx: JobContext) -> str:
-    """Run BdrBatchRunner then re-import all CSVs."""
-    if ctx.browser is None:
+    """Run BdrBatchRunner then re-import all CSVs.
+    Uses the dedicated BDR browser if available, otherwise falls back to the shared one."""
+    bdr = ctx.bdr_browser or ctx.browser
+    if bdr is None:
         raise RuntimeError("no browser attached")
     ctx.progress(0.05, "starting BDR batch")
 
@@ -662,12 +691,17 @@ def bdr_batch(payload: dict, ctx: JobContext) -> str:
         from core.download import SESSION_SETTINGS
         run_settings = {**SESSION_SETTINGS,
                         "force_rerun": payload.get("force_rerun", False),
-                        "client_filter": payload.get("client_filter", "")}
+                        "client_filter": payload.get("client_filter", ""),
+                        "user_mode": payload.get("user_mode", "lawyer")}
         batch = BdrBatchRunner(page, logger=None)
         batch.run(run_settings, config.COURT_DOCS_DIR)
         return "bdr batch done"
 
+    # Use the BDR browser directly
+    _saved_browser = ctx.browser
+    ctx.browser = bdr
     _run_portal(ctx, "bdr_batch", _run, timeout=7200)
+    ctx.browser = _saved_browser
     ctx.progress(0.9, "re-importing CSVs")
     n = _reimport_folder(config.COURT_DOCS_DIR / "downloads")
     jobs.broadcast({"type": "file", "name": "bdr-batch", "status": "SYNC_DONE"})
@@ -726,7 +760,7 @@ def net_list_cases(payload: dict, ctx: JobContext) -> str:
     Does NOT download — just discovers what's available."""
     if ctx.browser is None:
         raise RuntimeError("no browser attached")
-    years_back = int(payload.get("years_back", 20))
+    years_back = min(int(payload.get("years_back", 10)), 10)
 
     def _run(page):
         from core.connection import ensure_logged_in
@@ -747,14 +781,15 @@ def net_list_cases(payload: dict, ctx: JobContext) -> str:
         to_str = today.strftime("%d/%m/%Y")
 
         cases = []
-        if navigate_to_my_cases(page):
-            if fill_my_cases_dates_and_search(page, from_str, to_str):
-                cases = extract_cases_from_my_cases_grid(page)
+        # Prefer date-search ("תיקים לתאריך פתיחה") — filters by date range
+        if navigate_to_date_search(page):
+            if fill_date_range_and_search(page, from_str, to_str):
+                cases = extract_cases_from_search_grid(page)
 
         if not cases:
-            if navigate_to_date_search(page):
-                if fill_date_range_and_search(page, from_str, to_str):
-                    cases = extract_cases_from_search_grid(page)
+            if navigate_to_my_cases(page):
+                if fill_my_cases_dates_and_search(page, from_str, to_str):
+                    cases = extract_cases_from_my_cases_grid(page)
 
         parseable = []
         for c in cases:
@@ -769,6 +804,7 @@ def net_list_cases(payload: dict, ctx: JobContext) -> str:
                     "court": c.get("CourtName", ""),
                     "status": c.get("CaseStatusName", ""),
                     "type": c.get("CaseTypeShortName", ""),
+                    "interest": c.get("CaseInterestName", ""),
                 })
 
         jobs.broadcast({"type": "net_cases", "cases": parseable,
@@ -796,26 +832,34 @@ def net_smart_download(payload: dict, ctx: JobContext) -> str:
     selected_ids = payload.get("cases", [])  # list of {case_number, mmyy, display_id}
     if isinstance(selected_ids, str):
         selected_ids = json.loads(selected_ids)
-    years_back = int(payload.get("years_back", 20))
+    years_back = min(int(payload.get("years_back", 10)), 10)
 
     _cancel_flags[ctx.job_id] = False
     stats = {"done": 0, "total": 0, "failed": 0, "docs_downloaded": 0,
-             "docs_in_current": 0, "current_case": "", "start_time": 0.0,
-             "cases_queue": []}
+             "docs_in_current": 0, "current_case": "", "current_name": "",
+             "start_time": 0.0, "cases_queue": [], "cases_detail": [],
+             "output_dir": str(config.COURT_DOCS_DIR), "completed_cases": []}
 
     def _broadcast_stats():
         import time as _t
         elapsed = _t.time() - stats["start_time"] if stats["start_time"] else 0
         speed = stats["docs_downloaded"] / elapsed * 60 if elapsed > 10 else 0
+        remaining = stats["total"] - stats["done"] - stats["failed"]
+        eta_sec = round(remaining / speed * 60) if speed > 0 else 0
         jobs.broadcast({"type": "download_stats",
                         "done": stats["done"], "total": stats["total"],
                         "failed": stats["failed"],
                         "docs_downloaded": stats["docs_downloaded"],
                         "docs_in_current": stats["docs_in_current"],
                         "current_case": stats["current_case"],
+                        "current_name": stats.get("current_name", ""),
                         "speed_per_min": round(speed, 1),
                         "elapsed_sec": round(elapsed),
-                        "remaining": stats["total"] - stats["done"] - stats["failed"],
+                        "remaining": remaining,
+                        "eta_sec": eta_sec,
+                        "cases_detail": stats.get("cases_detail", []),
+                        "completed_cases": stats.get("completed_cases", [])[-10:],
+                        "output_dir": stats.get("output_dir", ""),
                         "job_id": ctx.job_id})
 
     def _run(page):
@@ -857,12 +901,20 @@ def net_smart_download(payload: dict, ctx: JobContext) -> str:
                 parsed = _parse_display_id(did)
                 if parsed:
                     queue.append({"display_id": did, "case_number": parsed[0],
-                                  "mmyy": parsed[1], "name": c.get("CaseName", "")})
+                                  "mmyy": parsed[1], "name": c.get("CaseName", ""),
+                                  "court": c.get("CourtName", ""),
+                                  "status": c.get("CaseStatusName", ""),
+                                  "type": c.get("CaseTypeShortName", ""),
+                                  "interest": c.get("CaseInterestName", "")})
         else:
             queue = list(selected_ids)
 
         stats["total"] = len(queue)
         stats["cases_queue"] = [q.get("display_id", "") for q in queue]
+        stats["cases_detail"] = [{"id": q.get("display_id",""), "name": q.get("name",""),
+                                   "court": q.get("court",""), "type": q.get("type",""),
+                                   "status": q.get("status",""), "interest": q.get("interest","")}
+                                  for q in queue]
         ctx.progress(0.08, f"נמצאו {len(queue)} תיקים — מתחיל הורדה")
         _broadcast_stats()
 
@@ -877,6 +929,7 @@ def net_smart_download(payload: dict, ctx: JobContext) -> str:
             my = str(case_info.get("mmyy", ""))
             did = case_info.get("display_id", f"{cn}-{my}")
             stats["current_case"] = did
+            stats["current_name"] = case_info.get("name", "")
             ctx.progress(idx / (len(queue) + 1),
                          f"({idx}/{len(queue)}) מוריד תיק {did}")
             _broadcast_stats()
@@ -890,7 +943,9 @@ def net_smart_download(payload: dict, ctx: JobContext) -> str:
 
                 run_net_download(page, output_dir=config.COURT_DOCS_DIR)
                 stats["done"] += 1
-                stats["docs_downloaded"] += 1  # rough; real count comes from CSV
+                stats["docs_downloaded"] += 1
+                stats["completed_cases"].append({"id": did, "name": case_info.get("name",""),
+                                                  "status": "ok"})
 
                 # related cases mode — descend into related tab
                 if mode == "related":

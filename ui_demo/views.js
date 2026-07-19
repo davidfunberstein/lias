@@ -195,10 +195,25 @@ function fillClient(){
   };
   const byArkaa = {};
   C.case_cards.forEach(c=>{ (byArkaa[c.arkaa]=byArkaa[c.arkaa]||[]).push(c); });
+  const _arkaaOrder = {'בית דין רבני הגדול':1, 'בית דין רבני':2, 'בית דין רבני אזורי':3,
+    'בית משפט עליון':4, 'בית משפט מחוזי':5, 'בית משפט לענייני משפחה':6,
+    'בית משפט שלום':7, 'בית משפט':8, 'הוצאה לפועל':9};
+  const _arkaaIcon = a => a.includes('רבני')?'🕍': a.includes('הוצאה')?'⚖️':'🏛️';
+  // Clear visual section per ערכאה: full-width divider header with icon,
+  // count and doc total — intuitive scanning instead of a flat card soup.
   $('case-cards').innerHTML = Object.entries(byArkaa)
-    .sort((a,b)=>b[1].length-a[1].length)
-    .map(([ark,arr])=>`<div class="c12" style="font-weight:800;font-size:13.5px;margin:6px 0 -6px">${ark} · ${arr.length} תיקים</div>`
-      + arr.map(card).join('')).join('')
+    .sort((a,b)=>(_arkaaOrder[a[0]]||99)-(_arkaaOrder[b[0]]||99))
+    .map(([ark,arr])=>{
+      const docs = arr.reduce((s,c)=>s+(c.docs||0),0);
+      return `<div class="c12" style="display:flex;align-items:center;gap:10px;
+          margin:14px 0 -4px;padding:9px 14px;border-radius:10px;
+          background:rgba(47,125,246,.10);border:1px solid rgba(47,125,246,.25)">
+        <span style="font-size:16px">${_arkaaIcon(ark)}</span>
+        <b style="font-size:14px">${ark}</b>
+        <span style="font-size:12px;opacity:.65">${arr.length} תיקים · ${nf.format(docs)} מסמכים</span>
+      </div>`
+      + arr.sort((a,b)=>(b.docs||0)-(a.docs||0)).map(card).join('');
+    }).join('')
     || '<div class="empty c12">אין תיקים ללקוח זה</div>';
   donut('ch-sub','sub-legend', C.submitters, {client_id:C.client_id});
   monthlyChart('ch-cmonthly', C.monthly, {client_id:C.client_id});
@@ -242,7 +257,7 @@ function _sortDocs(docs){
     name: d=>(d.logical_name||d.physical_name||''),
     type: d=>(d.doc_type||''),
     submitter: d=>((d.submitter_est||'').trim()||'~'),
-    date: d=>{const p=(d.submission_date||'').split('/'); return p.length===3? p[2]+p[1]+p[0] : '';},
+    date: d=>{const p=(d.submission_date||'').split('/'); return p.length===3? p[2]+p[1].padStart(2,'0')+p[0].padStart(2,'0') : '';},
     pages: d=>+(d.pages||0),
     status: d=>(d.download_status||''),
   }[caseSort.col];
@@ -441,6 +456,7 @@ function renderTranscribe(){
     </div>
   </div>`;
   loadTranscriptions();
+  _restoreActiveTranscriptions();
 }
 async function handleAudioDrop(files){
   if(!files?.length) return;
@@ -461,50 +477,74 @@ async function handleAudioDrop(files){
   }
   if($('tr-file')) $('tr-file').value='';
 }
+const _activeTranscriptions = {};
 function pollTranscription(jobId, fname){
-  const el=$('tr-active-jobs'); if(!el) return;
-  const div = document.createElement('div');
-  div.className='tr-progress'; div.id='tr-job-'+jobId;
-  div.style.cssText='border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px';
-  div.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-    <b>🎙 ${fname}</b> <span id="tr-pct-${jobId}" style="font-size:12px;color:var(--ink-soft)">0%</span></div>
-    <span id="tr-msg-${jobId}" style="font-size:12px;color:var(--ink-soft)">בתור…</span>
-    <div style="height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin:8px 0">
-      <div id="tr-bar-${jobId}" style="height:100%;width:0;background:var(--accent);transition:width .4s"></div></div>
-    <div id="tr-partial-${jobId}" style="display:none;max-height:180px;overflow-y:auto;font-size:12px;line-height:1.8;
-      background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:8px;
-      direction:rtl;white-space:pre-wrap;font-family:Heebo,sans-serif;color:var(--ink-soft)"></div>`;
-  el.appendChild(div);
+  _activeTranscriptions[jobId] = {id:jobId, fname, state:'queued', progress:0, message:'בתור…', partial_lines:[]};
+  _renderTrJob(jobId);
   const poll = async()=>{
     try{
       const r = await (await fetch('/api/transcription_status?id='+jobId)).json();
-      const msg=$('tr-msg-'+jobId), bar=$('tr-bar-'+jobId), pct=$('tr-pct-'+jobId);
-      if(msg) msg.textContent = r.message||r.state||'';
-      if(bar) bar.style.width = ((r.progress||0)*100)+'%';
-      if(pct) pct.textContent = Math.round((r.progress||0)*100)+'%';
-      const partial=$('tr-partial-'+jobId);
-      if(partial && r.partial_lines?.length){
-        partial.style.display='block';
-        partial.textContent = r.partial_lines.slice(-20).join('\n');
-        partial.scrollTop = partial.scrollHeight;
-      }
+      const t = _activeTranscriptions[jobId];
+      if(t){ t.state=r.state; t.progress=r.progress||0; t.message=r.message||r.state||'';
+             t.partial_lines=r.partial_lines||[]; t.md_name=r.md_name; }
+      _renderTrJob(jobId);
+      if(typeof refreshFab==='function') refreshFab();
       if(r.state==='done'){
         _trNotify(fname);
-        div.innerHTML=`<div style="display:flex;align-items:center;gap:8px">
-          <b style="color:var(--accent-strong)">✅ ${fname}</b> — הושלם!
-          <a href="#" onclick="event.preventDefault();viewTranscription('${r.md_name}')"
-            style="color:var(--accent-strong);font-weight:700;text-decoration:underline">צפה בתמלול</a></div>`;
-        loadTranscriptions();
+        if(route.v==='transcribe') loadTranscriptions();
         return;
       }
-      if(r.state==='error'){
-        div.innerHTML=`<b style="color:var(--danger)">❌ ${fname}</b> — ${r.message||'שגיאה'}`;
+      if(r.state==='error') return;
+      if(r.error){
+        const t=_activeTranscriptions[jobId];
+        if(t){ t.state='error'; t.message='השרת אותחל — יש להעלות שוב'; }
+        _renderTrJob(jobId);
         return;
       }
       setTimeout(poll, 2000);
     }catch(e){ setTimeout(poll, 3000); }
   };
   poll();
+}
+function _renderTrJob(jobId){
+  const t = _activeTranscriptions[jobId]; if(!t) return;
+  let div = $('tr-job-'+jobId);
+  if(!div){
+    const el=$('tr-active-jobs'); if(!el) return;
+    div = document.createElement('div');
+    div.className='tr-progress'; div.id='tr-job-'+jobId;
+    div.style.cssText='border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px';
+    el.appendChild(div);
+  }
+  if(t.state==='done'){
+    div.innerHTML=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+      <b style="color:var(--accent-strong)">✅ ${t.fname}</b> — הושלם!
+      <a href="#" onclick="event.preventDefault();viewTranscription('${t.md_name}')"
+        style="color:var(--accent-strong);font-weight:700;text-decoration:underline">צפה בתמלול</a>
+      <a href="/api/transcription_audio/${t.id}" download style="font-size:11px;color:var(--ink-soft);text-decoration:underline">⬇ הורד הקלטה</a></div>
+      <audio controls preload="none" src="/api/transcription_audio/${t.id}" style="width:100%;height:32px"></audio>`;
+    return;
+  }
+  if(t.state==='error'){
+    div.innerHTML=`<b style="color:var(--danger)">❌ ${t.fname}</b> — ${t.message||'שגיאה'}`;
+    return;
+  }
+  div.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+    <b>🎙 ${t.fname}</b>
+    <span style="font-size:12px;color:var(--ink-soft)">${Math.round(t.progress*100)}%
+      <a href="/api/transcription_audio/${t.id}" download style="margin-right:8px;color:var(--ink-soft)">⬇</a></span></div>
+    <span style="font-size:12px;color:var(--ink-soft)">${t.message}</span>
+    <div style="height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin:8px 0">
+      <div style="height:100%;width:${t.progress*100}%;background:var(--accent);transition:width .4s"></div></div>
+    <audio controls preload="none" src="/api/transcription_audio/${t.id}" style="width:100%;height:32px;margin:6px 0"></audio>`
+    + (t.partial_lines?.length ? `<div style="max-height:260px;overflow-y:auto;font-size:12px;line-height:1.8;
+      background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:8px;
+      direction:rtl;white-space:pre-wrap;font-family:Heebo,sans-serif;color:var(--ink-soft)">${t.partial_lines.join('\n')}</div>` : '');
+}
+function _restoreActiveTranscriptions(){
+  for(const jobId of Object.keys(_activeTranscriptions)){
+    _renderTrJob(jobId);
+  }
 }
 function _trNotify(fname){
   toast('תמלול הושלם: '+fname+' ✓');

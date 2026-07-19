@@ -5,7 +5,7 @@ Completely separate from the existing system:
   * Existing UI :  python -m LIAS.run          -> http://localhost:8400
   * This demo   :  python3 run_ui_demo.py      -> http://localhost:8500
 
-Reads LIAS/lias.db in READ-ONLY mode. Never writes anything.
+Reads lias.db (app root, fallback LIAS/lias.db) in READ-ONLY mode.
 Falls back to built-in demo data when the DB is missing, so the
 dashboard can be previewed on any machine.
 
@@ -46,7 +46,9 @@ from ui_modules.transcription import (
 
 # ── global config ───────────────────────────────────────────────────────────
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(HERE, "LIAS", "lias.db")
+DB_PATH = os.path.join(HERE, "lias.db")
+if not os.path.exists(DB_PATH):
+    DB_PATH = os.path.join(HERE, "LIAS", "lias.db")
 UI_PATH = os.path.join(HERE, "ui_demo", "index.html")
 PORT = int(os.environ.get("LIAS_DEMO_PORT", "8500"))
 HOST = os.environ.get("LIAS_HOST", "127.0.0.1")
@@ -273,6 +275,30 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, fh.read().encode("utf-8"), "text/markdown; charset=utf-8")
             else:
                 self._json({"error": "not found"}, 404)
+        elif re.match(r"^/api/transcription_audio/(.+)$", path):
+            import mimetypes
+            from urllib.parse import quote
+            job_id = re.match(r"^/api/transcription_audio/(.+)$", path).group(1)
+            upload_dir = os.path.join(TRANSCRIPTIONS_DIR, ".uploads")
+            found = None
+            if os.path.isdir(upload_dir):
+                for f in os.listdir(upload_dir):
+                    if f.startswith(job_id):
+                        found = os.path.join(upload_dir, f)
+                        break
+            if found and os.path.isfile(found):
+                mime = mimetypes.guess_type(found)[0] or "audio/mpeg"
+                with open(found, "rb") as fh:
+                    body = fh.read()
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Disposition",
+                    f"attachment; filename*=UTF-8''{quote(os.path.basename(found), safe='')}")
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self._json({"error": "audio not found"}, 404)
         elif path == "/api/transcription_status":
             jid = params.get("id", "")
             with _transcription_lock:

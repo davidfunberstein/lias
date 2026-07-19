@@ -185,6 +185,7 @@ def main() -> int:
 
     # 1) browser — dedicated thread, optional / דפדפן — Thread ייעודי, אופציונלי
     browser = None
+    bdr_browser = None
     try:
         from .browser_manager import BrowserManager
         import playwright  # noqa: F401 — presence check / בדיקת נוכחות
@@ -194,13 +195,21 @@ def main() -> int:
         _headless = _os.environ.get("LIAS_HEADLESS") == "1"
         browser = BrowserManager(headless=_headless, restore=_restore)
         browser.start()
-        print("browser thread up / Thread הדפדפן למעלה")
+        print("browser thread up (NET) / Thread הדפדפן למעלה")
+        # Separate BDR browser with its own profile
+        bdr_browser = BrowserManager(
+            headless=_headless, restore=_restore,
+            profile_dir=config.BROWSER_PROFILE_BDR_DIR,
+            log=lambda m: print(f"[BDR] {m}"),
+        )
+        bdr_browser.start()
+        print("browser thread up (BDR) / Thread דפדפן BDR למעלה")
     except ImportError:
         print("!! playwright not installed — browser jobs disabled, UI/DB still work")
         print("!! playwright לא מותקן — משימות דפדפן כבויות, ה-UI וה-DB עובדים")
 
     # 2) workers / עובדים
-    pool = jobs.WorkerPool(browser=browser)
+    pool = jobs.WorkerPool(browser=browser, bdr_browser=bdr_browser)
     pool.start()
     jobs._pool = pool
     print(f"{config.JOB_WORKERS} workers up / עובדים למעלה")
@@ -238,6 +247,11 @@ def main() -> int:
         try:
             if browser:
                 browser.shutdown()
+        except Exception:
+            pass
+        try:
+            if bdr_browser:
+                bdr_browser.shutdown()
         except Exception:
             pass
 

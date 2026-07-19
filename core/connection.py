@@ -28,12 +28,42 @@ def _progress(message: str) -> None:
 class ConnectionType(Enum):
     BDR = "bdr"
     NET = "net"
+    ECA = "eca"
 
 
 SHARED_PROFILE_DIR = "./browser_profile"
 
 NET_URL = "https://www.court.gov.il/ngcs.web.site/homepage.aspx"
 BDR_URL = "https://sides.rbc.gov.il/Pages/FilesList.aspx"
+ECA_URL = "https://publicsso.eca.gov.il/he/home/OpenCase"
+
+
+def _is_already_logged_in_eca(page: Page) -> bool:
+    """Authenticated ECA session = on publicsso.eca.gov.il, not on login.gov.il,
+    and the Angular app rendered content (case carousel or dashboard)."""
+    try:
+        url = page.url or ""
+        if "login.gov.il" in url or "publicsso.eca.gov.il" not in url:
+            return False
+        return page.locator("#carousel-cases, app-mycases-cards, mat-card").count() > 0
+    except Exception:
+        return False
+
+
+def _click_eca_system_choice(page: Page) -> None:
+    """gov.il sometimes asks which system to enter (בד"ר נט / הוצאה לפועל) —
+    pick הוצאה לפועל."""
+    for sel in ('button:has-text("הוצאה לפועל")', 'a:has-text("הוצאה לפועל")',
+                'input[value*="הוצאה לפועל"]'):
+        try:
+            el = page.locator(sel).first
+            if el.count() > 0 and el.is_visible(timeout=1500):
+                el.click()
+                _progress("נבחרה מערכת: הוצאה לפועל")
+                time.sleep(2)
+                return
+        except Exception:
+            continue
 
 
 class UserGoBack(Exception):
@@ -72,7 +102,7 @@ def recover_browser_session(
         _log(f"ניסיון שחזור {attempt}/{max_retries}...")
         try:
             if is_page_alive(page):
-                url = NET_URL if portal == "NET" else BDR_URL
+                url = ECA_URL if portal == "ECA" else (NET_URL if portal == "NET" else BDR_URL)
                 page.goto(url, wait_until="domcontentloaded", timeout=20000)
                 _log("הדפדפן עדיין חי — ניווט מחדש לפורטל.")
                 return page
@@ -90,7 +120,7 @@ def recover_browser_session(
                 args=["--disable-blink-features=AutomationControlled"],
             )
             new_page = browser.new_page()
-            url = NET_URL if portal == "NET" else BDR_URL
+            url = ECA_URL if portal == "ECA" else (NET_URL if portal == "NET" else BDR_URL)
             new_page.goto(url, wait_until="domcontentloaded", timeout=25000)
             _log("דפדפן חדש הופעל בהצלחה.")
 
@@ -113,6 +143,12 @@ def recover_browser_session(
                         if _is_already_logged_in_bdr(new_page):
                             break
                         time.sleep(1)
+            elif portal == "ECA":
+                if not _is_already_logged_in_eca(new_page):
+                    _click_eca_system_choice(new_page)
+                    _run_gov_autologin(new_page, "ECA")
+                    time.sleep(2)
+                    _click_eca_system_choice(new_page)
             else:
                 if not _is_already_logged_in_net(new_page):
                     from core.gov_login import handle_net_portal_entry
@@ -148,9 +184,13 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
     )
     from core.download import SESSION_SETTINGS
 
-    is_net = portal.upper() == "NET"
-    url = NET_URL if is_net else BDR_URL
-    already = _is_already_logged_in_net if is_net else _is_already_logged_in_bdr
+    portal_u = portal.upper()
+    is_net = portal_u == "NET"
+    is_eca = portal_u == "ECA"
+    url = ECA_URL if is_eca else (NET_URL if is_net else BDR_URL)
+    already = (_is_already_logged_in_eca if is_eca
+               else _is_already_logged_in_net if is_net
+               else _is_already_logged_in_bdr)
 
     if already(page):
         return True
@@ -171,7 +211,24 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
         _progress("מחובר ✓ (session קיים)")
         return True
 
-    if is_net:
+    if is_eca:
+        # ECA redirects straight to login.gov.il; a system-choice screen
+        # (בד"ר נט / הוצאה לפועל) may appear before or after the login.
+        _click_eca_system_choice(page)
+        _run_gov_autologin(page, "ECA")
+        for _ in range(3):
+            time.sleep(2)
+            _click_eca_system_choice(page)
+            if already(page):
+                break
+            # SSO valid but landed elsewhere — go back to the cases page
+            if "login.gov.il" not in (page.url or ""):
+                try:
+                    page.goto(ECA_URL, wait_until="domcontentloaded", timeout=25000)
+                    time.sleep(2)
+                except Exception:
+                    pass
+    elif is_net:
         _progress("לוחץ 'הזדהות לאומית'")
         handle_net_portal_entry(page)
         _run_gov_autologin(page, "NET")

@@ -6,7 +6,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-CHUNK_DURATION_S = 600
+CHUNK_DURATION_S = 300
 CHUNK_OVERLAP_S = 15
 MAX_PARALLEL_CHUNKS = 4
 
@@ -94,6 +94,20 @@ def _transcribe_chunk(model, chunk_path: str, time_offset: float,
             pct = 0.15 + 0.80 * (done / total_chunks)
             job.update(progress=pct,
                        message=f"מתמלל… {done}/{total_chunks} חלקים")
+            # Auto-save partial after each chunk
+            partial = job.get("partial_lines", [])
+            if partial:
+                try:
+                    tr_dir = job.get("transcriptions_dir", "")
+                    orig = job.get("original_name", "")
+                    if tr_dir and orig:
+                        stem = Path(orig).stem
+                        p = os.path.join(tr_dir, f"{stem}_partial.md")
+                        partial_text = "\n\n".join(partial)
+                        with open(p, "w", encoding="utf-8") as fh:
+                            fh.write(f"---\nsource: {orig}\nstatus: in-progress ({done}/{total_chunks})\n---\n\n{partial_text}\n")
+                except Exception:
+                    pass
     return results
 
 
@@ -104,6 +118,9 @@ def _transcribe_worker(job_id: str, audio_path: str, language: str,
         with _transcription_lock:
             _transcription_jobs[job_id].update(state=state, **kw)
 
+    with _transcription_lock:
+        _transcription_jobs[job_id]["transcriptions_dir"] = transcriptions_dir
+        _transcription_jobs[job_id]["original_name"] = original_name
     _update("loading_model", progress=0.05, message="טוען מודל תמלול…")
     try:
         from faster_whisper import WhisperModel  # noqa: F401
@@ -154,7 +171,24 @@ def _transcribe_worker(job_id: str, audio_path: str, language: str,
                     errors.append(f"חלק {ci + 1}: {exc}")
 
     if all(r is None for r in all_results):
-        _update("error", message="שגיאה בתמלול: " + "; ".join(errors))
+        # Save partial results if any exist
+        with _transcription_lock:
+            job = _transcription_jobs.get(job_id, {})
+            partial = job.get("partial_lines", [])
+        if partial:
+            stem = Path(original_name).stem
+            md_path = os.path.join(transcriptions_dir, f"{stem}_partial.md")
+            partial_text = "\n\n".join(partial)
+            md_content = (f"---\nsource: {original_name}\nlanguage: {language}\n"
+                          f"status: partial (errors during transcription)\n"
+                          f"transcribed_at: {datetime.now().isoformat(timespec='seconds')}\n"
+                          f"---\n\n# תמלול חלקי — {stem}\n\n{partial_text}\n")
+            with open(md_path, "w", encoding="utf-8") as fh:
+                fh.write(md_content)
+            _update("error", message="שגיאה בתמלול (נשמר חלקי): " + "; ".join(errors),
+                    md_path=md_path, md_name=f"{stem}_partial.md")
+        else:
+            _update("error", message="שגיאה בתמלול: " + "; ".join(errors))
         return
 
     _update("merging", progress=0.96, message="ממזג תוצאות…")
@@ -199,6 +233,12 @@ transcribed_at: {datetime.now().isoformat(timespec='seconds')}
     _update("done", progress=1.0, message="הושלם ✓",
             md_path=md_path, md_name=f"{stem}.md",
             duration=total_dur)
+    # Remove partial file
+    partial_path = os.path.join(transcriptions_dir, f"{stem}_partial.md")
+    try:
+        os.unlink(partial_path)
+    except OSError:
+        pass
 
     try:
         os.unlink(audio_path)

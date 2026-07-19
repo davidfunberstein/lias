@@ -755,24 +755,43 @@ class BdrBatchRunner:
 
     # ── Navigation ────────────────────────────────────────────────────────────
 
-    def _select_all_cases(self) -> None:
-        """Open status dropdown → 'הכל' → click 'אתר'."""
+    def _select_status_and_search(self, option_index: int, label: str) -> bool:
+        """Pick status option #option_index from the dropdown, click 'אתר',
+        and return True only if group rows are actually visible afterwards."""
         try:
-            self._log("בוחר 'הכל' מהתפריט...")
+            self._log(f"בוחר '{label}' מהתפריט...")
             btn = self.page.locator(SEL_DROPDOWN_BTN)
             btn.wait_for(timeout=10000)
             btn.click(force=True)
             time.sleep(1)
-            self.page.locator(SEL_OPTION_HAKOL).click(force=True)
+            opt_sel = SEL_OPTION_HAKOL.replace("LBI0T0", f"LBI{option_index}T0")
+            self.page.locator(opt_sel).click(force=True)
             time.sleep(0.5)
         except Exception as e:
-            self._log(f"שגיאה בתפריט: {e}", "warn")
+            self._log(f"שגיאה בתפריט ({label}): {e}", "warn")
         try:
             self._log("לוחץ 'אתר'...")
             self.page.locator(SEL_SEARCH_BTN).click(force=True)
             time.sleep(4)
         except Exception as e:
             self._log(f"שגיאה ב'אתר': {e}", "error")
+        try:
+            self.page.wait_for_selector("tr[id*='DXGroupRow']", timeout=15000)
+            return True
+        except Exception:
+            return False
+
+    def _select_all_cases(self) -> None:
+        """Level 1: 'הכל' + 'אתר'. Level 2 fallback: the portal occasionally
+        returns an empty grid for 'הכל' — walk the individual status options
+        (פתוח/סגור וכו') until one of them yields rows."""
+        if self._select_status_and_search(0, "הכל"):
+            return
+        self._log("'הכל' לא החזיר תיקים — דרגה 2: מנסה סטטוסים בודדים.", "warn")
+        for idx in range(1, 5):
+            if self._select_status_and_search(idx, f"סטטוס #{idx}"):
+                return
+        self._log("אף סטטוס לא החזיר תיקים.", "error")
 
     def _expand_group_js(self, row_index: int) -> bool:
         """Expand a DXGroupRow by calling aspxGVExpandRow() via JS."""

@@ -37,6 +37,38 @@ def _parse_display_id(display_id: str) -> tuple[str, str] | None:
     return None
 
 
+def _open_case_search_dropdown(page: "Page") -> None:
+    """Open the Bootstrap 'איתור תיקים' dropdown so sub-items become visible.
+
+    The menu uses data-bs-toggle="dropdown" inside #header_UpperMenu1_tdSearchCase.
+    """
+    container = page.locator("#header_UpperMenu1_tdSearchCase")
+    try:
+        menu = container.locator(".dropdown-menu").first
+        if menu.count() > 0 and menu.is_visible(timeout=500):
+            print("[Search] Dropdown already open.")
+            return
+    except Exception:
+        pass
+
+    selectors = [
+        '#header_UpperMenu1_tdSearchCase > button.dropdown-toggle',
+        '#header_UpperMenu1_tdSearchCase button:has-text("איתור תיקים")',
+        'button:has-text("איתור תיקים")',
+    ]
+    for sel in selectors:
+        try:
+            btn = page.locator(sel).first
+            if btn.count() > 0:
+                btn.click()
+                time.sleep(0.5)
+                print(f"[Search] Clicked dropdown toggle 'איתור תיקים' via {sel}")
+                return
+        except Exception:
+            continue
+    print("[Search] Could not find dropdown toggle 'איתור תיקים'.")
+
+
 def navigate_to_my_cases(page: "Page") -> bool:
     """Click 'איתור תיקים' → 'התיקים שלי' and wait for the date form.
 
@@ -44,8 +76,13 @@ def navigate_to_my_cases(page: "Page") -> bool:
     (#fromDateCalendar / #toDateCalendar) plus the user's case list.
     """
     def _form_visible() -> bool:
+        # The date-search page ("תיקים לתאריך פתיחה") ALSO has #fromDateCalendar,
+        # so require the MyCases URL — otherwise we silently stay on the wrong
+        # screen and re-run the date search instead of "התיקים שלי".
         try:
-            return page.locator("#fromDateCalendar").count() > 0
+            if page.locator("#fromDateCalendar").count() == 0:
+                return False
+            return "MyCasesListView" in (page.url or "")
         except Exception:
             return False
 
@@ -63,7 +100,9 @@ def navigate_to_my_cases(page: "Page") -> bool:
             return True
     except Exception as e:
         print(f"[Search] btnMyCases postback failed: {e}")
-    # Fallback: click by anchor / text
+
+    _open_case_search_dropdown(page)
+
     for sel in ("#header_UpperMenu1_btnMyCases", 'a:has-text("התיקים שלי")'):
         try:
             link = page.locator(sel).first
@@ -91,8 +130,12 @@ def navigate_to_date_search(page: "Page") -> bool:
     Falls back to clicking the visible link if JS evaluation doesn't work.
     """
 
-    def _form_visible() -> bool:
+    def _is_date_search_page() -> bool:
+        """Check we're on the date search page specifically (not MyCases which also has fromDateCalendar)."""
         try:
+            url = page.url or ""
+            if "MyCasesListView" in url:
+                return False
             return page.locator("#fromDateCalendar").count() > 0
         except Exception:
             return False
@@ -100,12 +143,12 @@ def navigate_to_date_search(page: "Page") -> bool:
     def _wait_form(timeout_ms: int = 12000) -> bool:
         try:
             page.wait_for_selector("#fromDateCalendar", state="attached", timeout=timeout_ms)
-            return True
+            url = page.url or ""
+            return "MyCasesListView" not in url
         except Exception:
             return False
 
-    # Already showing the form (e.g. second call)
-    if _form_visible():
+    if _is_date_search_page():
         return True
 
     # Primary: postback (the confirmed button ID from the portal HTML)
@@ -122,6 +165,9 @@ def navigate_to_date_search(page: "Page") -> bool:
             return True
     except Exception as e:
         print(f"[Search] Postback eval failed: {e}")
+
+    # Open parent dropdown menu before trying sub-items
+    _open_case_search_dropdown(page)
 
     # Fallback: click the visible anchor directly
     try:
@@ -261,22 +307,61 @@ def extract_cases_from_my_cases_grid(page: "Page") -> list[dict]:
     _EXTRACT_JS = """
     (() => {
       const rows = [];
-      // ag-grid rows OR classic table rows containing a NNN-MM-YY case id
-      const idRe = /^\\d+-\\d{2}-\\d{2}$/;
-      document.querySelectorAll('div[role="row"], tr').forEach(r => {
-        const cells = [...r.querySelectorAll('div[role="gridcell"], td')]
+      const idRe = /\\d+-\\d{2}-\\d{2}/;
+      // Try any hidden JSON store (CaseSearchResultsGridArrayStore or MyCasesGridArrayStore etc.)
+      for (const el of document.querySelectorAll('input[type="hidden"][id*="GridArrayStore"]')) {
+        if (el.value) {
+          try {
+            const parsed = JSON.parse(el.value);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              return parsed.map(c => ({id: c.CaseDisplayIdentifier, cells: [
+                c.CaseTypeShortName||'', c.CaseDisplayIdentifier||'', c.CaseName||'',
+                c.CaseInterestName||'', c.CourtName||'', c.CaseStatusName||''
+              ], data: c}));
+            }
+          } catch(e) {}
+        }
+      }
+      // Fallback: scrape ag-grid rendered rows
+      document.querySelectorAll('.ag-row, div[role="row"]').forEach(r => {
+        const cells = [...r.querySelectorAll('.ag-cell, div[role="gridcell"], td')]
           .map(c => (c.innerText || '').trim());
         const id = cells.find(c => idRe.test(c));
-        if (id) rows.push({ id, cells });
+        if (id) {
+          const m = id.match(idRe);
+          rows.push({ id: m[0], cells });
+        }
       });
+      // Fallback 2: table rows
+      if (rows.length === 0) {
+        document.querySelectorAll('tr').forEach(r => {
+          const cells = [...r.querySelectorAll('td')].map(c => (c.innerText || '').trim());
+          const id = cells.find(c => idRe.test(c));
+          if (id) {
+            const m = id.match(idRe);
+            rows.push({ id: m[0], cells });
+          }
+        });
+      }
       return rows;
     })()
     """
     all_cases: list[dict] = []
     seen: set[str] = set()
     for page_num in range(1, 40):  # hard cap
+        if page_num == 1:
+            time.sleep(3)
         try:
             rows = page.evaluate(_EXTRACT_JS) or []
+            if page_num == 1 and not rows:
+                debug = page.evaluate("""(() => {
+                  const stores = [...document.querySelectorAll('input[type="hidden"]')]
+                    .filter(e=>e.value&&e.value.length>10).map(e=>e.id+'='+e.value.substring(0,80));
+                  const agRows = document.querySelectorAll('.ag-row').length;
+                  const trs = document.querySelectorAll('tr').length;
+                  return {stores: stores.slice(0,5), agRows, trs, url: location.href};
+                })()""")
+                print(f"[Search] my-cases debug: {debug}")
         except Exception as e:
             print(f"[Search] my-cases extract failed: {e}")
             break
@@ -287,9 +372,14 @@ def extract_cases_from_my_cases_grid(page: "Page") -> list[dict]:
                 continue
             seen.add(cid)
             cells = r.get("cells", [])
+            data = r.get("data", {})
             all_cases.append({
                 "CaseDisplayIdentifier": cid,
-                "CaseName": next((c for c in cells if c and c != cid and not c.isdigit()), ""),
+                "CaseName": data.get("CaseName") or next((c for c in cells if c and c != cid and not c.isdigit()), ""),
+                "CaseTypeShortName": data.get("CaseTypeShortName", ""),
+                "CourtName": data.get("CourtName", ""),
+                "CaseStatusName": data.get("CaseStatusName", ""),
+                "CaseInterestName": data.get("CaseInterestName", ""),
                 "cells": cells,
             })
             new += 1
@@ -314,7 +404,7 @@ def run_bulk_download_from_date_search(
     root_output_dir: Path,
     session_settings: dict,
     logger: "Logger | None" = None,
-    years_back: int = 12,
+    years_back: int = 10,
 ) -> None:
     """Full flow: search by date → extract cases → download each one.
 
@@ -353,6 +443,8 @@ def run_bulk_download_from_date_search(
 
     # Fallback path — "תיקים לתאריך פתיחה" (hidden JSON store)
     if not cases:
+        # Navigate back to a page where the dropdown works — use postback directly
+        # since we're already on the secured domain
         if not navigate_to_date_search(page):
             _log("Cannot open date search — aborting.", "error")
             return

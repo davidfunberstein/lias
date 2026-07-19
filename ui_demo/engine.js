@@ -1,20 +1,27 @@
 /* ─── engine control / הפעלת מנוע הסנכרון מהאתר ─── */
 let _netDownloadJobId=null, _pendingNetCases=[], _dlStats=null;
+try{ const _saved=sessionStorage.getItem('dlStats'); if(_saved) _dlStats=JSON.parse(_saved); }catch(_){}
+try{ const _savedJid=sessionStorage.getItem('dlJobId'); if(_savedJid) _netDownloadJobId=+_savedJid; }catch(_){}
 const SCOPE_LABELS = {all:'כל התיקים', selected:'תיקים מסוימים', related:'תיקים + קשורים'};
 
 let engineStarting=false;
 async function startEngine(){
-  if(engineStarting) return;
+  if(engineStarting) return false;
   engineStarting=true; toast('מפעיל את מנוע הסנכרון…');
   try{ await fetch('/api/system/start',{method:'POST'}); }catch(e){}
   for(let i=0;i<40;i++){
     await new Promise(r=>setTimeout(r,2000));
     try{
       const h = await (await fetch('/api/health')).json();
-      if(h.full_ui_alive){ engineStarting=false; toast('מנוע הסנכרון פעיל ✓'); refresh(true); return; }
+      if(h.full_ui_alive){
+        engineStarting=false; toast('מנוע הסנכרון פעיל ✓');
+        await refresh(true);
+        return true;
+      }
     }catch(e){}
   }
   engineStarting=false; toast('המנוע לא עלה — בדוק את lias_engine.log', true);
+  return false;
 }
 async function act(path, label){
   if(!D?.live){
@@ -47,19 +54,28 @@ async function restartEngine(){
 }
 
 /* ─── live progress bar ─── */
-let _jobBarHide=null;
+let _jobBarHide=null, _jobBarMinimized=false;
 function showJobBar(title, frac, msg){
   let b=$('jobbar');
   if(!b){
+    _jobBarMinimized=false;
     b=document.createElement('div'); b.id='jobbar';
     b.style.cssText='position:fixed;bottom:16px;right:50%;transform:translateX(50%);z-index:125;'
       +'background:var(--surface,#fff);border:1px solid var(--line,#e5e5e5);border-radius:14px;'
-      +'padding:10px 16px;width:min(440px,92vw);box-shadow:0 12px 40px rgba(0,0,0,.3);direction:rtl';
-    b.innerHTML='<div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px">'
-      +'<b id="jb-title"></b><span id="jb-pct"></span></div>'
+      +'padding:10px 16px;width:min(440px,92vw);box-shadow:0 12px 40px rgba(0,0,0,.3);direction:rtl;'
+      +'transition:all .3s';
+    b.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;font-size:12.5px;margin-bottom:6px">'
+      +'<b id="jb-title"></b>'
+      +'<div style="display:flex;gap:6px;align-items:center">'
+      +'<span id="jb-pct"></span>'
+      +'<button id="jb-min" onclick="toggleJobBarMin()" style="background:none;border:none;cursor:pointer;font-size:14px;padding:0 2px;color:var(--ink-soft,#777)" title="מזער">▾</button>'
+      +'<button onclick="$(\'jobbar\')?.remove()" style="background:none;border:none;cursor:pointer;font-size:13px;padding:0 2px;color:var(--ink-soft,#777)" title="סגור">✕</button>'
+      +'</div></div>'
+      +'<div id="jb-detail">'
       +'<div style="height:8px;background:var(--line,#eee);border-radius:6px;overflow:hidden">'
       +'<i id="jb-fill" style="display:block;height:100%;width:0;background:var(--accent,#2F7DF6);transition:width .4s"></i></div>'
-      +'<div id="jb-msg" style="font-size:11.5px;color:var(--ink-soft,#777);margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>';
+      +'<div id="jb-msg" style="font-size:11.5px;color:var(--ink-soft,#777);margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>'
+      +'</div>';
     document.body.appendChild(b);
   }
   clearTimeout(_jobBarHide);
@@ -67,6 +83,13 @@ function showJobBar(title, frac, msg){
   $('jb-pct').textContent = Math.round((frac||0)*100)+'%';
   $('jb-fill').style.width = ((frac||0)*100)+'%';
   if(msg) $('jb-msg').textContent = msg;
+}
+function toggleJobBarMin(){
+  _jobBarMinimized=!_jobBarMinimized;
+  const d=$('jb-detail'); if(d) d.style.display=_jobBarMinimized?'none':'';
+  const btn=$('jb-min'); if(btn) btn.textContent=_jobBarMinimized?'▴':'▾';
+  const b=$('jobbar');
+  if(b) b.style.width=_jobBarMinimized?'auto':'min(440px,92vw)';
 }
 function finishJobBar(ok, msg){
   if(!$('jobbar')) return;
@@ -107,13 +130,21 @@ function connectEngineSSE(){
     if(e.type==='auth_progress'){
       logEvent('🔑 '+(e.message||''));
       showJobBar('התחברות', 0.5, e.message||'');
-      if(/מחובר|ממלא|מזין|קוד|✓|הצליח|נכנס|פורטל/.test(e.message||'')) $('otp-box')?.remove();
+      if(/מחובר|✓|הצליח|נכנס|logged|success|connected|dashboard/.test(e.message||'')){
+        $('otp-box')?.remove(); _otpSubmitted=false;
+      }
     }
     if(e.type==='drive'){ logEvent('☁ '+(e.message||'')); }
     if(e.type==='drive_error'){ logEvent('⚠ '+(e.message||'')); toast(e.message||'שגיאת Drive', true); }
     if(e.type==='net_cases'){ showNetCases(e.cases||[]); }
-    if(e.type==='download_stats'){ _dlStats=e; _renderDlStats(); }
+    if(e.type==='download_stats'){
+      _dlStats=e; try{sessionStorage.setItem('dlStats',JSON.stringify(e));}catch(_){}
+      if(e.job_id && !_netDownloadJobId){ _netDownloadJobId=e.job_id; try{sessionStorage.setItem('dlJobId',e.job_id);}catch(_){} }
+      _renderDlStats();
+      if(e.done>0 && e.done%3===0 && typeof refresh==='function') refresh(true);
+    }
     if(e.type==='job'){
+      $('otp-box')?.remove();
       if(e.message) logEvent(`#${e.job_id||''} ${e.message}`);
       if(typeof e.progress==='number')
         showJobBar(JOB_LABELS[e.kind]||`משימה #${e.job_id||''}`, e.progress, e.message||'');
@@ -121,6 +152,7 @@ function connectEngineSSE(){
         $('otp-box')?.remove();
         if(e.kind==='net_smart_download'||e.kind==='net_download_all'){
           _dlStats=null; _netDownloadJobId=null;
+          try{sessionStorage.removeItem('dlStats');sessionStorage.removeItem('dlJobId');}catch(_){}
           const p=$('dl-stats-panel'); if(p) p.style.display='none';
         }
         logEvent(`${JOB_LABELS[e.kind]||e.kind||'משימה'} — ${e.state}`);
@@ -153,9 +185,11 @@ function toggleLogWin(){
     +'overflow:hidden;resize:both;min-width:340px;min-height:200px';
   w.innerHTML=`<div class="fv-top" id="logwin-top" style="border-color:#2a352c">
       <button class="fv-btn" style="border-color:#2a352c;color:#c8e6c9" onclick="toggleLogWin()">✕</button>
-      <div class="fv-title" style="color:#e8f5e9">יומן חי — המנוע</div>
-      <button class="fv-btn" id="lg-t-engine" style="border-color:#2a352c;color:#c8e6c9" onclick="setLogTab('engine')">לוג מלא</button>
-      <button class="fv-btn" id="lg-t-events" style="border-color:#2a352c;color:#c8e6c9" onclick="setLogTab('events')">אירועים</button>
+      <div class="fv-title" style="color:#e8f5e9">יומן חי</div>
+      <button class="fv-btn log-tab-btn" id="lg-t-engine" style="border-color:#2a352c;color:#c8e6c9" onclick="setLogTab('engine')">כללי</button>
+      <button class="fv-btn log-tab-btn" id="lg-t-drive" style="border-color:#2a352c;color:#c8e6c9" onclick="setLogTab('drive')">Drive</button>
+      <button class="fv-btn log-tab-btn" id="lg-t-transcription" style="border-color:#2a352c;color:#c8e6c9" onclick="setLogTab('transcription')">תמלול</button>
+      <button class="fv-btn log-tab-btn" id="lg-t-events" style="border-color:#2a352c;color:#c8e6c9" onclick="setLogTab('events')">אירועים</button>
     </div>
     <div id="logwin-body" style="flex:1;overflow-y:auto;padding:8px 12px;font-size:11.5px;
       font-family:ui-monospace,monospace;direction:ltr;text-align:left;line-height:1.65;white-space:pre-wrap"></div>`;
@@ -164,7 +198,11 @@ function toggleLogWin(){
   setLogTab('engine');
   _logTimer = setInterval(_refreshLog, 3000);
 }
-function setLogTab(t){ _logTab=t; _refreshLog(); }
+function setLogTab(t){
+  _logTab=t; _refreshLog();
+  document.querySelectorAll('.log-tab-btn').forEach(b=>b.style.background='transparent');
+  const active=$('lg-t-'+t); if(active) active.style.background='rgba(255,255,255,.15)';
+}
 async function _refreshLog(){
   const el=$('logwin-body'); if(!el) return;
   const atBottom = el.scrollTop+el.clientHeight >= el.scrollHeight-40;
@@ -175,7 +213,13 @@ async function _refreshLog(){
     el.style.direction='ltr'; el.style.textAlign='left';
     try{
       const r = await (await fetch('/api/log?lines=300')).json();
-      el.textContent = (r.lines||[]).join('\n') || 'הלוג ריק';
+      let filtered = (r.lines||[]).filter(l=>!/^INFO:\s+127\.0\.0\.1.*"(GET|POST|PUT|DELETE|OPTIONS) \/api\/(log|health|settings|events)/.test(l));
+      if(_logTab==='drive'){
+        filtered = filtered.filter(l=>/drive|google|upload|gdrive|cloud/i.test(l));
+      } else if(_logTab==='transcription'){
+        filtered = filtered.filter(l=>/transcri|whisper|תמלול|הקלטה|audio|speech/i.test(l));
+      }
+      el.textContent = filtered.join('\n') || (_logTab==='drive'?'אין לוגים של Drive':_logTab==='transcription'?'אין לוגים של תמלול':'הלוג ריק');
     }catch(e){ el.innerHTML = '<div style="color:#7a8a7d">המנוע כבוי — אין לוג. הפעל את המנוע.</div>'; }
   }
   if(atBottom) el.scrollTop = el.scrollHeight;
@@ -184,9 +228,34 @@ async function _refreshLog(){
 /* ─── real automation browser — show/hide ─── */
 let _realBrowserVisible=false;
 function runBdrBatch(){
-  act('bdr_batch', 'הורדת תיקי BDR');
+  toast('מתחבר לבית הדין הרבני ומוריד תיקים…');
+  logEvent('→ הורדת תיקי BDR (דפדפן נפרד)');
+  fetch('/api/proxy/actions/bdr_batch', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({user_mode:'lawyer'})
+  }).then(r=>{
+    if(r.ok) toast('הורדת BDR הופעלה ✓');
+    else toast('שגיאה בהפעלת BDR', true);
+  }).catch(e=>toast('שגיאה: '+e.message, true));
+}
+function runEcaSync(){
+  toast('מתחבר להוצאה לפועל ומוריד תיקים…');
+  logEvent('→ הורדת תיקי הוצאה לפועל');
+  fetch('/api/proxy/actions/eca_sync', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({})
+  }).then(r=>{
+    if(r.ok) toast('הורדת הוצל"פ הופעלה ✓');
+    else toast('שגיאה בהפעלת הוצל"פ', true);
+  }).catch(e=>toast('שגיאה: '+e.message, true));
 }
 async function toggleRealBrowser(){
+  if(!D?.live){
+    const ok = await startEngine();
+    if(!ok){ toast('המנוע לא עלה', true); return; }
+  }
   const path = _realBrowserVisible ? 'browser/hide' : 'browser/show';
   try{
     const r = await fetch('/api/proxy/actions/'+path, {method:'POST'});
@@ -257,53 +326,58 @@ function syncCard(el){
     <div class="meta">בחר מאיפה להוריד ומה להוריד.
       ☁ אם Drive מוגדר, הקבצים עולים אוטומטית במקביל.</div>
     <div id="sync-scope-label" style="font-size:12px;color:rgba(255,255,255,.55);margin:10px 0 6px"></div>
-    <div id="sync-case-picker" style="display:none;margin-bottom:10px"></div>
     <div id="dl-stats-panel" style="display:none"></div>
     <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px" id="sync-buttons">
       <button class="btn-accent" style="padding:14px;font-size:15px" id="btn-net-dl"
         onclick="startNetDownload()">⬇ הורד מנט המשפט</button>
       <button class="btn-accent" style="padding:14px;font-size:15px" id="btn-bdr-dl"
         onclick="runBdrBatch()">⬇ הורד מבית הדין הרבני</button>
+      <button class="btn-accent" style="padding:14px;font-size:15px" id="btn-eca-dl"
+        onclick="runEcaSync()">⬇ הורד מהוצאה לפועל</button>
     </div>
-    <div style="display:flex;gap:8px;margin-top:14px">
-      <button class="btn-accent" style="font-size:12px;padding:9px;flex:1" id="browser-toggle" onclick="toggleRealBrowser()">🖥 הצג דפדפן</button>
-      <button class="btn-accent" style="font-size:12px;padding:9px;flex:1" onclick="toggleLogWin()">📜 יומן חי</button>
-    </div>`;
+    <div id="sync-case-picker" style="display:none;margin-top:12px"></div>
+    <div id="nc-search-box" style="display:none;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;margin-top:10px">
+      <div style="font-size:12px;color:rgba(255,255,255,.6);margin-bottom:6px">חיפוש תיק לפי מספר (דורש חיבור לנט)</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input id="nc-num" placeholder="מספר תיק" style="flex:1;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:7px 10px;font-size:13px;background:rgba(255,255,255,.08);color:#fff">
+        <input id="nc-my" type="month" style="width:130px;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:7px 8px;font-size:12px;background:rgba(255,255,255,.08);color:#fff">
+        <button class="btn-accent" style="padding:7px 14px;font-size:12px;white-space:nowrap" onclick="openNetCase(true)">🔍 אתר</button>
+      </div>
+    </div>
+`;
+  // Auto-show browser when download starts (no toggle button needed)
+
   fetch('/api/settings').then(r=>r.json()).then(st=>{
     _currentScope = st.case_scope || 'all';
     const lbl = $('sync-scope-label');
     if(lbl) lbl.textContent = 'היקף NET: ' + (SCOPE_LABELS[_currentScope]||_currentScope) + ' (ניתן לשנות בהגדרות ⚙)';
   }).catch(()=>{});
+  // Show case search only when engine is live
+  if(D?.live){ const sb=$('nc-search-box'); if(sb) sb.style.display=''; }
   if(_dlStats) _renderDlStats();
 }
 function startNetDownload(){
-  const scope = _currentScope;
-  if(scope==='all'){
-    _startSmartDownload('all', []);
-  } else {
-    toast('מתחבר לנט המשפט ומחפש תיקים…');
-    act('net_list_cases','חיפוש תיקים בנט');
-  }
+  toast('מתחבר לנט המשפט ומחפש תיקים…');
+  act('net_list_cases','חיפוש תיקים בנט');
 }
-/* first showNetCases — scope-based picker in sync card (overridden below) */
+/* first showNetCases — always show picker so user selects which cases to download */
 function showNetCases(cases){
   _pendingNetCases = cases;
   const picker=$('sync-case-picker'); if(!picker) return;
-  const scope = _currentScope;
-  if(scope==='all' || !cases.length){
+  if(!cases.length){
     picker.style.display='none';
-    if(!cases.length) toast('לא נמצאו תיקים בפורטל', true);
+    toast('לא נמצאו תיקים בפורטל', true);
     return;
   }
   picker.style.display='block';
-  const multi = true;
+  const scope = _currentScope;
   picker.innerHTML=`<div style="font-size:12px;color:rgba(255,255,255,.7);margin-bottom:6px">
-      נמצאו ${cases.length} תיקים בנט — ${scope==='related'?'סמן תיקים (+ קשורים לכל אחד):':'סמן מה להוריד:'}</div>
+      נמצאו ${cases.length} תיקים בנט — סמן מה להוריד${scope==='related'?' (+ תיקים קשורים)':''}</div>
     <div style="display:flex;gap:6px;margin-bottom:6px">
       <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllNetCases(true)">סמן הכל</button>
       <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllNetCases(false)">נקה הכל</button>
     </div>
-    <div id="net-cases-list" style="max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:3px">
+    <div id="net-cases-list" style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:3px">
     ${cases.map((c,i)=>`<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;
       background:rgba(255,255,255,.08);cursor:pointer;font-size:12px;color:rgba(255,255,255,.9)">
       <input type="checkbox" name="net-case" value="${i}" style="accent-color:var(--accent)">
@@ -318,72 +392,158 @@ function _selectAllNetCases(on){
   document.querySelectorAll('#net-cases-list input').forEach(cb=>cb.checked=on);
 }
 function _confirmNetCases(){
-  const scope = _currentScope;
   const checks = [...document.querySelectorAll('#net-cases-list input:checked')];
   if(!checks.length){ toast('סמן תיק אחד לפחות', true); return; }
   const selected = checks.map(cb=>_pendingNetCases[+cb.value]).filter(Boolean);
-  _startSmartDownload(scope==='related'?'related':'selected', selected);
+  const mode = _currentScope==='related' ? 'related' : 'selected';
+  _startSmartDownload(mode, selected);
 }
 async function _startSmartDownload(mode, cases){
-  const body = JSON.stringify({mode, cases, years_back:20});
+  if(!D?.live){
+    const ok = await startEngine();
+    if(!ok){ toast('המנוע לא עלה — לא ניתן להוריד', true); return; }
+  }
+  const body = JSON.stringify({mode, cases, years_back:10});
   try{
     const r = await fetch('/api/proxy/actions/net_smart_download', {
       method:'POST', headers:{'Content-Type':'application/json'}, body});
     const j = await r.json();
-    if(j.job_id) _netDownloadJobId = j.job_id;
+    if(j.job_id){ _netDownloadJobId = j.job_id; try{sessionStorage.setItem('dlJobId',j.job_id);}catch(_){} }
     toast('ההורדה התחילה');
+    if(!_realBrowserVisible) fetch('/api/proxy/actions/browser/show',{method:'POST'}).then(()=>{_realBrowserVisible=true;}).catch(()=>{});
     const picker=$('sync-case-picker');
     if(picker){ picker.style.display='none'; picker.innerHTML=''; }
   }catch(e){ toast('שגיאה: '+e.message, true); }
 }
 function cancelNetDownload(){
-  if(!_netDownloadJobId) return;
-  act('cancel_download?job_id='+_netDownloadJobId, 'ביטול הורדה');
+  const jid = _netDownloadJobId || sessionStorage.getItem('dlJobId');
+  if(!jid){ toast('אין הורדה פעילה לבטל', true); return; }
+  act('cancel_download?job_id='+jid, 'ביטול הורדה');
   toast('שולח הוראת עצירה — ההורדה תיעצר אחרי התיק הנוכחי');
 }
 function _renderDlStats(){
   const s=_dlStats; if(!s) return;
-  const panel=$('dl-stats-panel'); if(!panel) return;
+  let panel=$('dl-stats-panel');
+  if(!panel){
+    panel=document.createElement('div'); panel.id='dl-stats-panel';
+    panel.style.cssText='position:fixed;top:80px;left:16px;z-index:120;width:min(380px,90vw);'
+      +'max-height:70vh;overflow-y:auto;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.35);direction:rtl';
+    document.body.appendChild(panel);
+  }
   panel.style.display='block';
   const pct = s.total? Math.round(s.done/s.total*100) : 0;
   const elapsed = s.elapsed_sec||0;
-  const mm = Math.floor(elapsed/60), ss = elapsed%60;
-  panel.innerHTML=`<div style="border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:10px 14px;margin-bottom:10px">
-    <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
-      <b>הורדה פעילה${s.current_case?' — '+s.current_case:''}</b>
-      <span>${pct}% · ${s.done}/${s.total} תיקים</span></div>
-    <div style="height:6px;background:rgba(255,255,255,.15);border-radius:4px;overflow:hidden;margin-bottom:8px">
+  const mm = Math.floor(elapsed/60), ss = String(elapsed%60).padStart(2,'0');
+  const etaM = s.eta_sec? Math.floor(s.eta_sec/60) : 0;
+  const etaS = s.eta_sec? String(s.eta_sec%60).padStart(2,'0') : '00';
+  const currentLabel = s.current_name
+    ? `${s.current_case} — ${s.current_name}`
+    : s.current_case||'';
+
+  let casesHtml = '';
+  const details = s.cases_detail||[];
+  if(details.length){
+    const completed = new Set((s.completed_cases||[]).map(c=>c.id));
+    casesHtml = `<div style="margin-top:8px;max-height:180px;overflow-y:auto;font-size:11px;border-top:1px solid rgba(255,255,255,.1);padding-top:6px">
+      <b style="font-size:11.5px">תיקים (${s.done}/${s.total}):</b>
+      ${details.map(c=>{
+        const isCurrent = c.id===s.current_case;
+        const isDone = completed.has(c.id);
+        const icon = isDone?'✓':isCurrent?'⏳':'·';
+        const opacity = isDone?'.5':isCurrent?'1':'.65';
+        const weight = isCurrent?'bold':'normal';
+        const clickable = isDone ? `cursor:pointer` : '';
+        const onclick = isDone ? `onclick="closeDlPanel();_goToCaseByNumber('${c.id}')"` : '';
+        return `<div style="padding:3px 0;opacity:${opacity};font-weight:${weight};border-bottom:1px solid rgba(255,255,255,.05);${clickable}" ${onclick}>
+          ${icon} <b>${c.id}</b> ${c.name||''}<br>
+          <span style="color:rgba(255,255,255,.4);font-size:10px">${c.court||''} · ${c.type||''} · ${c.interest||''} · ${c.status||''}</span>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+
+  panel.innerHTML=`<div style="background:var(--card-bg,#1a2332);border:1px solid rgba(255,255,255,.2);border-radius:12px;padding:12px 16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:6px">
+      <b>הורדה פעילה</b>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span>${pct}% · ${s.done}/${s.total} תיקים</span>
+        <button onclick="closeDlPanel()" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.5);font-size:14px">✕</button>
+      </div></div>
+    <div style="height:7px;background:rgba(255,255,255,.12);border-radius:4px;overflow:hidden;margin-bottom:8px">
       <div style="height:100%;width:${pct}%;background:var(--accent);transition:width .4s"></div></div>
-    <div style="display:flex;gap:16px;font-size:11px;color:rgba(255,255,255,.6)">
+    ${currentLabel?`<div style="font-size:12px;margin-bottom:6px">📂 <b>${currentLabel}</b></div>`:''}
+    <div style="display:flex;flex-wrap:wrap;gap:10px 16px;font-size:11.5px;color:rgba(255,255,255,.55)">
       <span>נותרו: ${s.remaining||0}</span>
-      <span>נכשלו: ${s.failed||0}</span>
+      <span>נכשלו: <span style="color:${s.failed?'#ef5350':'inherit'}">${s.failed||0}</span></span>
+      <span>מסמכים: ${s.docs_downloaded||0}</span>
       <span>קצב: ${s.speed_per_min||0}/דק׳</span>
-      <span>זמן: ${mm}:${String(ss).padStart(2,'0')}</span>
+      <span>זמן: ${mm}:${ss}</span>
+      ${s.eta_sec?`<span>צפי סיום: ~${etaM}:${etaS}</span>`:''}
     </div>
-    <button class="btn-accent" style="margin-top:8px;font-size:12px;padding:6px 14px;background:rgba(198,40,40,.8)"
+    ${s.output_dir?`<div style="font-size:10px;color:rgba(255,255,255,.35);margin-top:6px;word-break:break-all">📁 ${s.output_dir}</div>`:''}
+    ${casesHtml}
+    <button class="btn-accent" style="margin-top:10px;font-size:12px;padding:6px 14px;background:rgba(198,40,40,.8)"
       onclick="cancelNetDownload()">⏹ עצור הורדה</button>
   </div>`;
 }
 
-/* ─── NET cases checkbox picker (overrides showNetCases from SSE) ─── */
-/* Note: this second definition of showNetCases overrides the first one above,
-   matching the original file's behavior where both declarations existed. */
+function closeDlPanel(){ const p=$('dl-stats-panel'); if(p) p.style.display='none'; }
+function _goToCaseByNumber(displayId){
+  if(!D?.case_cards) return;
+  const card = D.case_cards.find(c=>(c.sub_number||'').includes(displayId));
+  if(card){ go('case', card.sub_case_id); }
+  else { toast('התיק טרם נוסף למערכת — רענן את הדשבורד'); refresh(true); }
+}
+
+/* ─── NET cases checkbox picker — inline in sync card ─── */
+/* This second definition overrides the first showNetCases above. */
 function showNetCases(cases){
-  $('fvl-title').textContent = 'תיקים שנמצאו בפורטל — סמן מה לסנכרן';
-  $('fvl-count').textContent = `${cases.length} תיקים`;
-  $('fvl').classList.add('on'); _syncOverlays();
-  window._netCases = cases;
-  const head = cases.length? `<label class="dl-item" style="display:flex;gap:10px;align-items:center;cursor:pointer;position:sticky;top:0;background:var(--surface,#fff);z-index:2;font-weight:800;border-bottom:1px solid var(--line)">
-      <input type="checkbox" id="nc-all" style="margin:0" onchange="document.querySelectorAll('.nc-pick').forEach(c=>c.checked=this.checked);ncCount()">
-      <span>בחר הכל / נקה הכל</span></label>` : '';
-  $('fvl-body').innerHTML = head + (cases.map((c,i)=>`
-    <label class="dl-item" style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
-      <input type="checkbox" class="nc-pick" data-i="${i}" style="margin-top:3px" onchange="ncCount()">
-      <span style="flex:1"><b>${c.CaseDisplayIdentifier||''} ${c.CaseName||''}</b>
-      <span style="display:block">${c.CaseTypeShortName||''} · ${c.CourtName||''} · ${c.CaseStatusName||''}</span></span>
-    </label>`).join('') || '<div class="empty">לא נמצאו תיקים בטווח</div>')
-    + (cases.length? `<div style="position:sticky;bottom:0;background:var(--surface,#fff);padding:10px 0">
-        <button class="btn-accent" style="width:100%" onclick="syncPickedCases()"><span id="nc-btn-txt">סמן תיקים לסנכרון</span></button></div>` : '');
+  _pendingNetCases = cases;
+  if(!cases.length){
+    toast('לא נמצאו תיקים בפורטל', true);
+    return;
+  }
+  // Navigate to sync tab so the picker is visible
+  if(route.v !== 'sync'){ go('sync'); }
+  // Wait for DOM to render sync card
+  setTimeout(()=>_renderNetCasesPicker(cases), 200);
+}
+function _renderNetCasesPicker(cases){
+  const picker = $('sync-case-picker');
+  if(!picker){ setTimeout(()=>_renderNetCasesPicker(cases), 300); return; }
+  const _esc = s => (s||'').replace(/"/g, '״').replace(/'/g, '׳');
+  picker.style.display='block';
+  picker.innerHTML=`<div style="font-size:13px;color:rgba(255,255,255,.85);margin-bottom:8px;font-weight:700">
+      נמצאו ${cases.length} תיקים — סמן מה להוריד</div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllNetCases(true)">סמן הכל</button>
+      <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllNetCases(false)">נקה הכל</button>
+    </div>
+    <div id="net-cases-list" style="max-height:400px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
+    ${cases.map((c,i)=>{
+      const did = _esc(c.CaseDisplayIdentifier || c.display_id || '');
+      const name = _esc(c.CaseName || c.name || '');
+      const type = _esc(c.CaseTypeShortName || c.type || '');
+      const court = _esc(c.CourtName || c.court || '');
+      const status = _esc(c.CaseStatusName || c.status || '');
+      const interest = _esc(c.CaseInterestName || c.interest || '');
+      const dm = did.match(/(\d+)-(\d{2})-(\d{2})/);
+      const mmyy = dm ? dm[2]+'/'+dm[3] : '';
+      return `<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+        background:rgba(255,255,255,.08);cursor:pointer;font-size:12.5px;color:rgba(255,255,255,.9)">
+        <input type="checkbox" name="net-case" value="${i}" style="accent-color:var(--accent)">
+        <span style="flex:1">
+          <span style="display:flex;justify-content:space-between;align-items:baseline">
+            <b>${did}</b>
+            <span style="font-size:11px;color:rgba(255,255,255,.45)">${mmyy}</span>
+          </span>
+          <span style="display:block;font-size:12px;margin-top:2px">${name}</span>
+          <span style="display:block;font-size:11px;color:rgba(255,255,255,.5);margin-top:1px">${type} · ${court}${status?' · '+status:''}${interest?' · '+interest:''}</span>
+        </span>
+      </label>`;}).join('')}
+    </div>
+    <button class="btn-accent" style="margin-top:10px;padding:12px;font-size:14px;width:100%"
+      onclick="_confirmNetCases()">⬇ הורד תיקים מסומנים</button>`;
 }
 function ncCount(){
   const n = document.querySelectorAll('.nc-pick:checked').length;
@@ -395,9 +555,14 @@ function syncPickedCases(){
   if(!picked.length){ toast('לא סומן אף תיק', true); return; }
   const items = [];
   for(const c of picked){
-    const m = (c.CaseDisplayIdentifier||'').trim().match(/^(\d+)-(\d{1,2})-(\d{2})$/);
-    if(!m){ logEvent('⚠ מזהה לא מפוענח: '+c.CaseDisplayIdentifier); continue; }
-    items.push({case_number:m[1], month_year:m[2].padStart(2,'0')+m[3], id:c.CaseDisplayIdentifier});
+    const did = (c.CaseDisplayIdentifier||c.display_id||'').trim();
+    if(c.case_number && c.mmyy){
+      items.push({case_number:c.case_number, month_year:c.mmyy, id:did, name:c.name||c.CaseName||''});
+      continue;
+    }
+    const m = did.match(/^(\d+)-(\d{1,2})-(\d{2})$/);
+    if(!m){ logEvent('⚠ מזהה לא מפוענח: '+did); continue; }
+    items.push({case_number:m[1], month_year:m[2].padStart(2,'0')+m[3], id:did, name:c.name||c.CaseName||''});
   }
   if(!items.length){ toast('אף מזהה לא פוענח', true); return; }
   act('net_sync_selected?cases='+encodeURIComponent(JSON.stringify(items)),
@@ -407,8 +572,9 @@ function syncPickedCases(){
 }
 
 /* ─── OTP dialog ─── */
+let _otpSubmitted=false;
 function showOtp(){
-  if($('otp-box')) return;
+  if($('otp-box') || _otpSubmitted) return;
   const d = document.createElement('div');
   d.id='otp-box';
   d.style.cssText='position:fixed;bottom:24px;right:24px;z-index:130;background:var(--surface,#fff);'
@@ -426,8 +592,9 @@ function showOtp(){
 async function sendOtp(){
   const code = ($('otp-in')?.value||'').trim();
   if(!code) return;
-  await act('submit_otp?otp='+encodeURIComponent(code), 'קוד אימות');
+  _otpSubmitted=true;
   $('otp-box')?.remove();
+  await act('submit_otp?otp='+encodeURIComponent(code), 'קוד אימות');
 }
 
 /* ─── activity FAB ─── */
@@ -439,14 +606,18 @@ function ensureFab(){
     <div class="fab-panel" id="fab-panel">
       <div class="fp-head"><span>📋 פעילות אחרונה</span>
         <div style="display:flex;gap:6px">
-          <button class="fv-btn" style="font-size:11px" onclick="toggleLogWin()">יומן מלא</button>
+          <button class="fv-btn" style="font-size:11px" onclick="toggleLogWin()">📜 יומן</button>
           <button class="fv-btn" style="font-size:11px" onclick="$('fab-panel').classList.remove('on')">✕</button>
         </div></div>
+      <div id="fab-status" style="padding:6px 12px;font-size:11px;border-bottom:1px solid var(--line)"></div>
       <div class="fp-body" id="fab-jobs"></div>
     </div>
-    <button class="fab-btn" onclick="toggleFab()" title="פעילות אחרונה ויומן">
-      📋<span class="fab-badge hide" id="fab-badge">0</span>
-    </button>`;
+    <div style="display:flex;gap:6px;align-items:center">
+      <button class="fab-btn" onclick="toggleLogWin()" title="יומן חי" style="font-size:16px;width:36px;height:36px">📜</button>
+      <button class="fab-btn" onclick="toggleFab()" title="פעילות אחרונה ויומן">
+        📋<span class="fab-badge hide" id="fab-badge">0</span>
+      </button>
+    </div>`;
   document.body.appendChild(fab);
 }
 function toggleFab(){
@@ -460,8 +631,37 @@ function refreshFab(){
   const badge=$('fab-badge');
   if(running){ badge.textContent=running; badge.classList.remove('hide'); }
   else badge.classList.add('hide');
-  el.innerHTML = D.jobs.slice(0,20).map(j=>`
-    <div class="job"><div class="ic">${JOB_ICONS[j.kind]||'⚙️'}</div>
-      <div class="tx"><b>${JOB_LABELS[j.kind]||j.kind}</b><span>${j.message||''}</span></div>
-      ${pill(j.state)}</div>`).join('') || '<div class="empty">אין פעילות עדיין</div>';
+  const st=$('fab-status');
+  if(st){
+    const eng = D.live ? '<span style="color:#4ade80">● מנוע פעיל</span>' : '<span style="color:#f87171">● מנוע כבוי</span>';
+    const trJobs = Object.values(typeof _transcription_jobs_local!=='undefined'?_transcription_jobs_local:{});
+    const trActive = trJobs.filter(j=>j.state==='transcribing'||j.state==='queued').length;
+    const trDone = trJobs.filter(j=>j.state==='done').length;
+    let trLine = '';
+    if(trActive) trLine = ` · <span style="color:#60a5fa">🎙 ${trActive} תמלולים פעילים</span>`;
+    else if(trDone) trLine = ` · 🎙 ${trDone} תמלולים הושלמו`;
+    st.innerHTML = eng + (running ? ` · ⚙ ${running} משימות` : '') + trLine;
+  }
+  const groups = {};
+  for(const j of D.jobs.slice(0,30)){
+    const k = j.kind||'other';
+    (groups[k] = groups[k]||[]).push(j);
+  }
+  let html = '';
+  for(const [kind, jobs] of Object.entries(groups)){
+    const label = JOB_LABELS[kind]||kind;
+    const icon = JOB_ICONS[kind]||'⚙️';
+    const runCount = jobs.filter(j=>j.state==='RUNNING').length;
+    const doneCount = jobs.filter(j=>j.state==='COMPLETED').length;
+    const errCount = jobs.filter(j=>j.state==='ERROR').length;
+    html += `<div style="margin:8px 0 4px;font-size:12px;font-weight:700;color:var(--ink-soft);display:flex;align-items:center;gap:6px">
+      ${icon} ${label} <span style="font-weight:400;font-size:11px">(${jobs.length}${runCount?' • '+runCount+' פעיל':''}${errCount?' • '+errCount+' שגיאות':''})</span></div>`;
+    for(const j of jobs.slice(0,5)){
+      html += `<div class="job"><div class="ic">${icon}</div>
+        <div class="tx"><b>${j.message||label}</b><span>${j.started_at||''}</span></div>
+        ${pill(j.state)}</div>`;
+    }
+    if(jobs.length>5) html += `<div style="font-size:11px;color:var(--ink-soft);padding:2px 8px">ועוד ${jobs.length-5}…</div>`;
+  }
+  el.innerHTML = html || '<div class="empty">אין פעילות עדיין</div>';
 }

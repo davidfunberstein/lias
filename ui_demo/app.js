@@ -23,8 +23,9 @@ function isPro(u){ return u && u.role!=='CLIENT'; }
 const JOB_LABELS = {net_sync_current:'סנכרון תיק NET', net_auto_update:'עדכון כל תיקי NET',
   bdr_batch:'הורדת אצווה BDR', open_portal:'פתיחת פורטל', reimport_csv:'התאמת DB',
   convert_md:'המרת מסמך לטקסט', purge_stale:'ניקוי רשומות', net_date_search:'חיפוש תאריכים',
-  net_list_cases:'חיפוש תיקים בנט', net_smart_download:'הורדת תיקים מנט', net_download_all:'הורדת כל התיקים'};
-const JOB_ICONS = {net_sync_current:'🔄', net_auto_update:'🔄', bdr_batch:'📥',
+  net_list_cases:'חיפוש תיקים בנט', net_smart_download:'הורדת תיקים מנט', net_download_all:'הורדת כל התיקים',
+  eca_sync:'סנכרון הוצאה לפועל'};
+const JOB_ICONS = {net_sync_current:'🔄', net_auto_update:'🔄', bdr_batch:'📥', eca_sync:'⚖️',
   open_portal:'🌐', reimport_csv:'🗂', convert_md:'📝', purge_stale:'🧹', net_date_search:'🔎'};
 const GROUP_COLORS = {'בקשה':'#2F7DF6','תגובה':'#7EB1FA','החלטה':'#0E1B29',
   'פסק דין':'#F5A623','פרוטוקול':'#3B82F6','אישור':'#C9D6CE','אחר':'#6B7570'};
@@ -55,7 +56,7 @@ function destroyCharts(){ Object.values(charts).forEach(c=>c?.destroy()); charts
 /* ─── routing ─── */
 function go(v, id){
   route = {v, id};
-  location.hash = v==='home' ? '' : `${v}/${id}`;
+  location.hash = v==='home' ? '' : id!=null ? `${v}/${id}` : v;
   render();
   refresh(true);
 }
@@ -81,41 +82,62 @@ function openDrawer(kind, filter){
       : '<div class="sub">אין תיקים עם שגיאות 🎉</div>');
   } else if(kind==='cases'){
     const allCards = filter? D.case_cards.filter(c=>c.arkaa===filter) : D.case_cards;
-    const cards = allCards.filter(c=>c.docs>0);
-    const emptyCards = allCards.filter(c=>!c.docs);
     const st = caseStatusMap();
     const chip = c=> st[c.sub_case_id]==='closed'
       ? '<span class="pill gray" style="margin-right:6px">סגור</span>'
       : '<span class="pill ok" style="margin-right:6px">פתוח</span>';
-    const item = c=>`<div class="dl-item" onclick="closeDrawer();go('case',${c.sub_case_id})">
+    const parties = c => {
+      const n = c.sub_number||'';
+      const m = n.match(/נ['’]\s*(.+)/);
+      return m ? m[1].trim() : '';
+    };
+    const item = c=>{
+      const vs = parties(c);
+      return `<div class="dl-item" onclick="closeDrawer();go('case',${c.sub_case_id})">
         <b>${c.sub_number}</b>${chip(c)}
+        ${vs?`<span style="font-size:11px;color:var(--ink-soft)">מול: ${vs}</span>`:''}
         <span>${c.arkaa} · ${nf.format(c.docs)} מסמכים · ${c.groups['בקשה']||0} בקשות · ${(c.groups['החלטה']||0)+(c.groups['פסק דין']||0)} החלטות</span>
       </div>`;
+    };
     const srt = arr => [...arr].sort((a,b)=>
       ((st[a.sub_case_id]==='closed')-(st[b.sub_case_id]==='closed')) ||
       (b.last||'').localeCompare(a.last||''));
-    const isBdr = c=>c.arkaa==='בית דין רבני';
-    const isGadol = c=>/[-\s]גדול\s*$/.test(c.sub_number||'');
-    const gadol = srt(cards.filter(c=>isBdr(c)&&isGadol(c)));
-    const azori = srt(cards.filter(c=>isBdr(c)&&!isGadol(c)));
-    const net = srt(cards.filter(c=>!isBdr(c)));
-    const section = (title, arr, open)=> arr.length
-      ? `<details ${open?'open':''} style="margin-top:12px">
-           <summary style="font-weight:800;cursor:pointer;padding:6px 0">${title} · ${arr.length}</summary>
-           ${arr.map(item).join('')}</details>`
-      : '';
-    const emptyItem = c=>`<div class="dl-item" style="opacity:.6" onclick="closeDrawer();go('case',${c.sub_case_id})">
-        <b>${c.sub_number}</b><span>${c.arkaa} · טרם הורדו מסמכים</span></div>`;
-    html = `<h2>תיקים${filter? ' — '+filter : ''}</h2><div class="sub">${cards.length} תיקים עם מסמכים · פתוחים קודם</div>`+
-      section('⚖ בית הדין הרבני הגדול', gadol, true)+
-      section('⚖ בתי דין רבניים אזוריים', azori, true)+
-      section('🏛 בתי משפט (נט)', net, true)+
-      (cards.length? '' : '<div class="empty">אין תיקים עם מסמכים</div>')+
-      (emptyCards.length
-        ? `<details style="margin-top:16px;opacity:.75">
-             <summary style="cursor:pointer;padding:6px 0;color:var(--ink-soft)">תיקים ללא מסמכים (בתהליך) · ${emptyCards.length}</summary>
-             ${emptyCards.map(emptyItem).join('')}</details>`
-        : '');
+    const byClient = {};
+    for(const c of allCards){
+      const cname = (D.clients||[]).find(cl=>cl.client_id===c.client_id)?.display_name || 'ללא לקוח';
+      (byClient[cname] = byClient[cname]||[]).push(c);
+    }
+    const courtLabel = c => {
+      if(c.arkaa!=='בית דין רבני') return '🏛 נט המשפט';
+      return /[-\s]גדול\s*$/.test(c.sub_number||'') ? '⚖ ביה״ד הרבני הגדול' : '⚖ ביה״ד רבני אזורי';
+    };
+    let body = '';
+    for(const [client, cases] of Object.entries(byClient)){
+      const withDocs = cases.filter(c=>c.docs>0);
+      const noDocs = cases.filter(c=>!c.docs);
+      const byCourt = {};
+      for(const c of srt(withDocs)){
+        const cl = courtLabel(c);
+        (byCourt[cl] = byCourt[cl]||[]).push(c);
+      }
+      body += `<details open style="margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:8px 12px">
+        <summary style="font-weight:800;cursor:pointer;padding:6px 0;font-size:15px">👤 ${client} · ${cases.length} תיקים</summary>`;
+      for(const [court, clist] of Object.entries(byCourt)){
+        body += `<details open style="margin:6px 0 4px 12px">
+          <summary style="font-weight:600;cursor:pointer;padding:4px 0;font-size:13px">${court} · ${clist.length}</summary>
+          ${clist.map(item).join('')}</details>`;
+      }
+      if(noDocs.length){
+        body += `<details style="margin:4px 0 4px 12px;opacity:.6">
+          <summary style="cursor:pointer;padding:4px 0;font-size:12px;color:var(--ink-soft)">טרם הורדו מסמכים · ${noDocs.length}</summary>
+          ${noDocs.map(c=>`<div class="dl-item" style="opacity:.6" onclick="closeDrawer();go('case',${c.sub_case_id})">
+            <b>${c.sub_number}</b><span>${c.arkaa}</span></div>`).join('')}</details>`;
+      }
+      body += '</details>';
+    }
+    html = `<h2>תיקים${filter? ' — '+filter : ''}</h2>
+      <div class="sub">${allCards.filter(c=>c.docs>0).length} תיקים עם מסמכים · לפי לקוח וערכאה</div>`
+      + (body || '<div class="empty">אין תיקים</div>');
   }
   b.innerHTML = html;
   $('drawer').classList.add('on');
@@ -320,12 +342,18 @@ async function safeShutdown(){
 /* heartbeat */
 window.addEventListener('beforeunload', e=>{
   e.stopImmediatePropagation();
+  e.preventDefault = ()=>{};
   delete e.returnValue;
-  e.returnValue = undefined;
+  Object.defineProperty(e, 'returnValue', { get(){return undefined;}, set(){}, configurable:true });
 }, true);
 try{
   Object.defineProperty(window, 'onbeforeunload',
-    { get(){ return null; }, set(){ /* ignore */ }, configurable:false });
+    { get(){ return null; }, set(){}, configurable:false });
+  const origAEL = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = function(type, fn, opts){
+    if(type==='beforeunload' && this===window) return;
+    return origAEL.call(this, type, fn, opts);
+  };
 }catch(_){}
 setInterval(()=>{ fetch('/api/heartbeat',{method:'POST'}).catch(()=>{}); }, 5000);
 fetch('/api/heartbeat',{method:'POST'}).catch(()=>{});

@@ -51,6 +51,36 @@ class BdrNavigator:
         else:
             print(prefixed)
 
+    def _dismiss_doc_unavailable(self) -> bool:
+        """Dismiss 'מסמך אינו זמין כעת' / 'DocumentNotAvailable' popup. Returns True if dismissed."""
+        import time as _t
+        for sel in [
+            '#MessageLS_DocumentNotAvailable a.modal_ReturnMessageClose',
+            '#MessageLS_DocumentNotAvailable a.modal_close2',
+            'a.modal_ReturnMessageClose',
+            'a.modal_close2',
+        ]:
+            try:
+                btn = self.page.locator(sel).first
+                if btn.count() > 0 and btn.is_visible(timeout=2000):
+                    btn.click()
+                    _t.sleep(0.5)
+                    return True
+            except Exception:
+                continue
+        try:
+            if self.page.locator('div:has-text("מסמך אינו זמין")').first.is_visible(timeout=1000):
+                for close_sel in ['a:has-text("אישור")', 'a.modal_ReturnMessageClose']:
+                    try:
+                        self.page.locator(close_sel).first.click()
+                        _t.sleep(0.5)
+                        return True
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return False
+
     # ------------------------------------------------------------------
     # Tab navigation
     # ------------------------------------------------------------------
@@ -309,6 +339,19 @@ class BdrNavigator:
                         download_btn.click()
 
                     dl = dl_info.value
+                except Exception as dl_exc:
+                    # Check for "מסמך אינו זמין כעת" popup and dismiss
+                    if self._dismiss_doc_unavailable():
+                        self._log(f"Row {i + 1}: מסמך אינו זמין — ממשיך.", "warn")
+                        record = {**base_record,
+                                  "שם קובץ מקורי (מהשרת)": "Failed (Document Unavailable)",
+                                  "סטטוס הורדה": "Failed (Unavailable)"}
+                        manifest.upsert(record)
+                        failed_list.append(record)
+                        continue
+                    raise dl_exc
+
+                try:
                     server_filename = dl.suggested_filename or "unknown.pdf"
                     ext = (
                         f".{server_filename.split('.')[-1].lower()}"

@@ -16,7 +16,8 @@ from pathlib import Path
 LIAS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = LIAS_DIR.parent                      # gov-il-connect-v2
 BROWSER_PROFILE_DIR = PROJECT_ROOT / "browser_profile"  # shared with terminal mode
-DB_PATH = LIAS_DIR / "lias.db"
+BROWSER_PROFILE_BDR_DIR = PROJECT_ROOT / "browser_profile_bdr"  # separate BDR browser
+DB_PATH = PROJECT_ROOT / "lias.db"
 UI_DIR = LIAS_DIR / "ui"
 
 # COURT_DOCS_DIR — overridable via session_defaults.json ("court_docs_dir" key)
@@ -36,6 +37,7 @@ COURT_DOCS_DIR: Path = Path(_override).expanduser().resolve() if _override else 
 # --- Portals / פורטלים ----------------------------------------------------
 NET_HOME_URL = "https://www.court.gov.il/ngcs.web.site/homepage.aspx"
 BDR_FILES_URL = "https://sides.rbc.gov.il/Pages/FilesList.aspx"
+ECA_URL = "https://publicsso.eca.gov.il/he/home/OpenCase"
 
 # --- Browser thread / Thread הדפדפן ---------------------------------------
 # EN: command timeout — if the browser doesn't answer within this window the

@@ -52,18 +52,23 @@ def navigate_to_case_by_number(
             getattr(logger, level, logger.info)(f"[CaseNav] {msg}")
 
     def _dismiss_popup() -> None:
-        """Dismiss אישור / cookie popup if present."""
-        try:
-            popup_btn = page.locator(
-                'button:has-text("אישור"), '
-                'input[type="button"][value="אישור"], '
-                'a:has-text("אישור")'
-            ).first
-            if popup_btn.count() > 0 and popup_btn.is_visible(timeout=2000):
-                popup_btn.click()
-                time.sleep(0.5)
-        except Exception:
-            pass
+        """Dismiss אישור / error / cookie popup if present."""
+        for sel in [
+            'a.modal_ReturnMessageClose',
+            'a.modal_close2',
+            '#MessageLS_CaseNotFoundORNotAllowed a',
+            'button:has-text("אישור")',
+            'input[type="button"][value="אישור"]',
+            'a:has-text("אישור")',
+        ]:
+            try:
+                btn = page.locator(sel).first
+                if btn.count() > 0 and btn.is_visible(timeout=1500):
+                    btn.click()
+                    time.sleep(0.5)
+                    return
+            except Exception:
+                continue
 
     # The secured portal uses 'header_' prefix; the public homepage may use 'Header1_'.
     # Probe at runtime so navigation works regardless of which portal variant is active.
@@ -138,34 +143,92 @@ def navigate_to_case_by_number(
         print(f"{_ts()} [CaseNav]   Processed MMYY     : '{month_year_raw}' (after strip dash)")
         print(f"{'='*60}\n")
 
-        # Reload the page so the search form resets cleanly
-        _log(f"Reloading page before entering case {case_number}/{month_year_raw}...")
+        # Navigate to the secured portal's "my cases" page where the
+        # case locator header fields are always visible.
+        # PersonalAreaPage hides them in a dropdown; case detail pages
+        # have them in DOM but not interactive. The my-cases page works.
+        _SECURED_HOME = "https://securesso.court.gov.il/Ngcs.Web.Secured/PersonalAreaPage.aspx"
+        _log(f"Navigating to secured portal before entering case {case_number}/{month_year_raw}...")
         try:
-            page.reload(wait_until="domcontentloaded", timeout=15000)
+            page.goto(_SECURED_HOME, wait_until="networkidle", timeout=20000)
         except Exception:
-            time.sleep(2)
+            try:
+                page.goto(_SECURED_HOME, wait_until="domcontentloaded", timeout=15000)
+            except Exception:
+                time.sleep(3)
+
+        # Open "my cases" page so the case locator header becomes visible
+        try:
+            from core.net_search_cases import navigate_to_my_cases
+            navigate_to_my_cases(page)
+        except Exception as nav_exc:
+            _log(f"  Could not navigate to my-cases: {nav_exc}")
+
+        # Re-resolve selectors (secured portal uses 'header_' prefix)
+        my_sel  = _resolve_sel(_BASE_MY)
+        num_sel = _resolve_sel(_BASE_NUM)
+        btn_sel = _resolve_sel(_BASE_BTN)
+
+        # Force-show the case locator if still hidden
+        try:
+            page.evaluate("""
+                ['header_CaseLocatorHeaderUC2_BamaMonthYearTextBoxHT',
+                 'Header1_CaseLocatorHeaderUC2_BamaMonthYearTextBoxHT'].forEach(id => {
+                    var el = document.getElementById(id);
+                    if (!el) return;
+                    var node = el;
+                    while (node && node !== document.body) {
+                        var s = window.getComputedStyle(node);
+                        if (s.display === 'none') node.style.setProperty('display', '', 'important');
+                        if (s.visibility === 'hidden') node.style.setProperty('visibility', 'visible', 'important');
+                        node = node.parentElement;
+                    }
+                });
+            """)
+            time.sleep(0.5)
+        except Exception:
+            pass
 
         # Wait for the search fields to become visible
         try:
-            page.wait_for_selector(my_sel, state="visible", timeout=12000)
+            page.wait_for_selector(my_sel, state="visible", timeout=10000)
         except Exception:
-            time.sleep(3)
+            _log("  Case locator fields not visible — will try keyboard fill")
+            time.sleep(2)
+        time.sleep(0.8)
 
         # Dismiss terms/validation popup if present
         _dismiss_popup()
-        time.sleep(0.6)
+        time.sleep(0.4)
+
+        # Click month-year field to ensure it's focused/active
+        try:
+            page.click(my_sel, timeout=3000)
+            time.sleep(0.3)
+        except Exception:
+            pass
 
         _log(f"  Selectors resolved: my={my_sel!r}  num={num_sel!r}  btn={btn_sel!r}")
 
         # ── Fill month-year ──
-        # JS fill is primary; keyboard fill is fallback if JS left the field empty.
-        _log(f"  [1] month-year: sending '{month_year_raw}' via JS fill...")
-        _fill_via_js(my_sel, month_year_raw)
-        time.sleep(0.2)
-        val_after_js = _read_field_value(my_sel)
-        _log(f"      → field value after JS fill: '{val_after_js}'")
+        # JS fill with retry; keyboard fill as final fallback.
+        val_after_js = ""
+        for attempt in range(3):
+            _log(f"  [1] month-year: sending '{month_year_raw}' via JS fill (attempt {attempt+1})...")
+            _fill_via_js(my_sel, month_year_raw)
+            time.sleep(0.4)
+            val_after_js = _read_field_value(my_sel)
+            _log(f"      → field value after JS fill: '{val_after_js}'")
+            if val_after_js.replace("-", ""):
+                break
+            # Field not ready — click it and wait before retry
+            try:
+                page.click(my_sel, timeout=2000)
+            except Exception:
+                pass
+            time.sleep(1.0)
         if not val_after_js.replace("-", ""):
-            _log(f"  [2] month-year: JS fill gave empty — falling back to keyboard fill...")
+            _log(f"  [2] month-year: JS fill gave empty after retries — falling back to keyboard fill...")
             _fill_field(my_sel, month_year_raw)
             time.sleep(0.3)
             val_after_kb = _read_field_value(my_sel)
@@ -174,13 +237,22 @@ def navigate_to_case_by_number(
             _log(f"  [2] month-year: JS fill OK ('{val_after_js}') — skipping keyboard fill.")
 
         # ── Fill case number ──
-        _log(f"  [3] case-number: sending '{case_number}' via JS fill...")
-        _fill_via_js(num_sel, case_number)
-        time.sleep(0.2)
-        val_num_after_js = _read_field_value(num_sel)
-        _log(f"      → field value after JS fill: '{val_num_after_js}'")
+        val_num_after_js = ""
+        for attempt in range(3):
+            _log(f"  [3] case-number: sending '{case_number}' via JS fill (attempt {attempt+1})...")
+            _fill_via_js(num_sel, case_number)
+            time.sleep(0.4)
+            val_num_after_js = _read_field_value(num_sel)
+            _log(f"      → field value after JS fill: '{val_num_after_js}'")
+            if val_num_after_js:
+                break
+            try:
+                page.click(num_sel, timeout=2000)
+            except Exception:
+                pass
+            time.sleep(1.0)
         if not val_num_after_js:
-            _log(f"  [4] case-number: JS fill gave empty — falling back to keyboard fill...")
+            _log(f"  [4] case-number: JS fill gave empty after retries — falling back to keyboard fill...")
             _fill_field(num_sel, case_number)
             time.sleep(0.3)
             val_num_after_kb = _read_field_value(num_sel)
@@ -212,17 +284,30 @@ def navigate_to_case_by_number(
         except Exception:
             time.sleep(3)
 
+        # Check for "שגיאה במספר תיק" error popup
+        try:
+            err_el = page.locator('#MessageLS_CaseNotFoundORNotAllowed, div:has-text("שגיאה במספר תיק")').first
+            if err_el.count() > 0 and err_el.is_visible(timeout=1500):
+                _log(f"Portal showed 'שגיאה במספר תיק' for {case_number}/{month_year_raw} — dismissing", "warn")
+                _dismiss_popup()
+                return False
+        except Exception:
+            pass
+
         # Verify we are now on the SECURED portal (not stayed on public homepage)
         landed_url = page.url or ""
-        if "securesso.court.gov.il" not in landed_url:
-            _log(
-                f"After search, still on public portal ({landed_url[:60]}) — "
-                "case number entered from public homepage does not open secured case page.",
-                "warn",
-            )
-            return False
+        if "securesso.court.gov.il" not in landed_url and "court.gov.il" in landed_url:
+            # May be on public portal — check if case page loaded anyway
+            if "CaseView" not in landed_url and "PersonalAreaPage" not in landed_url:
+                _log(
+                    f"After search, still on portal ({landed_url[:60]}) — "
+                    "case might not exist or portal redirected.",
+                    "warn",
+                )
+                _dismiss_popup()
+                return False
 
-        _log(f"Navigated to case {case_number}/{month_year_raw} on secured portal.")
+        _log(f"Navigated to case {case_number}/{month_year_raw}.")
         return True
     except Exception as e:
         _log(f"Failed to navigate to case {case_number}/{month_year}: {e}", "error")

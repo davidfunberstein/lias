@@ -12,3 +12,4 @@ email_config.json
 
 *.DS_Store
 .fuse_hidden*
+browser_profile_bdr/

@@ -96,9 +96,10 @@ class JobContext:
     """EN: passed to every handler — progress reporting + shared services.
     HE: מועבר לכל מטפל — דיווח התקדמות + שירותים משותפים."""
 
-    def __init__(self, job_id: int, browser=None):
+    def __init__(self, job_id: int, browser=None, bdr_browser=None):
         self.job_id = job_id
         self.browser = browser            # BrowserManager or None
+        self.bdr_browser = bdr_browser    # separate BDR BrowserManager or None
 
     def progress(self, fraction: float, message: str = "") -> None:
         """Update DB + notify UI in one call / עדכון DB והודעה ל-UI בקריאה אחת."""
@@ -137,8 +138,9 @@ def submit(kind: str, payload: Optional[dict] = None) -> int:
 
 class WorkerPool:
     def __init__(self, browser=None, n_workers: int = config.JOB_WORKERS,
-                 log: Callable[[str], None] = print):
+                 log: Callable[[str], None] = print, bdr_browser=None):
         self._browser = browser
+        self._bdr_browser = bdr_browser
         self._log = log
         self._stop = threading.Event()
         self._threads = [
@@ -175,7 +177,7 @@ class WorkerPool:
                 continue
             job_id, kind = row["job_id"], row["kind"]
             payload = json.loads(row["payload_json"] or "{}")
-            ctx = JobContext(job_id, browser=self._browser)
+            ctx = JobContext(job_id, browser=self._browser, bdr_browser=self._bdr_browser)
             broadcast({"type": "job", "job_id": job_id, "state": "RUNNING", "kind": kind})
             try:
                 result = _HANDLERS[kind](payload, ctx)

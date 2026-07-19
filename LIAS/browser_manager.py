@@ -81,10 +81,12 @@ class BrowserManager:
         headless: bool = False,
         restore: Optional[Callable[[Any], None]] = None,
         log: Callable[[str], None] = print,
+        profile_dir: "Optional[Path]" = None,
     ) -> None:
         self._headless = headless
         self._restore = restore          # re-navigation after relaunch / ניווט מחדש
         self._log = log
+        self._profile_dir = profile_dir
         self._cmd_q: "queue.Queue[BrowserCommand]" = queue.Queue()
         self._alive = threading.Event()  # browser is usable / הדפדפן שמיש
         self._stop = threading.Event()
@@ -210,10 +212,11 @@ class BrowserManager:
         HE: Persistent Context = העוגיות שורדות ← הבטחה 2.
             ב-headless משתמשים במצב החדש — ה-WAF של הפורטלים חותך את
             ה-headless הישן; החדש נראה כמו Chrome אמיתי."""
-        config.BROWSER_PROFILE_DIR.mkdir(exist_ok=True)
+        profile = self._profile_dir or config.BROWSER_PROFILE_DIR
+        profile.mkdir(exist_ok=True)
         args = ["--disable-blink-features=AutomationControlled"]
         kwargs: dict = dict(
-            user_data_dir=str(config.BROWSER_PROFILE_DIR),
+            user_data_dir=str(profile),
             accept_downloads=True,
             headless=False,
         )
