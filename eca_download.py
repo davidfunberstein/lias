@@ -30,6 +30,28 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 BASE_URL = "https://publicsso.eca.gov.il"
+
+# live download counters (broadcast to the UI tasks balloon)
+_STATS = {"done": 0, "errors": 0, "total": 0, "case_idx": 0, "cases_total": 0,
+          "t0": 0.0}
+
+
+def _stats_tick(status: str) -> None:
+    if status == "ok":
+        _STATS["done"] += 1
+    elif status == "fail":
+        _STATS["errors"] += 1
+    try:
+        from LIAS import jobs as _jobs
+        mins = max((time.time() - _STATS["t0"]) / 60.0, 0.05)
+        _jobs.broadcast({"type": "download_stats", "portal": "ECA",
+                         "done": _STATS["done"], "errors": _STATS["errors"],
+                         "total": _STATS["total"] or None,
+                         "case_idx": _STATS["case_idx"],
+                         "cases_total": _STATS["cases_total"],
+                         "rate": round(_STATS["done"] / mins, 1)})
+    except Exception:
+        pass
 OPEN_CASES_URL = f"{BASE_URL}/he/home/OpenCase"
 
 
@@ -621,13 +643,13 @@ def _process_case(page, case: dict, output_dir: Path, by_client: bool = False) -
             filename = _make_filename(proc, date, "בקשה", applicant)
             _log(f"    [{proc}] בקשה ({date}) — {filename}")
             row = _row_locator(page, proc, rd["date"])
-            _download_doc(page, row, "motionDocumentID", proc_dir / filename)
+            _stats_tick(_download_doc(page, row, "motionDocumentID", proc_dir / filename))
 
         if rd["has_decision"]:
             filename = _make_filename(proc, dec_date, "החלטה", applicant)
             _log(f"    [{proc}] החלטה ({dec_date}) — {filename}")
             row = _row_locator(page, proc, rd["date"])
-            _download_doc(page, row, "decisionDocumentID", proc_dir / filename)
+            _stats_tick(_download_doc(page, row, "decisionDocumentID", proc_dir / filename))
 
         time.sleep(0.3)
 
@@ -699,8 +721,11 @@ def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None
     if not cases:
         return "לא נמצאו תיקי הוצאה לפועל"
 
+    _STATS.update(done=0, errors=0, total=0, case_idx=0,
+                  cases_total=len(cases), t0=time.time())
     ok = 0
     for case in cases:
+        _STATS["case_idx"] += 1
         try:
             _process_case(page, case, downloads_dir, by_client=True)
             ok += 1

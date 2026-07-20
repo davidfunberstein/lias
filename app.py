@@ -207,7 +207,8 @@ class Handler(BaseHTTPRequestHandler):
             code, body, _ct = engine_inproc.request("GET", "/api/ocr/test")
             self._send(code, body, "application/json; charset=utf-8")
         elif path.startswith("/api/doc_pdf/") or path in (
-                "/api/browser/screenshot", "/api/browser/status", "/api/log"):
+                "/api/browser/screenshot", "/api/browser/status", "/api/log",
+                "/api/jobs"):
             code, body, ct = engine_inproc.request("GET", self.path)
             self._send(code, body, ct or "application/octet-stream")
         elif path == "/api/events":

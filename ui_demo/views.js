@@ -58,8 +58,9 @@ function renderLawyer(){
         <option value="portal">לפי פורטל</option>
       </select></div>
       <div class="hbar" id="bd-bars"></div></div>
-    <div class="card c8"><div class="kpi-top"><h2>מסמכים אחרונים</h2></div>
-      <table><thead><tr><th>מסמך</th><th>תיק</th><th>תאריך</th><th>סטטוס</th><th>קובץ</th></tr></thead>
+    <div class="card c8"><div class="kpi-top"><div><h2>מסמכים אחרונים</h2>
+      <div class="sub">מכל הלקוחות — העמודה "לקוח" מפרידה ביניהם</div></div></div>
+      <table><thead><tr><th>מסמך</th><th>לקוח</th><th>תיק</th><th>תאריך</th><th>סטטוס</th></tr></thead>
       <tbody id="docs-body"></tbody></table></div>
     <div class="card c4 ai"><h2>AI LIAS</h2>
       <div class="hello-ai"><div class="orb"></div>
@@ -95,11 +96,13 @@ function fillLawyer(){
         <b>${nf.format(a.docs)}</b></div>
       <div class="bar"><i style="width:${a.docs/maxd*100}%"></i></div></div>`).join('');
   viewerSources.recent = D.recent_docs;
+  const _cn = d => (D.clients||[]).find(c=>c.client_id===d.client_id)?.display_name
+                || d.client_name || '—';
   $('docs-body').innerHTML = D.recent_docs.map((d,i)=>`
     <tr class="rowlink" onclick="openDocAt('recent',${i})" title="לחץ לפתיחת המסמך"><td><span class="docname" title="${d.logical_name||d.physical_name||''}">${d.logical_name||d.physical_name||'—'}</span></td>
+    <td>${_cn(d)}</td>
     <td><span class="case">${d.sub_number||'—'}</span></td><td>${d.submission_date||'—'}</td>
-    <td>${pill(d.download_status)}</td>
-    <td><span class="ftag">📄 PDF${d.pages?` · ${d.pages} עמ׳`:''}</span></td></tr>`).join('');
+    <td>${pill(d.download_status)}</td></tr>`).join('');
   $('clients-list').innerHTML = D.clients.slice(0,4).map((c,i)=>`
     <div class="client ${i===0?'hot':''}" onclick="go('client',${c.client_id})">
       <div class="num">${i+1}</div><div class="n">${c.display_name}</div>

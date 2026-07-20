@@ -61,9 +61,11 @@ def dashboard_from_db(con: sqlite3.Connection, full_ui_port: int) -> dict:
     recent_docs = [dict(r) for r in q("""
         SELECT d.document_id, d.logical_name, d.physical_name, d.doc_type,
                d.submission_date, d.download_status, d.pages, d.file_size_kb,
-               s.sub_number
+               s.sub_number, ca.client_id, cl.display_name AS client_name
         FROM documents d
         LEFT JOIN sub_cases s ON s.sub_case_id = d.sub_case_id
+        LEFT JOIN cases ca ON ca.case_id = s.case_id
+        LEFT JOIN clients cl ON cl.client_id = ca.client_id
         ORDER BY d.downloaded_at DESC, d.document_id DESC
         LIMIT 8""")]
 

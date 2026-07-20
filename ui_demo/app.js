@@ -75,6 +75,20 @@ function _groupToggled(key, el){
 }
 function _isOpen(key){ return _openState()[key]===true; }
 function _det(key){ return `${_isOpen(key)?'open ':''}ontoggle="_groupToggled('${key.replace(/'/g,"\\'")}',this)"`; }
+function filterDrawerCases(q){
+  q=(q||'').trim();
+  document.querySelectorAll('#drawer-body .dl-item').forEach(it=>{
+    it.style.display = !q || it.textContent.includes(q) ? '' : 'none';
+  });
+  // open groups that contain matches, restore default when cleared
+  document.querySelectorAll('#drawer-body details').forEach(d=>{
+    if(q){
+      const has=[...d.querySelectorAll('.dl-item')].some(it=>it.style.display!=='none');
+      d.open = has;
+      d.style.display = has || d.querySelector('details') ? '' : 'none';
+    } else { d.style.display=''; }
+  });
+}
 function openDrawer(kind, filter){
   const b = $('drawer-body'); let html='';
   if(!D){ return; }
@@ -116,8 +130,10 @@ function openDrawer(kind, filter){
       (byClient[cname] = byClient[cname]||[]).push(c);
     }
     const courtLabel = c => {
-      if(c.arkaa!=='בית דין רבני') return '🏛 נט המשפט';
-      return /[-\s]גדול\s*$/.test(c.sub_number||'') ? '⚖ ביה״ד הרבני הגדול' : '⚖ ביה״ד רבני אזורי';
+      if(c.arkaa==='הוצאה לפועל') return '⚖️ הוצאה לפועל';
+      if(c.arkaa!=='בית דין רבני')
+        return '🏛 ' + (c.arkaa||'נט המשפט');   // full ערכאה, like the dashboard
+      return /[-\s]גדול\s*$/.test(c.sub_number||'') ? '🕍 ביה״ד הרבני הגדול' : '🕍 ביה״ד רבני אזורי';
     };
     let body = '';
     for(const [client, cases] of Object.entries(byClient)){
@@ -144,7 +160,10 @@ function openDrawer(kind, filter){
       body += '</details>';
     }
     html = `<h2>תיקים${filter? ' — '+filter : ''}</h2>
-      <div class="sub">${allCards.filter(c=>c.docs>0).length} תיקים עם מסמכים · לפי לקוח וערכאה</div>`
+      <div class="sub">${allCards.filter(c=>c.docs>0).length} תיקים עם מסמכים · לפי לקוח וערכאה</div>
+      <input id="drawer-case-q" placeholder="🔎 חפש לקוח / מספר תיק / צד / ערכאה…"
+        oninput="filterDrawerCases(this.value)"
+        style="width:100%;margin:10px 0 4px;border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:13px;background:var(--surface);color:inherit">`
       + (body || '<div class="empty">אין תיקים</div>');
   }
   b.innerHTML = html;

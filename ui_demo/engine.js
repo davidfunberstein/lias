@@ -190,6 +190,9 @@ function toggleLogWin(){
       <button class="fv-btn log-tab-btn" id="lg-t-drive" style="border-color:#2a352c;color:#c8e6c9" onclick="setLogTab('drive')">Drive</button>
       <button class="fv-btn log-tab-btn" id="lg-t-transcription" style="border-color:#2a352c;color:#c8e6c9" onclick="setLogTab('transcription')">תמלול</button>
       <button class="fv-btn log-tab-btn" id="lg-t-events" style="border-color:#2a352c;color:#c8e6c9" onclick="setLogTab('events')">אירועים</button>
+      <button class="fv-btn" style="border-color:#2a352c;color:#c8e6c9" onclick="copyLog()" title="העתק את הלוג ללוח">📋</button>
+      <button class="fv-btn" style="border-color:#2a352c;color:#c8e6c9" onclick="downloadLog()" title="הורד כקובץ טקסט">⬇</button>
+      <button class="fv-btn" style="border-color:#2a352c;color:#c8e6c9" onclick="maximizeLogWin()" title="הגדל/הקטן">⛶</button>
     </div>
     <div id="logwin-body" style="flex:1;overflow-y:auto;padding:8px 12px;font-size:11.5px;
       font-family:ui-monospace,monospace;direction:ltr;text-align:left;line-height:1.65;white-space:pre-wrap"></div>`;
@@ -219,10 +222,85 @@ async function _refreshLog(){
       } else if(_logTab==='transcription'){
         filtered = filtered.filter(l=>/transcri|whisper|תמלול|הקלטה|audio|speech/i.test(l));
       }
-      el.textContent = filtered.join('\n') || (_logTab==='drive'?'אין לוגים של Drive':_logTab==='transcription'?'אין לוגים של תמלול':'הלוג ריק');
+      const esc = t=>t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+      const paint = l=>{
+        const e=esc(l);
+        if(/✗|שגיא|ERROR|Error|Traceback|failed|FAILED|Exception/.test(l))
+          return `<span style="color:#ff8a80">${e}</span>`;
+        if(/✓|Success|הושלם|הצליח|COMPLETED/.test(l))
+          return `<span style="color:#69f0ae">${e}</span>`;
+        if(/⚠|warn|WARN/.test(l)) return `<span style="color:#ffd54f">${e}</span>`;
+        return e;
+      };
+      el.innerHTML = filtered.map(paint).join('\n')
+        || (_logTab==='drive'?'אין לוגים של Drive':_logTab==='transcription'?'אין לוגים של תמלול':'הלוג ריק');
+      window._logText = filtered.join('\n');
     }catch(e){ el.innerHTML = '<div style="color:#7a8a7d">המנוע כבוי — אין לוג. הפעל את המנוע.</div>'; }
   }
   if(atBottom) el.scrollTop = el.scrollHeight;
+}
+
+/* ─── tasks balloon: what runs now, what waits, rate, cancel ─── */
+let _tasksTimer=null;
+function toggleTasksWin(){
+  let w=$('taskswin');
+  if(w){ clearInterval(_tasksTimer); _tasksTimer=null; w.remove(); return; }
+  w=document.createElement('div'); w.id='taskswin';
+  w.style.cssText='position:fixed;bottom:16px;left:16px;width:min(430px,92vw);max-height:60vh;'
+    +'background:var(--surface,#fff);border:1px solid var(--line,#e5e5e5);border-radius:14px;'
+    +'z-index:119;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.35);'
+    +'overflow:hidden;direction:rtl';
+  w.innerHTML=`<div class="fv-top" id="taskswin-top">
+      <button class="fv-btn" onclick="toggleTasksWin()">✕</button>
+      <div class="fv-title">📋 משימות פעילות</div>
+      <button class="fv-btn" style="color:var(--danger)" onclick="cancelNetDownload()" title="עצור את ההורדה הפעילה">⏹ עצור הורדה</button>
+    </div>
+    <div id="taskswin-body" style="flex:1;overflow-y:auto;padding:10px 14px;font-size:12.5px"></div>`;
+  document.body.appendChild(w);
+  _makeDraggable('taskswin','taskswin-top');
+  _refreshTasks();
+  _tasksTimer=setInterval(_refreshTasks, 3000);
+}
+async function _refreshTasks(){
+  const el=$('taskswin-body'); if(!el) return;
+  try{
+    const jobs = await (await fetch('/api/proxy/jobs?limit=25')).json().catch(()=>null)
+              || await (await fetch('/api/jobs?limit=25')).json();
+    const active = (jobs||[]).filter(j=>['RUNNING','PENDING'].includes(j.state));
+    const recent = (jobs||[]).filter(j=>!['RUNNING','PENDING'].includes(j.state)).slice(0,5);
+    const st = _dlStats;
+    const row = j=>`<div style="padding:7px 0;border-bottom:1px solid var(--line)">
+      <b>${JOB_ICONS[j.kind]||'⚙'} ${JOB_LABELS[j.kind]||j.kind}</b> ${pill(j.state)}
+      ${j.state==='RUNNING'?`<div style="height:6px;background:var(--line);border-radius:4px;margin:5px 0"><i style="display:block;height:100%;width:${Math.round((j.progress||0)*100)}%;background:var(--accent);border-radius:4px"></i></div>`:''}
+      <div style="font-size:11.5px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${j.message||j.error||''}</div>
+    </div>`;
+    el.innerHTML =
+      (st?`<div style="padding:7px 10px;margin-bottom:6px;border-radius:10px;background:var(--accent-soft,#eef4ff)">
+        ⬇ <b>${st.done||0}</b>/${st.total||'?'} מסמכים · תיק ${st.case_idx||'?'}/${st.cases_total||'?'}
+        ${st.rate?` · ${st.rate} מסמכים/דקה`:''} ${st.errors?` · <span style="color:var(--danger)">${st.errors} שגיאות</span>`:''}
+      </div>`:'')
+      + (active.length? '<div style="font-weight:700;margin:4px 0">רץ עכשיו / בהמתנה</div>'+active.map(row).join('') : '<div class="empty">אין משימות פעילות</div>')
+      + (recent.length? '<div style="font-weight:700;margin:10px 0 4px">הסתיימו לאחרונה</div>'+recent.map(row).join('') : '');
+  }catch(e){ el.innerHTML='<div class="empty">המנוע כבוי</div>'; }
+}
+
+function copyLog(){
+  const t = _logTab==='events' ? _logBuf.join('\n') : (window._logText||'');
+  navigator.clipboard.writeText(t).then(()=>toast('הלוג הועתק ✓')).catch(()=>toast('שגיאה בהעתקה', true));
+}
+function downloadLog(){
+  const t = _logTab==='events' ? _logBuf.join('\n') : (window._logText||'');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([t],{type:'text/plain'}));
+  a.download=`lias_log_${_logTab}_${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}.txt`;
+  a.click();
+}
+let _logMax=false;
+function maximizeLogWin(){
+  const w=$('logwin'); if(!w) return;
+  _logMax=!_logMax;
+  if(_logMax){ w.style.width='94vw'; w.style.height='86vh'; w.style.left='3vw'; w.style.bottom='4vh'; }
+  else{ w.style.width='min(560px,94vw)'; w.style.height='380px'; w.style.left='16px'; w.style.bottom='16px'; }
 }
 
 /* ─── real automation browser — show/hide ─── */
@@ -349,7 +427,7 @@ function syncCard(el){
     </div>
     <div id="sync-case-picker" style="display:none;margin-top:12px"></div>
     <div id="nc-search-box" style="display:none;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;margin-top:10px">
-      <div style="font-size:12px;color:rgba(255,255,255,.6);margin-bottom:6px">חיפוש תיק לפי מספר (דורש חיבור לנט)</div>
+      <div style="font-size:12px;color:rgba(255,255,255,.6);margin-bottom:6px">איתור תיק חדש בנט המשפט לפי מספר (תיקים שכבר במערכת — בלשונית "תיקים" עם חיפוש חופשי)</div>
       <div style="display:flex;gap:6px;align-items:center">
         <input id="nc-num" placeholder="מספר תיק" style="flex:1;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:7px 10px;font-size:13px;background:rgba(255,255,255,.08);color:#fff">
         <input id="nc-my" type="month" style="width:130px;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:7px 8px;font-size:12px;background:rgba(255,255,255,.08);color:#fff">
@@ -626,6 +704,7 @@ function ensureFab(){
       <div class="fp-body" id="fab-jobs"></div>
     </div>
     <div style="display:flex;gap:6px;align-items:center">
+      <button class="fab-btn" onclick="toggleTasksWin()" title="משימות פעילות — מה רץ, מה ממתין, קצב ועצירה" style="font-size:16px;width:36px;height:36px">⏱</button>
       <button class="fab-btn" onclick="toggleLogWin()" title="יומן חי" style="font-size:16px;width:36px;height:36px">📜</button>
       <button class="fab-btn" onclick="toggleFab()" title="פעילות אחרונה ויומן">
         📋<span class="fab-badge hide" id="fab-badge">0</span>
