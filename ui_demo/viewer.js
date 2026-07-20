@@ -168,8 +168,13 @@ _makeDraggable('fvl','fvl-top');
 let _fvlSortDir = -1;   // -1 = newest first
 function fvlToggleSort(){ _fvlSortDir = -_fvlSortDir; _renderFvlList(); }
 function _renderFvlList(){
-  const docs = [...(viewerSources.list||[])].sort((a,b)=>
-    _fvlSortDir * String(a.submission_date||'').localeCompare(String(b.submission_date||'')) * -1);
+  const dk = d=>{
+    const p=String(d.submission_date||'').split('/');
+    if(p.length===3) return p[2].padStart(4,'20')+p[1].padStart(2,'0')+p[0].padStart(2,'0');
+    const m=(d.logical_name||d.physical_name||'').match(/(\d{4})[_.-](\d{2})[_.-](\d{2})/);
+    return m? m[1]+m[2]+m[3] : '00000000';
+  };
+  const docs = [...(viewerSources.list||[])].sort((a,b)=> -_fvlSortDir * dk(a).localeCompare(dk(b)));
   viewerSources.list = docs;
   const btn = `<button class="fv-btn" style="font-size:11.5px;margin-bottom:8px" onclick="fvlToggleSort()">
     מיון לפי תאריך ${_fvlSortDir===-1?'⬇ מהחדש לישן':'⬆ מהישן לחדש'}</button>`;

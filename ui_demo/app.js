@@ -92,7 +92,7 @@ function openDrawer(kind, filter){
     const allCards = filter? D.case_cards.filter(c=>c.arkaa===filter) : D.case_cards;
     const st = caseStatusMap();
     const chip = c=> st[c.sub_case_id]==='closed'
-      ? '<span class="pill gray" style="margin-right:6px">סגור</span>'
+      ? '<span class="pill err" style="margin-right:6px">סגור</span>'
       : '<span class="pill ok" style="margin-right:6px">פתוח</span>';
     const parties = c => {
       const n = c.sub_number||'';
@@ -109,7 +109,7 @@ function openDrawer(kind, filter){
     };
     const srt = arr => [...arr].sort((a,b)=>
       ((st[a.sub_case_id]==='closed')-(st[b.sub_case_id]==='closed')) ||
-      (b.last||'').localeCompare(a.last||''));
+      (b.last||'0000').localeCompare(a.last||'0000'));
     const byClient = {};
     for(const c of allCards){
       const cname = (D.clients||[]).find(cl=>cl.client_id===c.client_id)?.display_name || 'ללא לקוח';

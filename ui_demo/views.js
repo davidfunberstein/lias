@@ -278,7 +278,13 @@ function _sortDocs(docs){
     name: d=>(d.logical_name||d.physical_name||''),
     type: d=>(d.doc_type||''),
     submitter: d=>((d.submitter_est||'').trim()||'~'),
-    date: d=>{const p=(d.submission_date||'').split('/'); return p.length===3? p[2]+p[1].padStart(2,'0')+p[0].padStart(2,'0') : '';},
+    date: d=>{
+      const p=(d.submission_date||'').split('/');
+      if(p.length===3) return p[2].padStart(4,'20')+p[1].padStart(2,'0')+p[0].padStart(2,'0');
+      // fallback: filenames start with a sortable 2026_03_29 prefix
+      const m=(d.logical_name||d.physical_name||'').match(/(\d{4})[_.-](\d{2})[_.-](\d{2})/);
+      return m? m[1]+m[2]+m[3] : '00000000';
+    },
     pages: d=>+(d.pages||0),
     status: d=>(d.download_status||''),
   }[caseSort.col];

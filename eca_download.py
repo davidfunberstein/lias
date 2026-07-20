@@ -17,6 +17,7 @@ ECA (הוצאה לפועל) downloader
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import time
@@ -521,6 +522,62 @@ def _expand_all_rows(page) -> None:
         pass
 
 
+def _collect_case_parties(page, case_dir: Path) -> dict:
+    """First visit to a case: open the 'גורמים בתיק' tab and harvest each
+    party's role, name and ID into case_info.json (cached — parties rarely
+    change, so we only do this when the file is missing)."""
+    info_path = case_dir / "case_info.json"
+    if info_path.exists():
+        try:
+            return json.loads(info_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    import json as _json
+    parties = []
+    try:
+        tab = page.locator("#CaseParties").first
+        if tab.count() == 0:
+            return {}
+        tab.click()
+        time.sleep(2)
+        # expand every role group (זוכה / חייב / בא כוח…)
+        headers = page.locator("#table-groups-expansion mat-expansion-panel-header").all()
+        for h in headers:
+            try:
+                role = h.locator("span.bold").first.inner_text(timeout=1000).strip()
+                if h.get_attribute("aria-expanded") != "true":
+                    h.click()
+                    time.sleep(1.2)
+            except Exception:
+                continue
+            # inside: app-case-party-general rows of מעמד/זיהוי/שם
+            for grp in page.locator("app-case-party-general").all():
+                try:
+                    labels = [x.strip() for x in grp.inner_text(timeout=1500).split("\n") if x.strip()]
+                    rec = {"role": role}
+                    for i in range(0, len(labels) - 1):
+                        if labels[i] == "שם":
+                            rec["name"] = labels[i + 1]
+                        elif labels[i] == "זיהוי":
+                            rec["id"] = labels[i + 1]
+                    if rec.get("name") and rec not in parties:
+                        parties.append(rec)
+                except Exception:
+                    continue
+    except Exception as e:
+        _log(f"  ⚠ גורמים בתיק: {e}")
+    info = {"parties": parties}
+    if parties:
+        try:
+            case_dir.mkdir(parents=True, exist_ok=True)
+            info_path.write_text(_json.dumps(info, ensure_ascii=False, indent=1),
+                                 encoding="utf-8")
+            _log("  ✓ צדדים: " + ", ".join(f"{p['role']}: {p.get('name','')}" for p in parties))
+        except Exception:
+            pass
+    return info
+
+
 def _process_case(page, case: dict, output_dir: Path, by_client: bool = False) -> None:
     case_num = case["number"]
     if by_client:
@@ -535,6 +592,16 @@ def _process_case(page, case: dict, output_dir: Path, by_client: bool = False) -
     if not _open_motions_tab(page, case_num):
         _log(f"  ✗ דילוג על תיק {case_num}")
         return
+
+    # First visit: harvest parties (role/name/ID) from גורמים בתיק, then
+    # return to the motions tab.
+    if not (case_dir / "case_info.json").exists():
+        _collect_case_parties(page, case_dir)
+        try:
+            page.locator("#MotionDecisionTable").first.click()
+            time.sleep(2)
+        except Exception:
+            pass
 
     _maximize_paginator(page)
     time.sleep(1)
