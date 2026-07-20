@@ -121,3 +121,88 @@ def get_client_base_dir(root_dir: Path, client_name: str) -> Path:
     client_dir = root_dir / client_name
     client_dir.mkdir(parents=True, exist_ok=True)
     return client_dir
+
+
+# ---------------------------------------------------------------------------
+# Per-case client assignment + real-time folder reorganization
+# ---------------------------------------------------------------------------
+
+def _parties_from_case_folder(name: str) -> list[str]:
+    """Extract party names from a case folder like
+    '15083-09-24 — פונברשטיין נ' בר' or 'אישות - דוד כהן - רות כהן'."""
+    tail = name
+    for sep in (" — ", " - "):
+        if sep in tail:
+            tail = tail.split(sep, 1)[1]
+            break
+    parts = re.split(r"\s+נ['׳’]\s+|\s+-\s+", tail)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def assign_clients(root_dir: Path, lawyer_name: str) -> dict:
+    """Decide the client of EACH case individually.
+
+    Rationale (the two-sides problem): every case names two parties; the
+    opposing party changes from case to case while the client repeats across
+    the lawyer's cases. So: count how often each party appears across all
+    cases where the lawyer is the מייצג, then per case pick the party with
+    the highest global count (min 2 appearances for confidence).
+
+    Returns {case_dir(Path): client_name(str)} — only confident assignments.
+    """
+    if not lawyer_name or not root_dir.exists():
+        return {}
+    lawyer_norm = _normalize(lawyer_name)
+
+    case_parties: dict[Path, list[str]] = {}
+    global_count: Counter = Counter()
+
+    for csv_path in root_dir.rglob("summary*.csv"):
+        case_dir = csv_path.parent
+        try:
+            with csv_path.open(encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                if not reader.fieldnames or "מייצג" not in reader.fieldnames:
+                    continue
+                if not any(lawyer_norm in _normalize(r.get("מייצג") or "")
+                           for r in reader):
+                    continue
+        except Exception:
+            continue
+        parties = _parties_from_case_folder(case_dir.name)
+        if not parties:
+            continue
+        case_parties[case_dir] = parties
+        for p in parties:
+            global_count[_normalize(p)] += 1
+
+    out: dict = {}
+    for case_dir, parties in case_parties.items():
+        best = max(parties, key=lambda p: global_count[_normalize(p)])
+        if global_count[_normalize(best)] >= 2:
+            out[case_dir] = best
+    return out
+
+
+def reorganize_cases_by_client(downloads_base: Path, lawyer_name: str,
+                               log=print) -> int:
+    """Move case folders that sit directly under downloads/ into
+    downloads/{client}/ based on per-case inference. Returns #moved.
+    Folders already inside a client directory are left alone."""
+    import shutil
+    moved = 0
+    for case_dir, client in assign_clients(downloads_base, lawyer_name).items():
+        if case_dir.parent != downloads_base:
+            continue                      # already organized under a client
+        client_safe = re.sub(r'[\\/*?:"<>|]', "-", client)
+        target = downloads_base / client_safe / case_dir.name
+        if target.exists():
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(case_dir), str(target))
+            log(f"[Clients] {case_dir.name} → {client_safe}/")
+            moved += 1
+        except Exception as e:
+            log(f"[Clients] move failed for {case_dir.name}: {e}")
+    return moved

@@ -208,6 +208,22 @@ def bdr_sync_current(payload: dict, ctx: JobContext) -> str:
     return f"bdr sync ok, {n} docs re-imported"
 
 
+@handler("organize_clients")
+def organize_clients(payload: dict, ctx: JobContext) -> str:
+    """EN: per-case client inference + folder reorganization + reimport.
+    HE: שיוך כל תיק ללקוח שלו (הצד שחוזר בין התיקים) וסידור התיקיות."""
+    from core.client_inference import reorganize_cases_by_client
+    from core.download import SESSION_SETTINGS as _ss
+    lawyer = payload.get("lawyer_name") or _ss.get("lawyer_name") or ""
+    if not lawyer:
+        return "אין שם עורך דין מוגדר — קבע lawyer_name בהגדרות"
+    ctx.progress(0.2, "משייך תיקים ללקוחות…")
+    moved = reorganize_cases_by_client(config.COURT_DOCS_DIR / "downloads", lawyer)
+    ctx.progress(0.7, "מייבא מחדש…")
+    n = _reimport_folder(config.COURT_DOCS_DIR / "downloads")
+    return f"{moved} תיקים שויכו, {n} מסמכים יובאו מחדש"
+
+
 @handler("eca_sync")
 def eca_sync(payload: dict, ctx: JobContext) -> str:
     """EN: download all ECA (הוצאה לפועל) cases — motions + decisions per
@@ -225,8 +241,10 @@ def eca_sync(payload: dict, ctx: JobContext) -> str:
         return run_eca_download(page, config.COURT_DOCS_DIR, cases_filter=cases)
 
     result = _run_portal(ctx, "eca_sync", _run, timeout=3600)
+    ctx.progress(0.9, "מייבא לדשבורד…")
+    n = _reimport_folder(config.COURT_DOCS_DIR / "downloads")
     _drive_sync(ctx, "אחרי סנכרון הוצל\"פ")
-    return str(result)
+    return f"{result} · {n} מסמכים בדשבורד"
 
 
 @handler("open_portal")
@@ -702,6 +720,21 @@ def bdr_batch(payload: dict, ctx: JobContext) -> str:
     ctx.browser = bdr
     _run_portal(ctx, "bdr_batch", _run, timeout=7200)
     ctx.browser = _saved_browser
+    # Real-time client attribution: move each case under its inferred client
+    # (the party that repeats across the lawyer's cases) before re-importing.
+    try:
+        from core.client_inference import reorganize_cases_by_client
+        from core.download import SESSION_SETTINGS as _ss
+        lawyer = _ss.get("lawyer_name") or _ss.get("share_name") or ""
+        if lawyer:
+            ctx.progress(0.88, "משייך תיקים ללקוחות…")
+            moved = reorganize_cases_by_client(
+                config.COURT_DOCS_DIR / "downloads", lawyer)
+            if moved:
+                jobs.broadcast({"type": "job", "job_id": ctx.job_id,
+                                "message": f"{moved} תיקים שויכו ללקוחות"})
+    except Exception as _ce:
+        print(f"[bdr_batch] client reorg skipped: {_ce}")
     ctx.progress(0.9, "re-importing CSVs")
     n = _reimport_folder(config.COURT_DOCS_DIR / "downloads")
     jobs.broadcast({"type": "file", "name": "bdr-batch", "status": "SYNC_DONE"})

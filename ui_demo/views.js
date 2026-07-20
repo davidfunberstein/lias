@@ -153,15 +153,19 @@ function renderClient(){
     <h1>${C? C.display_name : (u.role==='CLIENT'? 'שלום, '+u.name.split(' ')[0] : '…')}
     ${D?.demo_mode?'<span class="badge-demo">נתוני דמה</span>':''}</h1></div>
   <div class="grid">
-    <div class="card c3"><div class="kpi-top"><h3>תיקים</h3><div class="kpi-arrow">↗</div></div>
+    <div class="card c3 clicky" onclick="openDrawer('cases')" title="לרשימת התיקים">
+      <div class="kpi-top"><h3>תיקים</h3><div class="kpi-arrow">↗</div></div>
       <div class="kpi-num">${k?nf.format(k.cases):'…'}</div>
-      <div class="kpi-sub">פתוחים/סגורים — יסומן בשלב 1</div></div>
-    <div class="card c3"><div class="kpi-top"><h3>מסמכים</h3><div class="kpi-arrow">↗</div></div>
-      <div class="kpi-num">${k?nf.format(k.docs):'…'}</div><div class="kpi-sub"></div></div>
-    <div class="card c3"><div class="kpi-top"><h3>בקשות</h3><div class="kpi-arrow">↗</div></div>
-      <div class="kpi-num">${k?nf.format(k.requests):'…'}</div><div class="kpi-sub"></div></div>
-    <div class="card c3"><div class="kpi-top"><h3>החלטות ופס״ד</h3><div class="kpi-arrow">↗</div></div>
-      <div class="kpi-num">${k?nf.format(k.decisions):'…'}</div><div class="kpi-sub"></div></div>
+      <div class="kpi-sub">לחץ לרשימת התיקים</div></div>
+    <div class="card c3 clicky" onclick="openDocList('כל המסמכים — '+(C?.display_name||''), {client_id:C?.client_id})" title="לרשימת כל המסמכים">
+      <div class="kpi-top"><h3>מסמכים</h3><div class="kpi-arrow">↗</div></div>
+      <div class="kpi-num">${k?nf.format(k.docs):'…'}</div><div class="kpi-sub">לחץ לרשימה</div></div>
+    <div class="card c3 clicky" onclick="openDocList('בקשות — '+(C?.display_name||''), {client_id:C?.client_id, group:'בקשה'})" title="לרשימת הבקשות">
+      <div class="kpi-top"><h3>בקשות</h3><div class="kpi-arrow">↗</div></div>
+      <div class="kpi-num">${k?nf.format(k.requests):'…'}</div><div class="kpi-sub">לחץ לרשימה</div></div>
+    <div class="card c3 clicky" onclick="openDocList('החלטות ופס״ד — '+(C?.display_name||''), {client_id:C?.client_id, group:'החלטה'})" title="לרשימת ההחלטות">
+      <div class="kpi-top"><h3>החלטות ופס״ד</h3><div class="kpi-arrow">↗</div></div>
+      <div class="kpi-num">${k?nf.format(k.decisions):'…'}</div><div class="kpi-sub">לחץ לרשימה</div></div>
     <div class="card c12"><h2>התיקים</h2><div class="sub">לחץ על תיק לפירוט מלא</div>
       <div class="grid" style="margin-top:14px" id="case-cards"></div></div>
     <div class="card c12"><div class="kpi-top"><div><h2>מפת עומס — בקשות והחלטות לפי יום</h2>
@@ -199,20 +203,37 @@ function fillClient(){
     'בית משפט עליון':4, 'בית משפט מחוזי':5, 'בית משפט לענייני משפחה':6,
     'בית משפט שלום':7, 'בית משפט':8, 'הוצאה לפועל':9};
   const _arkaaIcon = a => a.includes('רבני')?'🕍': a.includes('הוצאה')?'⚖️':'🏛️';
-  // Clear visual section per ערכאה: full-width divider header with icon,
-  // count and doc total — intuitive scanning instead of a flat card soup.
+  // Hierarchical, collapsible layout: ערכאה → תיק ראשי → תתי-תיקים.
+  // Everything starts CLOSED; whatever the user opens is remembered
+  // (localStorage via _det) so returning to the dashboard keeps the context.
+  const mainNum = c => ((c.sub_number||'').match(/^(\d+)/)||[])[1] || 'אחר';
   $('case-cards').innerHTML = Object.entries(byArkaa)
     .sort((a,b)=>(_arkaaOrder[a[0]]||99)-(_arkaaOrder[b[0]]||99))
     .map(([ark,arr])=>{
       const docs = arr.reduce((s,c)=>s+(c.docs||0),0);
-      return `<div class="c12" style="display:flex;align-items:center;gap:10px;
-          margin:14px 0 -4px;padding:9px 14px;border-radius:10px;
-          background:rgba(47,125,246,.10);border:1px solid rgba(47,125,246,.25)">
-        <span style="font-size:16px">${_arkaaIcon(ark)}</span>
-        <b style="font-size:14px">${ark}</b>
-        <span style="font-size:12px;opacity:.65">${arr.length} תיקים · ${nf.format(docs)} מסמכים</span>
-      </div>`
-      + arr.sort((a,b)=>(b.docs||0)-(a.docs||0)).map(card).join('');
+      const byMain = {};
+      arr.forEach(c=>{ (byMain[mainNum(c)]=byMain[mainNum(c)]||[]).push(c); });
+      const mains = Object.entries(byMain)
+        .sort((a,b)=>b[1].reduce((s,c)=>s+c.docs,0)-a[1].reduce((s,c)=>s+c.docs,0))
+        .map(([mn,list])=>{
+          const md = list.reduce((s,c)=>s+(c.docs||0),0);
+          return `<details ${_det('dash:'+ark+':'+mn)} style="margin:8px 0;border:1px solid var(--line);border-radius:10px;padding:6px 12px">
+            <summary style="cursor:pointer;font-weight:700;font-size:13.5px;padding:5px 0">
+              📁 תיק ${mn} <span style="font-weight:400;opacity:.6;font-size:12px">· ${list.length} תתי-תיקים · ${nf.format(md)} מסמכים</span>
+            </summary>
+            <div class="grid" style="margin-top:8px">${list.sort((a,b)=>(b.docs||0)-(a.docs||0)).map(card).join('')}</div>
+          </details>`;
+        }).join('');
+      return `<details class="c12" ${_det('dash:'+ark)} style="margin:6px 0">
+        <summary style="display:flex;align-items:center;gap:10px;cursor:pointer;
+            padding:10px 14px;border-radius:10px;list-style-position:inside;
+            background:rgba(47,125,246,.10);border:1px solid rgba(47,125,246,.25)">
+          <span style="font-size:16px">${_arkaaIcon(ark)}</span>
+          <b style="font-size:14px">${ark}</b>
+          <span style="font-size:12px;opacity:.65">${arr.length} תיקים · ${nf.format(docs)} מסמכים</span>
+        </summary>
+        ${mains}
+      </details>`;
     }).join('')
     || '<div class="empty c12">אין תיקים ללקוח זה</div>';
   donut('ch-sub','sub-legend', C.submitters, {client_id:C.client_id});
@@ -265,6 +286,27 @@ function _sortDocs(docs){
     const x=key(a), y=key(b);
     return (x<y?-1:x>y?1:0)*caseSort.dir;
   });
+}
+async function uploadToCase(){
+  // Add one or more EXTERNAL documents to this case — saved in the case
+  // folder and marked "לא מהתיק" (doc_type: צירוף ידני).
+  if(!K?.sub_case_id) return;
+  const inp=document.createElement('input');
+  inp.type='file'; inp.multiple=true;
+  inp.onchange=async ()=>{
+    for(const f of inp.files){
+      toast(`מעלה "${f.name}"…`);
+      try{
+        const r=await fetch(`/api/upload_doc?sub_case_id=${K.sub_case_id}&name=${encodeURIComponent(f.name)}`,
+          {method:'POST', body:f});
+        const j=await r.json();
+        if(j.ok) toast(`✓ ${j.file}`);
+        else toast('שגיאה: '+(j.error||j.detail||''), true);
+      }catch(e){ toast('שגיאה בהעלאה: '+e.message, true); }
+    }
+    refresh(true);
+  };
+  inp.click();
 }
 function uploadForFailed(docIdx){
   const d = viewerSources.case?.[docIdx];
@@ -321,7 +363,8 @@ function renderCase(){
       ${K?(caseStatusMap()[K.sub_case_id]==='closed'
         ? `<span class="pill gray">תיק סגור</span> <button class="fv-btn" style="font-size:11px" onclick="toggleCaseStatus(${K.sub_case_id})">סמן כפתוח</button>`
         : `<span class="pill ok">תיק פתוח</span> <button class="fv-btn" style="font-size:11px" onclick="toggleCaseStatus(${K.sub_case_id})">סמן כסגור</button>`):''}
-      ${K?`<button class="fv-btn" style="font-size:11px" onclick="shareCase()" title="שתף רק את התיק הזה בצפייה">🔗 שתף תיק</button>
+      ${K?`<button class="fv-btn" style="font-size:11px" onclick="uploadToCase()" title="העלה מסמך אחד או כמה לתיק — יסומנו 'לא מהתיק'">➕ הוסף מסמכים</button>
+        <button class="fv-btn" style="font-size:11px" onclick="shareCase()" title="שתף רק את התיק הזה בצפייה">🔗 שתף תיק</button>
         <button class="fv-btn" style="font-size:11px;color:var(--danger)" onclick="deleteCase()" title="מחק את כל התיק (ל-trash + דרייב)">🗑 מחק תיק</button>`:''}</h1>
     <div class="sub" style="margin-top:6px">${K?`לקוח: <b>${(D?.clients||[]).find(c=>c.client_id===K.client_id)?.display_name||'—'}</b>
       · ערכאה: <b>${K.arkaa}</b> · פורטל: <b>${K.portal}</b>
@@ -397,7 +440,7 @@ function fillCase(){
   viewerSources.case = _sortDocs(_dateFilter(K.docs));
   $('case-docs').innerHTML = viewerSources.case.map((d,i)=>`
     <tr class="rowlink" onclick="openDocAt('case',${i})" title="לחץ לפתיחת המסמך"><td><span class="docname" title="${d.logical_name||d.physical_name||''}">${d.logical_name||d.physical_name||'—'}</span></td>
-    <td><span class="pill gray">${d.doc_type? d.doc_type.split(' - ')[0] : '—'}</span></td>
+    <td><span class="pill gray">${d.doc_type? d.doc_type.split(' - ')[0] : '—'}</span>${(d.doc_type||'').includes('צירוף ידני')?' <span class="pill pend" title="הועלה ידנית — לא הגיע מהפורטל">לא מהתיק</span>':''}</td>
     <td>${(d.submitter_est||'').trim()||'—'}</td><td>${d.submission_date||'—'}</td>
     <td>${d.pages||''}</td><td>${pill(d.download_status)}</td>
     <td style="white-space:nowrap">

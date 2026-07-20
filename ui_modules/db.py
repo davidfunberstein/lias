@@ -33,12 +33,13 @@ def _court_docs_dir(here: str) -> str:
     return os.path.join(here, "court_documents")
 
 
-def _full_ui_alive(full_ui_port: int) -> bool:
-    """Is the real LIAS server running?"""
+def _full_ui_alive(full_ui_port: int = 0) -> bool:
+    """Is the engine running? (in-process since the 8400 merge — the port
+    argument is kept for call-site compatibility and ignored)."""
     try:
-        with socket.create_connection(("127.0.0.1", full_ui_port), timeout=0.4):
-            return True
-    except OSError:
+        from ui_modules import engine_inproc
+        return engine_inproc.alive()
+    except Exception:
         return False
 
 
@@ -65,6 +66,8 @@ def _parse_ddmmyyyy(s: str):
 def _arkaa(portal: str, sub_number: str) -> str:
     """Derive court instance."""
     s = (sub_number or "").strip()
+    if portal == "ECA":
+        return "הוצאה לפועל"
     if portal == "BDR" or re.match(r"^\d{6,7}-\d+(\D|$)", s):
         return "בית דין רבני"
     if s.startswith("בל "):

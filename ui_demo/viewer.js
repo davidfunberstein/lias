@@ -3,7 +3,26 @@ let viewerSources = {};
 let viewerCtx = null;
 let _savedScroll = 0, _scrollLocked = false;
 
+let _docked = false;
+function toggleDockViewer(){
+  _docked = !_docked;
+  $('fv').classList.toggle('docked', _docked);
+  document.body.classList.toggle('fv-docked-mode', _docked);
+  const b=$('fv-dock'); if(b) b.textContent = _docked ? '⇥ למרכז' : '⇤ לצד';
+  _syncOverlays();
+}
 function _syncOverlays(){
+  // Docked viewer floats at the side WITHOUT locking page scroll — the user
+  // can scroll the case list and the document independently.
+  if(_docked && $('fv').classList.contains('on')){
+    if(_scrollLocked){
+      _scrollLocked=false;
+      document.body.style.position=''; document.body.style.top=''; document.body.style.width='';
+      window.scrollTo(0,_savedScroll);
+    }
+    $('fv-bg').classList.remove('on');
+    return;
+  }
   const any = $('fv').classList.contains('on') || $('fvl').classList.contains('on');
   if(any && !_scrollLocked){
     _scrollLocked = true;
@@ -76,7 +95,11 @@ async function _showViewer(id, name){
       }catch(e){ docEl.innerHTML = '<div class="page"><span style="color:var(--danger)">שגיאה בטעינת Word: '+e+'</span></div>'; }
       return;
     }
-    frame.src = url; frame.style.display='block';
+    // No converter available — show a message instead of downloading the file
+    // (a download would launch the Word application, which we never want).
+    fb.style.display='grid';
+    fb.innerHTML = 'לא ניתן להציג Word בדפדפן במחשב זה.<br>' +
+      '<button class="fv-btn" style="margin-top:8px" onclick="window.open($(\'fv-frame\').dataset.url)">הורד קובץ ידנית</button>';
   } else {
     frame.src = url; frame.style.display='block';
   }
@@ -91,6 +114,9 @@ function viewerStep(dir){
 function closeViewer(){
   if(!$('fv').classList.contains('on')) return;
   $('fv').classList.remove('on');
+  if(_docked){ _docked=false; $('fv').classList.remove('docked');
+    document.body.classList.remove('fv-docked-mode');
+    const b=$('fv-dock'); if(b) b.textContent='⇤ לצד'; }
   const cf=$('fv-frame'); try{ cf.contentWindow.onbeforeunload=null; }catch(_){}
   cf.removeAttribute('src'); cf.parentNode.replaceChild(cf.cloneNode(), cf);
   $('fv-doc').innerHTML='';
@@ -139,6 +165,21 @@ _makeDraggable('fv','fv-top');
 _makeDraggable('fvl','fvl-top');
 
 /* ─── floating doc list (opened from charts) ─── */
+let _fvlSortDir = -1;   // -1 = newest first
+function fvlToggleSort(){ _fvlSortDir = -_fvlSortDir; _renderFvlList(); }
+function _renderFvlList(){
+  const docs = [...(viewerSources.list||[])].sort((a,b)=>
+    _fvlSortDir * String(a.submission_date||'').localeCompare(String(b.submission_date||'')) * -1);
+  viewerSources.list = docs;
+  const btn = `<button class="fv-btn" style="font-size:11.5px;margin-bottom:8px" onclick="fvlToggleSort()">
+    מיון לפי תאריך ${_fvlSortDir===-1?'⬇ מהחדש לישן':'⬆ מהישן לחדש'}</button>`;
+  $('fvl-body').innerHTML = btn + (docs.map((d,i)=>`
+    <div class="dl-item" onclick="openDocAt('list',${i})">
+      <b>${d.logical_name||d.physical_name||'—'}</b>
+      <span>${d.doc_type?d.doc_type.split(' - ')[0]:'—'} · ${d.sub_number||''} · ${d.submission_date||''}
+        · ${(d.submitter_est||'').trim()||'לא צוין'}</span></div>`).join('')
+    || '<div class="empty">אין מסמכים תואמים</div>');
+}
 async function openDocList(title, params){
   $('fvl-title').textContent = title;
   $('fvl-body').innerHTML = '<div class="empty">טוען…</div>';
@@ -148,12 +189,7 @@ async function openDocList(title, params){
     const r = await (await fetch('/api/docs?'+new URLSearchParams({limit:200, ...params}))).json();
     viewerSources.list = r.docs||[];
     $('fvl-count').textContent = `${nf.format(r.total||0)} מסמכים`;
-    $('fvl-body').innerHTML = (r.docs||[]).map((d,i)=>`
-      <div class="dl-item" onclick="openDocAt('list',${i})">
-        <b>${d.logical_name||d.physical_name||'—'}</b>
-        <span>${d.doc_type?d.doc_type.split(' - ')[0]:'—'} · ${d.sub_number||''} · ${d.submission_date||''}
-          · ${(d.submitter_est||'').trim()||'לא צוין'}</span></div>`).join('')
-      || '<div class="empty">אין מסמכים תואמים</div>';
+    _renderFvlList();
   }catch(e){ $('fvl-body').innerHTML = '<div class="empty">שגיאה בטעינה</div>'; }
 }
 function closeDocList(){

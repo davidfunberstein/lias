@@ -1,0 +1,21 @@
+services:
+  lias:
+    build: .
+    container_name: lias
+    ports:
+      - "8500:8500"
+    volumes:
+      # Persistent data — survives container rebuilds
+      - ./court_documents:/app/court_documents
+      - ./transcriptions:/app/transcriptions
+      - ./browser_profile:/app/browser_profile
+      - ./browser_profile_bdr:/app/browser_profile_bdr
+      - ./lias.db:/app/lias.db
+      - ./session_defaults.json:/app/session_defaults.json
+      - ./annotations.json:/app/annotations.json
+      # Optional: Google Drive OAuth (place credentials.json next to compose file)
+      # - ./credentials.json:/app/credentials.json
+      # - ./token.json:/app/token.json
+    environment:
+      - LIAS_HOST=0.0.0.0
+    restart: unless-stopped

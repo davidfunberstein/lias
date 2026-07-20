@@ -101,6 +101,16 @@ _OCR_PROMPT = (
 
 _GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+_XAI_URL = "https://api.x.ai/v1/chat/completions"
+_XAI_MODEL = "grok-4-fast"
+
+
+def _chat_endpoint(api_key: str) -> tuple[str, str]:
+    """Route by key prefix: xai-… keys belong to xAI (Grok), anything else
+    goes to Groq. Both speak the OpenAI chat format."""
+    if (api_key or "").startswith("xai-"):
+        return _XAI_URL, _XAI_MODEL
+    return _GROQ_URL, _GROQ_MODEL
 
 
 def resolve_ocr_provider(session_settings: dict) -> tuple[str, str]:
@@ -131,10 +141,12 @@ def resolve_ocr_provider(session_settings: dict) -> tuple[str, str]:
 
 
 def _groq_ocr_page(img_bytes: bytes, api_key: str) -> str:
-    """OCR one page image via Groq's OpenAI-compatible vision endpoint."""
+    """OCR one page image via an OpenAI-compatible vision endpoint
+    (Groq, or xAI/Grok when the key starts with xai-)."""
     import urllib.request
+    url, model = _chat_endpoint(api_key)
     payload = {
-        "model": _GROQ_MODEL,
+        "model": model,
         "temperature": 0,
         "messages": [{
             "role": "user",
@@ -146,7 +158,7 @@ def _groq_ocr_page(img_bytes: bytes, api_key: str) -> str:
         }],
     }
     req = urllib.request.Request(
-        _GROQ_URL, data=json.dumps(payload).encode(),
+        url, data=json.dumps(payload).encode(),
         headers={"Authorization": f"Bearer {api_key}",
                  "Content-Type": "application/json"},
         method="POST")
@@ -156,16 +168,17 @@ def _groq_ocr_page(img_bytes: bytes, api_key: str) -> str:
 
 
 def groq_text_completion(prompt: str, api_key: str, timeout: int = 60) -> str:
-    """Plain text completion via Groq (no image) — used for metadata extraction
-    and for the /api/ocr/test ping."""
+    """Plain text completion via Groq/xAI (no image) — used for metadata
+    extraction and for the /api/ocr/test ping."""
     import urllib.request
+    url, model = _chat_endpoint(api_key)
     payload = {
-        "model": _GROQ_MODEL,
+        "model": model,
         "temperature": 0,
         "messages": [{"role": "user", "content": prompt}],
     }
     req = urllib.request.Request(
-        _GROQ_URL, data=json.dumps(payload).encode(),
+        url, data=json.dumps(payload).encode(),
         headers={"Authorization": f"Bearer {api_key}",
                  "Content-Type": "application/json"},
         method="POST")

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""LIAS — New dashboard UI demo server / שרת הדמו של הדשבורד החדש.
+"""LIAS — legal case-management app server / שרת האפליקציה לניהול תיקים.
 
-Completely separate from the existing system:
-  * Existing UI :  python -m LIAS.run          -> http://localhost:8400
-  * This demo   :  python3 run_ui_demo.py      -> http://localhost:8500
+  * Engine/API :  python -m LIAS.run   -> http://localhost:8400
+  * App (this) :  python3 app.py       -> http://localhost:8500
+    (run_ui_demo.py נשאר כקיצור תאימות לשם הישן)
 
 Reads lias.db (app root, fallback LIAS/lias.db) in READ-ONLY mode.
 Falls back to built-in demo data when the DB is missing, so the
@@ -33,10 +33,8 @@ from ui_modules.dashboard import (
 from ui_modules.notes import (
     _read_notes, _write_notes, _notes_save, _notes_export_pdf, _notes_delete,
 )
-from ui_modules.engine import (
-    _start_engine, _stop_engine, _shutdown_all, _restart_engine,
-    _autoreload_watcher, _watchdog, _proxy_post, _proxy_settings,
-)
+from ui_modules.engine import _autoreload_watcher, _watchdog
+from ui_modules import engine_inproc
 from ui_modules.documents import serve_document, _find_soffice, docx_to_pdf
 from ui_modules.transcription import (
     _get_whisper_model, _split_audio, _transcribe_chunk,
@@ -70,23 +68,29 @@ def _do_connect():
     return _connect(DB_PATH)
 
 def _do_full_ui_alive():
-    return _full_ui_alive(FULL_UI_PORT)
+    return engine_inproc.alive()
 
 def _do_build_dashboard():
     return build_dashboard(DB_PATH, FULL_UI_PORT)
 
 def _do_start_engine():
-    return _start_engine(HERE, FULL_UI_PORT, _engine_proc_holder, _do_full_ui_alive)
+    return engine_inproc.start()
 
 def _do_stop_engine():
-    return _stop_engine(FULL_UI_PORT, _engine_proc_holder)
+    return engine_inproc.stop()
 
 def _do_shutdown_all(reason: str):
-    return _shutdown_all(reason, FULL_UI_PORT, _engine_proc_holder,
-                         _server_ref, _shutting_down_flag)
+    if _shutting_down_flag.get("value"):
+        return
+    _shutting_down_flag["value"] = True
+    print(f"\n[shutdown] {reason} — closing engine and server / סוגר מנוע ושרת…")
+    engine_inproc.stop()
+    server = _server_ref.get("server")
+    if server is not None:
+        threading.Thread(target=server.shutdown, daemon=True).start()
 
 def _do_restart_engine():
-    return _restart_engine(HERE, FULL_UI_PORT, _engine_proc_holder, _do_full_ui_alive)
+    return engine_inproc.restart()
 
 def _do_serve_document(document_id: int):
     return serve_document(document_id, DB_PATH, HERE)
@@ -197,53 +201,40 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/notes":
             self._json(_read_notes(NOTES_PATH))
         elif path == "/api/settings":
-            code, body = _proxy_settings("GET", b"", FULL_UI_PORT)
+            code, body, _ct = engine_inproc.request("GET", "/api/settings")
             self._send(code, body, "application/json; charset=utf-8")
         elif path == "/api/proxy/ocr/test":
-            import urllib.request
-            try:
-                with urllib.request.urlopen(
-                        f"http://127.0.0.1:{FULL_UI_PORT}/api/ocr/test", timeout=30) as r:
-                    self._send(r.status, r.read(), "application/json; charset=utf-8")
-            except Exception as exc:
-                self._json({"ok": False, "error": str(exc)}, 502)
+            code, body, _ct = engine_inproc.request("GET", "/api/ocr/test")
+            self._send(code, body, "application/json; charset=utf-8")
         elif path.startswith("/api/doc_pdf/") or path in (
                 "/api/browser/screenshot", "/api/browser/status", "/api/log"):
-            import urllib.request
-            try:
-                with urllib.request.urlopen(
-                        f"http://127.0.0.1:{FULL_UI_PORT}{self.path}", timeout=25) as r:
-                    self._send(r.status, r.read(),
-                               r.headers.get("Content-Type", "application/octet-stream"))
-            except Exception as exc:
-                self._json({"error": str(exc)}, 502)
+            code, body, ct = engine_inproc.request("GET", self.path)
+            self._send(code, body, ct or "application/octet-stream")
         elif path == "/api/events":
-            import urllib.request
-            try:
-                upstream = urllib.request.urlopen(
-                    f"http://127.0.0.1:{FULL_UI_PORT}/events", timeout=60)
-            except Exception:
+            import queue as _q, json as _j
+            jobs_mod = engine_inproc.events_queue()
+            if jobs_mod is None:
                 self._json({"error": "engine offline"}, 502)
                 return
+            q = jobs_mod.subscribe()
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             try:
                 while True:
-                    line = upstream.readline()
-                    if not line:
-                        break
-                    self.wfile.write(line)
-                    if line in (b"\n", b"\r\n"):
-                        self.wfile.flush()
+                    try:
+                        ev = q.get(timeout=15)
+                        self.wfile.write(
+                            f"data: {_j.dumps(ev, ensure_ascii=False)}\n\n".encode())
+                    except _q.Empty:
+                        self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
             except Exception:
                 pass
             finally:
-                try:
-                    upstream.close()
-                except Exception:
-                    pass
+                jobs_mod.unsubscribe(q)
+            return
         elif path == "/api/docs":
             self._json(docs_list(params, DB_PATH))
         elif path == "/api/search":
@@ -322,17 +313,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):  # noqa: N802
         clean = self.path.split("?", 1)[0]
         if clean.startswith("/api/doc_pdf/"):
-            import urllib.request
-            try:
-                req = urllib.request.Request(
-                    f"http://127.0.0.1:{FULL_UI_PORT}{clean}", method="GET")
-                with urllib.request.urlopen(req, timeout=95) as r:
-                    self.send_response(r.status)
-                    self.send_header("Content-Type", "application/pdf")
-                    self.end_headers()
-            except Exception:
-                self.send_response(502)
-                self.end_headers()
+            code, _body, _ct = engine_inproc.request("GET", clean)
+            self.send_response(code)
+            self.send_header("Content-Type", "application/pdf")
+            self.end_headers()
             return
         m_view = re.match(r"^/api/doc_view/(\d+)$", clean)
         if m_view:
@@ -406,14 +390,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/upload_doc":
-            import urllib.request
-            url = f"http://127.0.0.1:{FULL_UI_PORT}{self.path}"
-            try:
-                req = urllib.request.Request(url, data=raw, method="POST")
-                with urllib.request.urlopen(req, timeout=60) as resp:
-                    self._send(resp.status, resp.read(), "application/json; charset=utf-8")
-            except Exception as exc:
-                self._json({"error": str(exc)}, 502)
+            code, body, _ct = engine_inproc.request(
+                "POST", self.path, raw,
+                content_type=self.headers.get("Content-Type", ""))
+            self._send(code, body, "application/json; charset=utf-8")
             return
 
         try:
@@ -423,7 +403,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/govil/save":
             self._json(_govil_save(payload))
         elif path == "/api/settings":
-            code, body = _proxy_settings("POST", json.dumps(payload).encode(), FULL_UI_PORT)
+            code, body, _ct = engine_inproc.request(
+                "POST", "/api/settings", json.dumps(payload).encode())
             self._send(code, body, "application/json; charset=utf-8")
         elif path == "/api/ocr/save":
             try:
@@ -455,7 +436,12 @@ class Handler(BaseHTTPRequestHandler):
                              daemon=True).start()
         elif path.startswith("/api/proxy/"):
             proxy_path = full_path[len("/api/proxy/"):]
-            code, resp_body = _proxy_post(proxy_path, raw, FULL_UI_PORT)
+            import re as _re
+            if not _re.match(r"^actions/[\w/]+", proxy_path.split("?")[0]):
+                code, resp_body = 403, b'{"error":"forbidden"}'
+            else:
+                code, resp_body, _ct = engine_inproc.request(
+                    "POST", "/api/" + proxy_path, raw)
             self._send(code, resp_body, "application/json; charset=utf-8")
         else:
             self._json({"error": "not found"}, 404)
@@ -487,7 +473,7 @@ def main() -> int:
     print("  LIAS — New Dashboard (demo) / דשבורד חדש")
     print(f"  UI:    {url}")
     print(f"  Data:  {db_state}")
-    print(f"  Note:  the existing UI (port {FULL_UI_PORT}) is untouched")
+    print("  Note:  engine runs IN-PROCESS — port 8400 is disabled")
     print("  Stop:  Ctrl+C")
     print("─" * 52)
     if "--no-browser" not in sys.argv:

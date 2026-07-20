@@ -67,6 +67,14 @@ window.addEventListener('hashchange', ()=>{
 });
 
 /* ─── drawer ─── */
+/* Collapsible-state memory: groups start CLOSED; whatever the user opens
+   stays open on the next render/visit (localStorage). */
+function _openState(){ try{return JSON.parse(localStorage.getItem('lias_open_groups'))||{}}catch(e){return {}} }
+function _groupToggled(key, el){
+  const m=_openState(); m[key]=el.open; localStorage.setItem('lias_open_groups', JSON.stringify(m));
+}
+function _isOpen(key){ return _openState()[key]===true; }
+function _det(key){ return `${_isOpen(key)?'open ':''}ontoggle="_groupToggled('${key.replace(/'/g,"\\'")}',this)"`; }
 function openDrawer(kind, filter){
   const b = $('drawer-body'); let html='';
   if(!D){ return; }
@@ -120,10 +128,10 @@ function openDrawer(kind, filter){
         const cl = courtLabel(c);
         (byCourt[cl] = byCourt[cl]||[]).push(c);
       }
-      body += `<details open style="margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:8px 12px">
+      body += `<details ${_det('cl:'+client)} style="margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:8px 12px">
         <summary style="font-weight:800;cursor:pointer;padding:6px 0;font-size:15px">👤 ${client} · ${cases.length} תיקים</summary>`;
       for(const [court, clist] of Object.entries(byCourt)){
-        body += `<details open style="margin:6px 0 4px 12px">
+        body += `<details ${_det('cl:'+client+':'+court)} style="margin:6px 0 4px 12px">
           <summary style="font-weight:600;cursor:pointer;padding:4px 0;font-size:13px">${court} · ${clist.length}</summary>
           ${clist.map(item).join('')}</details>`;
       }

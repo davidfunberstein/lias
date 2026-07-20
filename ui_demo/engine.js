@@ -228,24 +228,36 @@ async function _refreshLog(){
 /* ─── real automation browser — show/hide ─── */
 let _realBrowserVisible=false;
 function runBdrBatch(){
-  toast('מתחבר לבית הדין הרבני ומוריד תיקים…');
-  logEvent('→ הורדת תיקי BDR (דפדפן נפרד)');
+  // Optional filter: download only cases whose party matches a name
+  const flt = prompt('בית דין רבני — מה להוריד?\n' +
+    '• השאר ריק ולחץ אישור — כל התיקים\n' +
+    '• או הקלד שם לקוח כדי להוריד רק את התיקים שלו');
+  if(flt === null) return;                // ביטול
+  const client_filter = flt.trim();
+  toast(client_filter ? `מוריד תיקי בד"ר של "${client_filter}"…` : 'מתחבר לבית הדין הרבני ומוריד את כל התיקים…');
+  logEvent('→ הורדת תיקי BDR' + (client_filter? ' — '+client_filter : ' (הכל)'));
   fetch('/api/proxy/actions/bdr_batch', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({user_mode:'lawyer'})
+    body: JSON.stringify({user_mode:'lawyer', client_filter})
   }).then(r=>{
     if(r.ok) toast('הורדת BDR הופעלה ✓');
     else toast('שגיאה בהפעלת BDR', true);
   }).catch(e=>toast('שגיאה: '+e.message, true));
 }
 function runEcaSync(){
-  toast('מתחבר להוצאה לפועל ומוריד תיקים…');
-  logEvent('→ הורדת תיקי הוצאה לפועל');
+  // Let the user pick: all cases, or specific case numbers
+  const pick = prompt('אילו תיקי הוצאה לפועל להוריד?\n' +
+    '• השאר ריק ולחץ אישור — כל התיקים\n' +
+    '• או הדבק מספרי תיקים מופרדים בפסיק, למשל: 503795-07-25, 528421-07-25');
+  if(pick === null) return;               // ביטול
+  const cases = pick.split(',').map(x=>x.trim()).filter(Boolean);
+  toast(cases.length ? `מוריד ${cases.length} תיקי הוצל"פ…` : 'מוריד את כל תיקי ההוצל"פ…');
+  logEvent('→ הורדת תיקי הוצאה לפועל' + (cases.length? ' ('+cases.join(', ')+')' : ' (הכל)'));
   fetch('/api/proxy/actions/eca_sync', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({})
+    body: JSON.stringify(cases.length ? {cases} : {})
   }).then(r=>{
     if(r.ok) toast('הורדת הוצל"פ הופעלה ✓');
     else toast('שגיאה בהפעלת הוצל"פ', true);
@@ -410,7 +422,8 @@ async function _startSmartDownload(mode, cases){
     const j = await r.json();
     if(j.job_id){ _netDownloadJobId = j.job_id; try{sessionStorage.setItem('dlJobId',j.job_id);}catch(_){} }
     toast('ההורדה התחילה');
-    if(!_realBrowserVisible) fetch('/api/proxy/actions/browser/show',{method:'POST'}).then(()=>{_realBrowserVisible=true;}).catch(()=>{});
+    // No auto browser/show — popping the automation Chrome mid-work looked
+    // like "a random unrelated browser opened". Use the 🖥 toggle to peek.
     const picker=$('sync-case-picker');
     if(picker){ picker.style.display='none'; picker.innerHTML=''; }
   }catch(e){ toast('שגיאה: '+e.message, true); }

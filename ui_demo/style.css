@@ -313,3 +313,16 @@ th.sortable:hover{color:var(--accent-strong)}
 .fvl.on{display:flex}
 .fvl .fvl-body{overflow-y:auto;padding:6px 14px 14px}
 .fvl .dl-item{cursor:pointer}
+
+/* ─── docked (side) viewer: page stays scrollable, doc scrolls in its pane ─── */
+.fv.docked{top:64px;right:auto;left:10px;transform:none;
+  width:min(46vw,720px);height:calc(100vh - 74px);
+  box-shadow:0 10px 40px rgba(0,0,0,.3)}
+body.fv-docked-mode{padding-left:min(47vw,740px)}
+
+/* ─── always-visible draggable scrollbar in the doc viewer ─── */
+.fv .fv-doc{scrollbar-width:auto;scrollbar-color:#2F7DF6 rgba(0,0,0,.15)}
+.fv .fv-doc::-webkit-scrollbar{width:14px}
+.fv .fv-doc::-webkit-scrollbar-track{background:rgba(0,0,0,.12);border-radius:8px}
+.fv .fv-doc::-webkit-scrollbar-thumb{background:#2F7DF6;border-radius:8px;border:3px solid transparent;background-clip:content-box}
+.fv .fv-doc::-webkit-scrollbar-thumb:hover{background:#1d64d8;border:2px solid transparent;background-clip:content-box}

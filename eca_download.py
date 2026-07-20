@@ -277,88 +277,230 @@ def _has_button(row, selector: str) -> bool:
 
 
 def _extract_rows(page) -> list[dict]:
-    """Extract all data rows from the current table."""
-    rows = page.query_selector_all("table mat-mdc-row, table tr[mat-row], mat-row, tr[role='row']")
-    if not rows:
-        # Fallback — try Angular mat-row
-        rows = page.query_selector_all("[role='row']:not([role='columnheader'])")
-    result = []
-    for row in rows:
-        proc = _cell_text(row, "mat-column-processNumber")
-        if not proc:
-            continue
-        result.append({
-            "process":      proc,
-            "name":         _cell_text(row, "mat-column-motionDecisionName"),
-            "applicant":    _cell_text(row, "mat-column-motionApplicant"),
-            "date":         _cell_text(row, "mat-column-motionOpenDate"),
-            "dec_date":     _cell_text(row, "mat-column-decisionDate"),
-            "dec_result":   _cell_text(row, "mat-column-decisionResultName"),
-            "has_motion":   _has_button(row, "#motionDocumentID"),
-            "has_decision": _has_button(row, "#decisionDocumentID"),
-            "has_childs":   _has_button(row, "#hasChilds"),
-            "_row":         row,
-        })
-    return result
+    """Collect ALL rows from the motions table. The table may virtual-scroll,
+    so we scroll through it repeatedly and merge rows by process number until
+    no new rows appear. Only plain data is kept — row handles go stale after
+    scrolling, so downloads re-locate each row fresh by its process number."""
+    collected: dict = {}
+
+    def _grab() -> int:
+        new = 0
+        rows = page.query_selector_all("tr[mat-row], tr.mat-mdc-row, tr[role='row']")
+        for row in rows:
+            proc = _cell_text(row, "mat-column-processNumber")
+            if not proc:
+                continue
+            key = (proc, _cell_text(row, "mat-column-motionOpenDate"),
+                   _cell_text(row, "mat-column-motionDecisionName"))
+            if key in collected:
+                continue
+            collected[key] = {
+                "process":      proc,
+                "name":         _cell_text(row, "mat-column-motionDecisionName"),
+                "applicant":    _cell_text(row, "mat-column-motionApplicant"),
+                "date":         _cell_text(row, "mat-column-motionOpenDate"),
+                "dec_date":     _cell_text(row, "mat-column-decisionDate"),
+                "dec_result":   _cell_text(row, "mat-column-decisionResultName"),
+                "has_motion":   _has_button(row, "#motionDocumentID"),
+                "has_decision": _has_button(row, "#decisionDocumentID"),
+            }
+            new += 1
+        return new
+
+    _grab()
+    stale_rounds = 0
+    for _ in range(60):
+        try:
+            rows = page.query_selector_all("tr[mat-row], tr.mat-mdc-row")
+            if rows:
+                rows[-1].scroll_into_view_if_needed(timeout=2000)
+            page.mouse.wheel(0, 800)
+        except Exception:
+            pass
+        time.sleep(0.6)
+        if _grab() == 0:
+            stale_rounds += 1
+            if stale_rounds >= 3:
+                break
+        else:
+            stale_rounds = 0
+    return list(collected.values())
+
+
+def _row_locator(page, proc: str, date: str):
+    """Fresh locator for the row whose processNumber cell is exactly `proc`
+    (and, when given, whose open-date matches — disambiguates duplicates)."""
+    import re as _re
+    base = page.locator("tr[mat-row], tr.mat-mdc-row").filter(
+        has=page.locator("td.mat-column-processNumber .general-text",
+                         has_text=_re.compile(rf"^\s*{_re.escape(proc)}\s*$")))
+    if date:
+        with_date = base.filter(
+            has=page.locator("td.mat-column-motionOpenDate .general-text",
+                             has_text=_re.compile(rf"^\s*{_re.escape(date)}\s*$")))
+        if with_date.count() > 0:
+            return with_date.first
+    return base.first
+
+
+# ---------------------------------------------------------------------------
+# Viewer dialog handling
+# ---------------------------------------------------------------------------
+
+def _close_viewer(page, wait_s: float = 6.0) -> None:
+    """Close any open document-viewer / error dialog and WAIT until it is gone
+    — an open overlay blocks every next click (the 'decision never downloads'
+    bug). Handles the pdf.js viewer and the "המסמך אינו זמין" error popup."""
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        try:
+            if page.locator("mat-dialog-container, .cdk-overlay-pane .mdc-dialog").count() == 0:
+                return
+        except Exception:
+            return
+        for sel in ('mat-dialog-container button[aria-label*="סגור"]',
+                    'mat-dialog-container button:has-text("סגירה")',
+                    'mat-dialog-container button:has-text("אישור")',
+                    'mat-dialog-container mat-icon:has-text("close")',
+                    '.cdk-overlay-pane button[aria-label*="Close"]'):
+            try:
+                el = page.locator(sel).first
+                if el.count() > 0 and el.is_visible(timeout=300):
+                    el.click()
+                    time.sleep(0.5)
+                    break
+            except Exception:
+                continue
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+
+def _is_unavailable_dialog(page) -> bool:
+    """True if the current dialog says the document is unavailable."""
+    try:
+        dlg = page.locator("mat-dialog-container, .cdk-overlay-pane")
+        if dlg.count() == 0:
+            return False
+        txt = dlg.first.inner_text(timeout=1000) or ""
+        return any(k in txt for k in ("אינו זמין", "לא זמין", "לא ניתן להציג"))
+    except Exception:
+        return False
+
+
+def _extract_file_from_json(raw: bytes) -> bytes:
+    """Find a base64-encoded PDF/Office file anywhere inside a JSON payload
+    (the ECA API returns the document like this via GetPermittedDocument)."""
+    import base64
+    import json as _json
+    try:
+        obj = _json.loads(raw)
+    except Exception:
+        return b""
+    found: list[bytes] = []
+
+    def _walk(v):
+        if isinstance(v, dict):
+            for x in v.values():
+                _walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                _walk(x)
+        elif isinstance(v, str) and len(v) > 1000:
+            try:
+                d = base64.b64decode(v, validate=False)
+                if d[:4] == b"%PDF" or d[:2] == b"PK":
+                    found.append(d)
+            except Exception:
+                pass
+
+    _walk(obj)
+    return found[0] if found else b""
+
+
+# ---------------------------------------------------------------------------
+# Document download
+# ---------------------------------------------------------------------------
+
+def _download_doc(page, row_loc, btn_id: str, save_path: Path) -> str:
+    """Click a document button on a freshly-located row and capture the file.
+    Returns 'ok' / 'missing' (unavailable — dismissed, safe to continue) /
+    'fail'."""
+    if save_path.exists():
+        _log(f"      ↩ כבר קיים: {save_path.name}")
+        return "ok"
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    btn = row_loc.locator(f"#{btn_id}").first
+    try:
+        if btn.count() == 0 or not btn.is_visible(timeout=1500):
+            return "fail"
+    except Exception:
+        return "fail"
+
+    pdf_responses: list = []
+
+    def _on_response(resp):
+        try:
+            ct = (resp.headers or {}).get("content-type", "")
+            if "pdf" in ct or "octet-stream" in ct or \
+               "GetPermittedDocument" in (resp.url or ""):
+                pdf_responses.append(resp)
+        except Exception:
+            pass
+
+    page.on("response", _on_response)
+    try:
+        _close_viewer(page, wait_s=3)          # make sure nothing blocks us
+        try:
+            row_loc.scroll_into_view_if_needed(timeout=2000)
+        except Exception:
+            pass
+        try:
+            with page.expect_download(timeout=6000) as dl_info:
+                btn.click()
+            dl_info.value.save_as(str(save_path))
+            _log(f"      ✓ {save_path.name}")
+            return "ok"
+        except Exception:
+            pass
+
+        # Wait for the API response that carries the document
+        deadline = time.time() + 12
+        while time.time() < deadline and not pdf_responses:
+            if _is_unavailable_dialog(page):
+                _log(f"      ⚠ המסמך אינו זמין — מדלג: {save_path.name}")
+                return "missing"
+            time.sleep(0.5)
+        if pdf_responses:
+            try:
+                data = pdf_responses[-1].body()
+                if data[:1] in (b"{", b"["):
+                    data = _extract_file_from_json(data)
+                if data and len(data) > 500:
+                    save_path.write_bytes(data)
+                    _log(f"      ✓ {save_path.name}")
+                    return "ok"
+            except Exception as e:
+                _log(f"      ⚠ network body: {e}")
+        if _is_unavailable_dialog(page):
+            _log(f"      ⚠ המסמך אינו זמין — מדלג: {save_path.name}")
+            return "missing"
+        _log(f"      ✗ לא הורד: {save_path.name}")
+        return "fail"
+    finally:
+        try:
+            page.remove_listener("response", _on_response)
+        except Exception:
+            pass
+        _close_viewer(page)                     # never leave a blocking overlay
 
 
 # ---------------------------------------------------------------------------
 # Process a single case
 # ---------------------------------------------------------------------------
-
-def _process_case(page, case: dict, output_dir: Path, by_client: bool = False) -> None:
-    case_num = case["number"]
-    if by_client:
-        # downloads/{לקוח}/הוצאה לפועל/{תיק}/... — mirrors the NET/BDR layout
-        client = _sanitize(case.get("party") or "ללא שם")
-        case_dir = output_dir / client / "הוצאה לפועל" / _sanitize(case_num)
-    else:
-        case_dir = output_dir / _sanitize(case_num)
-
-    _log(f"\n{'='*60}")
-    _log(f"תיק: {case_num}  ({case.get('type', '')})")
-
-    if not _open_motions_tab(page, case_num):
-        _log(f"  ✗ דילוג על תיק {case_num}")
-        return
-
-    _maximize_paginator(page)
-    time.sleep(1)
-
-    # Expand all parent rows (hasChilds) first
-    _expand_all_rows(page)
-
-    rows_data = _extract_rows(page)
-    _log(f"  {len(rows_data)} שורות נמצאו")
-
-    for rd in rows_data:
-        proc = rd["process"]
-        applicant = _sanitize(rd["applicant"] or "")
-        date = _sanitize(rd["date"] or "")
-        dec_date = _sanitize(rd["dec_date"] or "")
-
-        # Folder per top-level process (e.g. "20" not "20.1")
-        top_proc = proc.split(".")[0]
-        proc_dir = case_dir / _sanitize(top_proc)
-
-        row_el = rd["_row"]
-
-        # Download motion (בקשה)
-        if rd["has_motion"]:
-            filename = _make_filename(proc, date, "בקשה", applicant)
-            save_path = proc_dir / filename
-            _log(f"    [{proc}] בקשה ({date}) — {filename}")
-            _download_doc_from_row(page, row_el, "motionDocumentID", save_path)
-
-        # Download decision (החלטה)
-        if rd["has_decision"]:
-            filename = _make_filename(proc, dec_date, "החלטה", applicant)
-            save_path = proc_dir / filename
-            _log(f"    [{proc}] החלטה ({dec_date}) — {filename}")
-            _download_doc_from_row(page, row_el, "decisionDocumentID", save_path)
-
-        time.sleep(0.3)
-
 
 def _expand_all_rows(page) -> None:
     """Click all 'hasChilds' (zoom_in) buttons to expand parent rows."""
@@ -379,62 +521,88 @@ def _expand_all_rows(page) -> None:
         pass
 
 
-def _download_doc_from_row(page, row_el, btn_id: str, save_path: Path) -> bool:
-    """Click document button on a specific DOM row element."""
-    if save_path.exists():
-        _log(f"      ↩ כבר קיים: {save_path.name}")
-        return True
+def _process_case(page, case: dict, output_dir: Path, by_client: bool = False) -> None:
+    case_num = case["number"]
+    if by_client:
+        client = _sanitize(case.get("party") or "ללא שם")
+        case_dir = output_dir / client / "הוצאה לפועל" / _sanitize(case_num)
+    else:
+        case_dir = output_dir / _sanitize(case_num)
 
-    save_path.parent.mkdir(parents=True, exist_ok=True)
+    _log(f"\n{'='*60}")
+    _log(f"תיק: {case_num}  ({case.get('type', '')})")
 
-    try:
-        btn = row_el.query_selector(f"#{btn_id}")
-        if not btn or not btn.is_visible():
-            return False
+    if not _open_motions_tab(page, case_num):
+        _log(f"  ✗ דילוג על תיק {case_num}")
+        return
 
-        # Try download intercept first
-        try:
-            with page.expect_download(timeout=8000) as dl_info:
-                btn.click()
-            dl = dl_info.value
-            dl.save_as(str(save_path))
-            _log(f"      ✓ {save_path.name}")
-            return True
-        except Exception:
-            pass
+    _maximize_paginator(page)
+    time.sleep(1)
+    _expand_all_rows(page)
 
-        # Try new tab
-        try:
-            with page.context.expect_page(timeout=8000) as pg_info:
-                btn.click()
-            new_tab = pg_info.value
-            time.sleep(2)
-            new_url = new_tab.url
-            if new_url and new_url != "about:blank":
-                import requests
-                cookies = {c["name"]: c["value"] for c in page.context.cookies()}
-                resp = requests.get(new_url, cookies=cookies, timeout=30,
-                                    headers={"Referer": page.url})
-                if resp.ok and len(resp.content) > 500:
-                    save_path.write_bytes(resp.content)
-                    _log(f"      ✓ {save_path.name}")
-                    try:
-                        new_tab.close()
-                    except Exception:
-                        pass
-                    return True
-            try:
-                new_tab.close()
-            except Exception:
-                pass
-        except Exception:
-            pass
+    rows_data = _extract_rows(page)
+    _log(f"  {len(rows_data)} שורות נמצאו")
 
-    except Exception as e:
-        _log(f"      ✗ {btn_id}: {e}")
+    for rd in rows_data:
+        proc = rd["process"]
+        applicant = _sanitize(rd["applicant"] or "")
+        date = _sanitize(rd["date"] or "")
+        dec_date = _sanitize(rd["dec_date"] or "")
+        proc_dir = case_dir / _sanitize(proc.split(".")[0])
 
-    _log(f"      ✗ לא הורד: {save_path.name}")
-    return False
+        if rd["has_motion"]:
+            filename = _make_filename(proc, date, "בקשה", applicant)
+            _log(f"    [{proc}] בקשה ({date}) — {filename}")
+            row = _row_locator(page, proc, rd["date"])
+            _download_doc(page, row, "motionDocumentID", proc_dir / filename)
+
+        if rd["has_decision"]:
+            filename = _make_filename(proc, dec_date, "החלטה", applicant)
+            _log(f"    [{proc}] החלטה ({dec_date}) — {filename}")
+            row = _row_locator(page, proc, rd["date"])
+            _download_doc(page, row, "decisionDocumentID", proc_dir / filename)
+
+        time.sleep(0.3)
+
+    _write_case_manifest(case_dir, case_num)
+
+
+def _write_case_manifest(case_dir: Path, case_num: str) -> None:
+    """Write summary.csv + sync_history.csv in the LIAS manifest format so the
+    dashboard importer indexes ECA documents like any other portal."""
+    import csv as _csv
+    if not case_dir.exists():
+        return
+    rows = []
+    for pdf in sorted(case_dir.rglob("*.pdf")):
+        rel = pdf.relative_to(case_dir)
+        stem = pdf.stem
+        parts = [x.strip() for x in stem.split(" - ")]
+        # "{proc} - {date} - {סוג} - {מגיש}"
+        date = parts[1] if len(parts) > 1 else ""
+        if re.match(r"\d{2}\.\d{2}\.\d{2}$", date):
+            d, m, y = date.split(".")
+            date = f"{d}/{m}/20{y}"
+        rows.append({
+            "שם מסמך (מהטבלה)": stem,
+            "שם קובץ פיזי בדיסק": str(rel),
+            "סוג קובץ": parts[2] if len(parts) > 2 else "",
+            "מגיש": parts[3] if len(parts) > 3 else "",
+            "תאריך מסמך": date,
+            "סטטוס הורדה": "Success",
+            "גודל (KB)": str(round(pdf.stat().st_size / 1024, 1)),
+        })
+    if not rows:
+        return
+    with open(case_dir / "summary.csv", "w", encoding="utf-8-sig", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(rows)
+    with open(case_dir / "sync_history.csv", "w", encoding="utf-8-sig", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=["תאריך ריצה", "פורטל", "תיק"])
+        w.writeheader()
+        w.writerow({"תאריך ריצה": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "פורטל": "ECA", "תיק": case_num})
 
 
 # ---------------------------------------------------------------------------

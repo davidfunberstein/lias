@@ -49,18 +49,21 @@ def _split_audio(audio_path: str) -> list[str]:
 
     chunk_dir = audio_path + ".chunks"
     os.makedirs(chunk_dir, exist_ok=True)
-    ext = Path(audio_path).suffix or ".wav"
     chunks = []
     start = 0.0
     idx = 0
     while start < total_sec:
-        out = os.path.join(chunk_dir, f"chunk_{idx:03d}{ext}")
+        # 16 kHz mono WAV — whisper's native input format. Re-encoding here
+        # (instead of "-c copy") shrinks decode time inside the model and lets
+        # any source format (m4a/ogg/opus) work uniformly.
+        out = os.path.join(chunk_dir, f"chunk_{idx:03d}.wav")
         actual_start = max(0, start - (CHUNK_OVERLAP_S if idx > 0 else 0))
         duration = CHUNK_DURATION_S + (CHUNK_OVERLAP_S if idx > 0 else 0)
         subprocess.run(
             ["ffmpeg", "-y", "-i", audio_path, "-ss", str(actual_start),
-             "-t", str(duration), "-c", "copy", "-loglevel", "error", out],
-            timeout=120, capture_output=True)
+             "-t", str(duration), "-ar", "16000", "-ac", "1",
+             "-loglevel", "error", out],
+            timeout=300, capture_output=True)
         if os.path.exists(out) and os.path.getsize(out) > 0:
             chunks.append(out)
         start += CHUNK_DURATION_S

@@ -113,7 +113,7 @@ def _restart_engine(here: str, full_ui_port: int,
 def _autoreload_watcher(shutting_down_flag: dict) -> None:
     """Re-exec server when run_ui_demo.py changes on disk."""
     import time
-    me = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "run_ui_demo.py"))
+    me = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "app.py"))
     try:
         last = os.path.getmtime(me)
     except OSError:
@@ -142,11 +142,12 @@ def _watchdog(full_ui_port: int, shutting_down_flag: dict,
     HEARTBEAT_GRACE = 300.0
 
     def _engine_busy() -> bool:
-        import urllib.request
         try:
-            with urllib.request.urlopen(
-                    f"http://127.0.0.1:{full_ui_port}/api/jobs?limit=10", timeout=5) as r:
-                jobs_ = json.loads(r.read())
+            from ui_modules import engine_inproc
+            if not engine_inproc.alive():
+                return False
+            code, body, _ct = engine_inproc.request("GET", "/api/jobs?limit=10")
+            jobs_ = json.loads(body)
             return any(j.get("state") == "RUNNING" for j in jobs_)
         except Exception:
             return False
