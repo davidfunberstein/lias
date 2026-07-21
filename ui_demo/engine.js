@@ -482,7 +482,9 @@ function syncCard(el){
     <div id="sync-case-picker" style="display:none;margin-top:12px"></div>
 `;
   fetch('/api/settings').then(r=>r.json()).then(st=>{
+    window._settings = st;
     _currentScope = st.case_scope || 'all';
+    if(_syncPlatform) pickPlatform(_syncPlatform);   // re-render with fresh settings
   }).catch(()=>{});
   if(_syncPlatform) pickPlatform(_syncPlatform);
   if(_dlStats) _renderDlStats();
@@ -495,40 +497,56 @@ function pickPlatform(p){
   });
   const box=$('sync-options'); if(!box) return;
   const picker=$('sync-case-picker'); if(picker){ picker.style.display='none'; picker.innerHTML=''; }
-  if(p==='NET'){
-    box.innerHTML = `
-      <div class="sync-opt-row">
-        <button class="btn-accent sync-opt" onclick="startNetDownload()">📥 הצג את כל תיקיי בנט ובחר מה להוריד</button>
-        <div class="sync-opt-hint">מתחבר, שולף את כל התיקים שהמערכת רואה בפורטל, ומאפשר לסמן. ניתן לכלול תיקים קשורים דרך הגדרת "היקף".</div>
+  // Behavior follows the per-platform settings (Settings ⚙). One download
+  // button per platform; a shared "check a specific case by number" tool.
+  const s = window._settings || {};
+  const scope = {NET:s.net_scope||'selected', BDR:s.bdr_scope||'all', ECA:s.eca_scope||'selected'}[p];
+  const label = {NET:'נט המשפט', BDR:'בית הדין הרבני', ECA:'הוצאה לפועל'}[p];
+  const scopeText = scope==='all' ? 'כל התיקים (לפי ההגדרות)' : 'הצג רשימה ובחר תיקים (לפי ההגדרות)';
+  const relNote = p==='NET' && s.net_related ? ' · כולל תיקים קשורים' : '';
+  const runFn = {NET:'runNet()', BDR:'runBdr()', ECA:'ecaConnectAndList()'}[p];
+  box.innerHTML = `
+    <div class="sync-opt-row">
+      <button class="btn-accent sync-opt" onclick="${runFn}">⬇ הורד מ${label} — ${scopeText}</button>
+      <div class="sync-opt-hint">ההתנהגות נקבעת ב<a onclick="openSettings()" style="text-decoration:underline;cursor:pointer">הגדרות ⚙</a>:
+        היקף = <b>${scope==='all'?'כל התיקים':'תיקים מסוימים'}</b>${relNote}.</div>
+    </div>
+    ${p==='NET'?`<div class="sync-opt-row">
+      <button class="btn-accent sync-opt" onclick="syncOpenNetCase()">🔄 סנכרן את התיק הפתוח בדפדפן</button>
+      <div class="sync-opt-hint">מוריד את המסמכים החדשים של התיק שפתוח כרגע בדפדפן האוטומציה.</div>
+    </div>`:''}
+    <div class="sync-opt-row" style="border:1px solid var(--line,rgba(255,255,255,.15));border-radius:10px;padding:10px 12px">
+      <div class="sync-opt-hint" style="margin-bottom:6px">🔎 בדיקת עדכונים בתיק ספציפי לפי מספר (גם אם עוד לא במערכת):</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input id="nc-num" placeholder="מספר תיק" style="flex:1;border:1px solid var(--line,rgba(255,255,255,.2));border-radius:8px;padding:7px 10px;font-size:13px;background:rgba(127,127,127,.08);color:inherit">
+        ${p==='NET'?`<input id="nc-my" type="month" style="width:130px;border:1px solid var(--line,rgba(255,255,255,.2));border-radius:8px;padding:7px 8px;font-size:12px;background:rgba(127,127,127,.08);color:inherit">`:''}
+        <button class="btn-accent" style="padding:7px 14px;font-size:12px;white-space:nowrap" onclick="checkCaseByNumber('${p}')">אתר וסנכרן</button>
       </div>
-      <div class="sync-opt-row">
-        <button class="btn-accent sync-opt" onclick="syncOpenNetCase()">🔄 סנכרן את התיק הפתוח בדפדפן</button>
-        <div class="sync-opt-hint">מוריד את המסמכים החדשים של התיק שפתוח כרגע בדפדפן האוטומציה.</div>
-      </div>
-      <div class="sync-opt-row" style="border:1px solid var(--line,rgba(255,255,255,.15));border-radius:10px;padding:10px 12px">
-        <div class="sync-opt-hint" style="margin-bottom:6px">🔎 בדיקת עדכונים בתיק ספציפי לפי מספר (גם אם עוד לא במערכת):</div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <input id="nc-num" placeholder="מספר תיק" style="flex:1;border:1px solid var(--line,rgba(255,255,255,.2));border-radius:8px;padding:7px 10px;font-size:13px;background:rgba(127,127,127,.08);color:inherit">
-          <input id="nc-my" type="month" style="width:130px;border:1px solid var(--line,rgba(255,255,255,.2));border-radius:8px;padding:7px 8px;font-size:12px;background:rgba(127,127,127,.08);color:inherit">
-          <button class="btn-accent" style="padding:7px 14px;font-size:12px;white-space:nowrap" onclick="openNetCase(true)">אתר וסנכרן</button>
-        </div>
-      </div>`;
-  } else if(p==='BDR'){
-    box.innerHTML = `
-      <div class="sync-opt-row">
-        <button class="btn-accent sync-opt" onclick="runBdrBatch('')">📥 הורד את כל תיקי בית הדין הרבני</button>
-        <div class="sync-opt-hint">שולף את כל התיקים ומשייך כל אחד ללקוח שלו אוטומטית.</div>
-      </div>
-      <div class="sync-opt-row">
-        <button class="btn-accent sync-opt" onclick="runBdrByClient()">👤 הורד תיקים של לקוח מסוים</button>
-        <div class="sync-opt-hint">מוריד רק תיקים שאחד הצדדים בהם תואם לשם שתקליד.</div>
-      </div>`;
-  } else if(p==='ECA'){
-    box.innerHTML = `
-      <div class="sync-opt-row">
-        <button class="btn-accent sync-opt" onclick="ecaConnectAndList()">🔌 התחבר והצג את תיקי ההוצאה לפועל</button>
-        <div class="sync-opt-hint">מתחבר לפורטל, מציג את התיקים הפתוחים עם הצדדים (מי נגד מי), ומאפשר לסמן מה להוריד.</div>
-      </div>`;
+    </div>`;
+}
+function runNet(){
+  const s = window._settings || {};
+  if((s.net_scope||'selected')==='all'){
+    if(!confirm('להוריד את כל תיקי נט המשפט? (לפי ההגדרות)')) return;
+    act('net_download_all','הורדת כל תיקי נט');
+  } else {
+    startNetDownload();   // show list → pick
+  }
+}
+function runBdr(){
+  const s = window._settings || {};
+  if((s.bdr_scope||'all')==='all') runBdrBatch('');
+  else runBdrByClient();
+}
+function checkCaseByNumber(portal){
+  if(portal==='NET'){ openNetCase(true); return; }
+  const num=($('nc-num')?.value||'').trim();
+  if(!num){ toast('נא להזין מספר תיק', true); return; }
+  if(portal==='ECA'){
+    act(`eca_sync`,'סנכרון תיק הוצל"פ '+num);
+    fetch('/api/proxy/actions/eca_sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cases:[num]})});
+  } else if(portal==='BDR'){
+    runBdrBatch(num);   // client_filter also matches a case number substring
   }
 }
 function syncOpenNetCase(){ act('sync_current/NET','סנכרון התיק הפתוח בנט'); }

@@ -190,13 +190,31 @@ def _login_eca(page) -> bool:
 def _extract_cases(page) -> list[dict]:
     """Extract all open cases from the carousel."""
     _log("מחלץ רשימת תיקים…")
-    try:
-        page.wait_for_selector("#carousel-cases mat-card", timeout=15000)
-    except Exception:
-        _log("⚠ לא נמצא קרוסל תיקים")
+    # Angular can take a while; wait for cards, retrying and re-navigating once.
+    cards = []
+    for attempt in range(3):
+        try:
+            page.wait_for_selector(
+                "#carousel-cases mat-card, app-mycases-cards mat-card, mat-card[id^='card-case']",
+                timeout=20000)
+        except Exception:
+            pass
+        cards = page.query_selector_all(
+            "mat-card[id^='card-case'], #carousel-cases mat-card, app-mycases-cards mat-card")
+        if cards:
+            break
+        _log(f"⚠ לא נמצאו כרטיסי תיקים (ניסיון {attempt+1}/3) — URL={page.url[:70]}")
+        # maybe we're not on the OpenCase page — go there and retry
+        try:
+            if "/home/OpenCase" not in (page.url or ""):
+                page.goto(OPEN_CASES_URL, wait_until="domcontentloaded", timeout=30000)
+            time.sleep(4)
+        except Exception:
+            pass
+    if not cards:
+        _log("⚠ לא נמצא קרוסל תיקים — ייתכן שההתחברות לא הושלמה. בדוק את הדפדפן.")
         return []
 
-    cards = page.query_selector_all("#carousel-cases mat-card")
     cases = []
     for card in cards:
         card_id = card.get_attribute("id") or ""  # e.g. card-case-529310-10-24

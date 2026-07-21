@@ -11,5 +11,10 @@
   "check_viewers": false,
   "otp_method": "email",
   "share_email": "",
-  "case_scope": "selected"
+  "case_scope": "selected",
+  "browser_visible": true,
+  "net_scope": "selected",
+  "bdr_scope": "all",
+  "eca_scope": "selected",
+  "net_related": false
 }

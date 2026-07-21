@@ -591,6 +591,12 @@ def get_settings():
         # all = every case | related = case + related cases | single = case only
         "case_scope":              d.get("case_scope", "all"),
         "years_back":              d.get("years_back", "12"),
+        # Per-platform sync config (each portal independent):
+        "net_scope":               d.get("net_scope", "selected"),   # all | selected
+        "net_related":             d.get("net_related", False),      # NET only: include related cases
+        "bdr_scope":               d.get("bdr_scope", "all"),        # all | selected
+        "eca_scope":               d.get("eca_scope", "selected"),   # all | selected
+        "browser_visible":         d.get("browser_visible", True),   # show automation browser
         "govil_configured":        _govil_creds_exist(),
     }
 
@@ -617,6 +623,11 @@ class SettingsUpdate(BaseModel):
     share_email: Optional[str] = None   # Drive read-only share / שיתוף צפייה בדרייב
     case_scope: Optional[str] = None    # all | related | single
     years_back: Optional[str] = None    # search window for "התיקים שלי"
+    net_scope: Optional[str] = None
+    net_related: Optional[bool] = None
+    bdr_scope: Optional[str] = None
+    eca_scope: Optional[str] = None
+    browser_visible: Optional[bool] = None
     # EN: change gov.il credentials from the UI — written straight to the OS
     #     keychain, never stored in files and never echoed back.
     # HE: החלפת ת"ז/סיסמה מה-UI — נכתב ישירות ל-Keychain, לא לקבצים.
@@ -638,9 +649,11 @@ def save_settings(req: SettingsUpdate):
         d["court_docs_dir"] = req.court_docs_dir
     elif "court_docs_dir" in d:
         del d["court_docs_dir"]
-    _BOOL_FIELDS = {"check_viewers", "download_related_cases"}
+    _BOOL_FIELDS = {"check_viewers", "download_related_cases", "net_related",
+                    "browser_visible"}
     _STR_FIELDS  = {"mode", "storage_mode", "login_method", "otp_method", "user_mode",
-                    "share_email", "case_scope", "years_back"}
+                    "share_email", "case_scope", "years_back",
+                    "net_scope", "bdr_scope", "eca_scope"}
     for f in _BOOL_FIELDS:
         v = getattr(req, f)
         if v is not None:

@@ -113,13 +113,38 @@
     <option value="lawyer">עו״ד מייצג</option>
     <option value="pleader">טו״ר מייצג</option>
   </select>
-  <label style="margin-top:12px">היקף הורדה (נט המשפט בלבד)</label>
-  <select id="g-scope" onchange="saveCaseScope(this.value)" style="width:100%">
-    <option value="all">כל התיקים (מוריד הכל ללא בחירה)</option>
-    <option value="selected">תיקים מסוימים (בחירה מתוך רשימת הפורטל)</option>
-    <option value="related">תיקים + קשורים (בחירה + הרחבה אוטומטית)</option>
-  </select>
-  <div class="note">ההגדרה משפיעה על לחצן "הורד מנט המשפט" בלשונית סנכרון. BDR תמיד מוריד הכל.</div>
+  <div style="margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:10px">
+    <b style="font-size:13.5px">הגדרות סנכרון — לכל פורטל בנפרד</b>
+    <div class="note" style="margin:4px 0 10px">כל פורטל עצמאי. ההגדרה קובעת מה קורה בלחיצת ההורדה בלשונית "סנכרון".</div>
+
+    <label>🏛 נט המשפט — היקף</label>
+    <select id="g-net-scope" style="width:100%">
+      <option value="all">כל התיקים (הכל ללא בחירה)</option>
+      <option value="selected">תיקים מסוימים (בחירה מרשימה)</option>
+    </select>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:400">
+      <input type="checkbox" id="g-net-related" style="width:auto"> כלול תיקים קשורים (נט בלבד, רלוונטי לתיקים מסוימים)
+    </label>
+
+    <label style="margin-top:12px">🕍 בית הדין הרבני — היקף</label>
+    <select id="g-bdr-scope" style="width:100%">
+      <option value="all">כל התיקים</option>
+      <option value="selected">תיקים מסוימים (לפי לקוח/בחירה)</option>
+    </select>
+
+    <label style="margin-top:12px">⚖️ הוצאה לפועל — היקף</label>
+    <select id="g-eca-scope" style="width:100%">
+      <option value="all">כל התיקים</option>
+      <option value="selected">תיקים מסוימים (בחירה מרשימה)</option>
+    </select>
+
+    <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-weight:400">
+      <input type="checkbox" id="g-browser-visible" style="width:auto"> הצג את דפדפן האוטומציה (לראות התחברות והורדה)
+    </label>
+
+    <button class="btn-accent" style="width:100%;margin-top:12px" onclick="saveSyncSettings()">💾 שמור הגדרות סנכרון</button>
+    <div id="g-sync-ok" class="sub" style="min-height:16px;margin-top:4px"></div>
+  </div>
   <label style="margin-top:12px">מפתח Groq — המרת מסמכים לטקסט (חינמי)</label>
   <input id="g-groq" type="password" autocomplete="off" placeholder="gsk_…  (מ-console.groq.com)">
   <div style="display:flex;gap:6px;margin-top:6px">

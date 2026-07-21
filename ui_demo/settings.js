@@ -14,8 +14,31 @@ async function openSettings(){
     if(st.otp_method) $('g-otp').value = st.otp_method;
     if(st.share_email!==undefined) $('g-share').value = st.share_email||'';
     if(st.user_mode && $('g-usermode')) $('g-usermode').value = st.user_mode;
-    if(st.case_scope && $('g-scope')) $('g-scope').value = st.case_scope;
+    // per-platform sync settings
+    if($('g-net-scope')) $('g-net-scope').value = st.net_scope || 'selected';
+    if($('g-net-related')) $('g-net-related').checked = !!st.net_related;
+    if($('g-bdr-scope')) $('g-bdr-scope').value = st.bdr_scope || 'all';
+    if($('g-eca-scope')) $('g-eca-scope').value = st.eca_scope || 'selected';
+    if($('g-browser-visible')) $('g-browser-visible').checked = st.browser_visible !== false;
   }catch(e){}
+}
+async function saveSyncSettings(){
+  const body = {
+    net_scope: $('g-net-scope')?.value,
+    net_related: !!$('g-net-related')?.checked,
+    bdr_scope: $('g-bdr-scope')?.value,
+    eca_scope: $('g-eca-scope')?.value,
+    browser_visible: !!$('g-browser-visible')?.checked,
+  };
+  const ok=$('g-sync-ok');
+  try{
+    const r = await fetch('/api/settings',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    if(r.ok){
+      if(ok){ ok.style.color='var(--accent-strong)'; ok.textContent='✓ נשמר. שינוי "הצג דפדפן" יחול לאחר אתחול המנוע.'; }
+      toast('הגדרות הסנכרון נשמרו ✓');
+    } else { if(ok){ ok.style.color='var(--danger)'; ok.textContent='✗ המנוע כבוי — הפעל אותו כדי לשמור'; } }
+  }catch(e){ if(ok){ ok.style.color='var(--danger)'; ok.textContent='✗ שגיאה בשמירה'; } }
 }
 async function saveOtpMethod(v){
   try{
