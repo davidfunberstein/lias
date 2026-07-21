@@ -397,6 +397,8 @@ function boot(){
   setInterval(()=>refresh(false), 10000);
   ensureFab();
   connectEngineSSE();
+  // Reopen the tasks balloon if it was open before a refresh
+  try{ if(sessionStorage.getItem('tasksWinOpen')==='1' && typeof toggleTasksWin==='function') toggleTasksWin(true); }catch(_){}
   if(isPro(u) && !sessionStorage.getItem('govil_checked')){
     sessionStorage.setItem('govil_checked','1');
     fetch('/api/govil/status').then(r=>r.json()).then(s=>{

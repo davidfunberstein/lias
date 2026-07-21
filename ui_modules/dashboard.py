@@ -260,11 +260,46 @@ def search_all(q: str, db_path: str) -> dict:
     like = f"%{q}%"
     try:
         out["clients"] = [dict(r) for r in con.execute(
-            "SELECT client_id, display_name FROM clients WHERE display_name LIKE ? LIMIT 5",
+            "SELECT client_id, display_name FROM clients WHERE display_name LIKE ? LIMIT 6",
             (like,))]
-        out["cases"] = [dict(r) for r in con.execute(
-            "SELECT sub_case_id, sub_number FROM sub_cases WHERE sub_number LIKE ? LIMIT 6",
-            (like,))]
+        # Cases matched by number, by the parties (client name / folder path),
+        # or by court/arkaa keyword — with portal so the UI can label them.
+        rows = con.execute(
+            """SELECT s.sub_case_id, s.sub_number, ca.portal, cl.display_name AS client,
+                      (SELECT local_path FROM documents WHERE sub_case_id=s.sub_case_id
+                       AND local_path!='' LIMIT 1) AS lp
+               FROM sub_cases s
+               JOIN cases ca ON ca.case_id=s.case_id
+               LEFT JOIN clients cl ON cl.client_id=ca.client_id
+               WHERE s.sub_number LIKE ? OR cl.display_name LIKE ?
+               ORDER BY s.sub_number LIMIT 40""", (like, like)).fetchall()
+        seen = set()
+        cases = []
+        for r in rows:
+            d = dict(r)
+            d["arkaa"] = _arkaa(d.get("portal"), d.get("sub_number"))
+            # also allow matching the folder path (parties) and arkaa text
+            if d["sub_case_id"] in seen:
+                continue
+            seen.add(d["sub_case_id"])
+            cases.append({"sub_case_id": d["sub_case_id"], "sub_number": d["sub_number"],
+                          "portal": d["portal"], "arkaa": d["arkaa"], "client": d.get("client")})
+        # court/arkaa keyword search over all cases (small dataset)
+        if len(q) >= 2:
+            for r in con.execute(
+                """SELECT s.sub_case_id, s.sub_number, ca.portal, cl.display_name AS client,
+                          (SELECT local_path FROM documents WHERE sub_case_id=s.sub_case_id AND local_path!='' LIMIT 1) AS lp
+                   FROM sub_cases s JOIN cases ca ON ca.case_id=s.case_id
+                   LEFT JOIN clients cl ON cl.client_id=ca.client_id""").fetchall():
+                d = dict(r)
+                if d["sub_case_id"] in seen:
+                    continue
+                ark = _arkaa(d.get("portal"), d.get("sub_number"))
+                if q in ark or (d.get("lp") and q in d["lp"]):
+                    seen.add(d["sub_case_id"])
+                    cases.append({"sub_case_id": d["sub_case_id"], "sub_number": d["sub_number"],
+                                  "portal": d["portal"], "arkaa": ark, "client": d.get("client")})
+        out["cases"] = cases[:10]
         out["docs"] = [dict(r) for r in con.execute(
             """SELECT d.document_id, d.logical_name, d.local_path, s.sub_number
                FROM documents d JOIN sub_cases s ON s.sub_case_id=d.sub_case_id

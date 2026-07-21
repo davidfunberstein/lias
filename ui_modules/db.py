@@ -63,8 +63,26 @@ def _parse_ddmmyyyy(s: str):
         return None
 
 
-def _arkaa(portal: str, sub_number: str) -> str:
-    """Derive court instance."""
+def _arkaa(portal: str, sub_number: str, court: str = "") -> str:
+    """Derive court instance. Prefers an explicit court name from the portal
+    (cases.court) when available; otherwise falls back to number/keyword rules."""
+    court = (court or "").strip()
+    if court:
+        if "רבני" in court:
+            return "בית דין רבני"
+        if "הוצאה" in court or "הוצל" in court:
+            return "הוצאה לפועל"
+        if "עבודה" in court:
+            return "בית הדין לעבודה"
+        if "משפחה" in court:
+            return "ענייני משפחה"
+        if "שלום" in court:
+            return "שלום — אזרחי"
+        if "מחוזי" in court:
+            return "מחוזי"
+        if "עליון" in court:
+            return "בית משפט עליון"
+        return court
     s = (sub_number or "").strip()
     if portal == "ECA":
         return "הוצאה לפועל"

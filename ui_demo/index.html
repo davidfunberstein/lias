@@ -46,9 +46,14 @@
     <button title="בשלב הבא">מסמכים <span class="soon">בקרוב</span></button>
     <button title="בשלב הבא">עוזר AI <span class="soon">בקרוב</span></button>
   </nav>
-  <div class="search">
+  <div class="search" style="position:relative">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-    <input placeholder="חפש לקוח, תיק או מסמך…">
+    <input id="topsearch" placeholder="חפש לקוח, תיק, צד או ערכאה…" autocomplete="off"
+      oninput="topSearch(this.value)" onfocus="topSearch(this.value)"
+      onkeydown="if(event.key==='Escape'){this.value='';$('search-results').style.display='none'}">
+    <div id="search-results" style="display:none;position:absolute;top:calc(100% + 6px);right:0;left:0;
+      background:var(--surface,#fff);border:1px solid var(--line,#e5e5e5);border-radius:12px;
+      box-shadow:0 16px 50px rgba(0,0,0,.25);z-index:200;max-height:60vh;overflow-y:auto;direction:rtl"></div>
   </div>
   <button class="iconbtn" title="המרכזייה שלי — מסמכים מתויקים" onclick="openPinboard()" style="width:36px;height:36px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-soft)">📌</button>
   <button class="iconbtn" title="הגדרות" onclick="openSettings()" style="width:36px;height:36px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-soft)">⚙</button>

@@ -298,6 +298,7 @@ def eca_sync(payload: dict, ctx: JobContext) -> str:
     if ctx.browser is None:
         raise RuntimeError("no browser attached / אין דפדפן מחובר")
     ctx.progress(0.05, "מתחבר להוצאה לפועל…")
+    _cancel_flags[ctx.job_id] = False
 
     def _run(page):
         import sys
@@ -305,9 +306,13 @@ def eca_sync(payload: dict, ctx: JobContext) -> str:
         from eca_download import run_eca_download
         cases = payload.get("cases") or None
         return run_eca_download(page, config.COURT_DOCS_DIR, cases_filter=cases,
-                                progress=ctx.progress)
+                                progress=ctx.progress,
+                                should_cancel=lambda: _cancel_flags.get(ctx.job_id))
 
-    result = _run_portal(ctx, "eca_sync", _run, timeout=3600)
+    try:
+        result = _run_portal(ctx, "eca_sync", _run, timeout=3600)
+    finally:
+        _cancel_flags.pop(ctx.job_id, None)
     ctx.progress(0.9, "מייבא לדשבורד…")
     n = _reimport_folder(config.COURT_DOCS_DIR / "downloads")
     _drive_sync(ctx, "אחרי סנכרון הוצל\"פ")

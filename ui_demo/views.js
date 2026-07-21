@@ -621,11 +621,22 @@ async function loadTranscriptions(){
   const el=$('tr-list'); if(!el) return;
   try{
     const r = await (await fetch('/api/transcriptions')).json();
-    el.innerHTML = (r.items||[]).map(t=>`
+    const items = r.items||[];
+    const done = items.filter(t=>t.status!=='partial');
+    const partial = items.filter(t=>t.status==='partial');
+    const badge = t => t.status==='partial'
+      ? '<span class="pill pend" style="font-size:10px">⏸ נעצר באמצע</span>'
+      : '<span class="pill ok" style="font-size:10px">✓ הושלם</span>';
+    const item = t=>`
       <div class="tr-item" onclick="viewTranscription('${t.name}')">
-        <div class="ic">📝</div>
-        <div class="info"><b>${t.name}</b><span>${t.size_kb} KB · ${t.modified?.replace('T',' ')}</span></div>
-      </div>`).join('') || '<div class="empty">אין תמלולים עדיין — העלה הקלטה</div>';
+        <div class="ic">${t.status==='partial'?'⏸':'📝'}</div>
+        <div class="info"><b>${(t.stem||t.name)}</b> ${badge(t)}
+          <span>${t.size_kb} KB · ${t.modified?.replace('T',' ')}${t.has_audio?' · 🔊 יש הקלטה':''}</span></div>
+      </div>`;
+    el.innerHTML =
+      (done.length? '<div class="sub" style="font-weight:700;margin:4px 0">תמלולים שהושלמו</div>'+done.map(item).join('') : '')
+      + (partial.length? '<div class="sub" style="font-weight:700;margin:12px 0 4px">נעצרו באמצע (ניתן לצפות בחלק שתומלל)</div>'+partial.map(item).join('') : '')
+      || '<div class="empty">אין תמלולים עדיין — העלה הקלטה</div>';
   }catch(e){ el.innerHTML='<div class="empty">שגיאה בטעינה</div>'; }
 }
 async function viewTranscription(name){

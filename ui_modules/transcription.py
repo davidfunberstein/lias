@@ -260,9 +260,33 @@ def _fmt_ts(seconds: float) -> str:
 
 
 def _list_transcriptions(transcriptions_dir: str) -> list[dict]:
+    """List every transcript with its status so the UI shows one folder of
+    completed and partial/stopped transcripts. A "{stem}_partial.md" is one
+    that was stopped mid-way (chunked) — its audio is kept so it can resume."""
     out = []
-    for f in sorted(Path(transcriptions_dir).glob("*.md"),
-                    key=lambda p: p.stat().st_mtime, reverse=True):
-        out.append({"name": f.name, "size_kb": round(f.stat().st_size / 1024, 1),
-                     "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")})
+    seen_stems = set()
+    files = sorted(Path(transcriptions_dir).glob("*.md"),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
+    # completed first (so a completed stem hides its leftover partial)
+    for f in files:
+        is_partial = f.name.endswith("_partial.md")
+        stem = f.name[:-len("_partial.md")] if is_partial else f.name[:-3]
+        if not is_partial:
+            seen_stems.add(stem)
+    for f in files:
+        is_partial = f.name.endswith("_partial.md")
+        stem = f.name[:-len("_partial.md")] if is_partial else f.name[:-3]
+        if is_partial and stem in seen_stems:
+            continue  # a completed version exists — skip the leftover partial
+        status = "partial" if is_partial else "done"
+        # partials keep their audio for playback/resume
+        audio = None
+        for ext in (".mp3", ".m4a", ".wav", ".ogg", ".webm"):
+            cand = Path(transcriptions_dir) / f"{stem}{ext}"
+            if cand.exists():
+                audio = cand.name; break
+        out.append({"name": f.name, "stem": stem, "status": status,
+                    "has_audio": audio is not None, "audio_name": audio,
+                    "size_kb": round(f.stat().st_size / 1024, 1),
+                    "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")})
     return out

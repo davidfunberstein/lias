@@ -214,6 +214,44 @@ document.addEventListener('keydown', e=>{
   }
 });
 
+/* ─── top search: cases / clients / parties / court ─── */
+let _searchTimer=null;
+function topSearch(q){
+  q=(q||'').trim();
+  const box=$('search-results'); if(!box) return;
+  clearTimeout(_searchTimer);
+  if(q.length<2){ box.style.display='none'; return; }
+  _searchTimer=setTimeout(async ()=>{
+    let r;
+    try{ r = await (await fetch('/api/search?q='+encodeURIComponent(q))).json(); }
+    catch(e){ box.style.display='none'; return; }
+    const arkIcon = a => (a||'').includes('רבני')?'🕍':(a||'').includes('הוצאה')?'⚖️':'🏛';
+    let html='';
+    if(r.clients?.length){
+      html += `<div class="sr-head">לקוחות</div>` + r.clients.map(c=>
+        `<div class="sr-item" onclick="_srGo('client',${c.client_id})">👤 <b>${c.display_name}</b></div>`).join('');
+    }
+    if(r.cases?.length){
+      html += `<div class="sr-head">תיקים</div>` + r.cases.map(c=>
+        `<div class="sr-item" onclick="_srGo('case',${c.sub_case_id})">
+          ${arkIcon(c.arkaa)} <b>${c.sub_number}</b>
+          <span style="opacity:.6;font-size:11px"> · ${c.arkaa||c.portal}${c.client?' · '+c.client:''}</span></div>`).join('');
+    }
+    if(r.docs?.length){
+      html += `<div class="sr-head">מסמכים</div>` + r.docs.map(d=>
+        `<div class="sr-item" onclick="openDoc(${d.document_id},'${(d.logical_name||'').replace(/'/g,'')}');_srClose()">
+          📄 ${d.logical_name||'מסמך'} <span style="opacity:.6;font-size:11px"> · ${d.sub_number||''}</span></div>`).join('');
+    }
+    box.innerHTML = html || '<div class="sr-item" style="opacity:.6">לא נמצאו תוצאות</div>';
+    box.style.display='block';
+  }, 220);
+}
+function _srGo(v,id){ _srClose(); $('topsearch').value=''; go(v,id); }
+function _srClose(){ const b=$('search-results'); if(b) b.style.display='none'; }
+document.addEventListener('click', e=>{
+  if(!e.target.closest('.search')) _srClose();
+});
+
 /* ─── pins and notes ─── */
 const TOPIC_COLORS = ['#2F7DF6','#F5A623','#3B82F6','#E85D75','#9B59B6','#1ABC9C','#95A5A6'];
 let _notesCache = null;
