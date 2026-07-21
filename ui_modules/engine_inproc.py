@@ -35,6 +35,16 @@ def start() -> dict:
         from LIAS import config, db, jobs
         from LIAS import collector_bridge  # noqa: F401 — registers handlers
 
+        # Tee engine stdout/stderr into court_documents/logs/latest.log so the
+        # in-app live-log window (which reads /api/log → latest.log) actually
+        # updates. Without this, engine output only hit app.py's stdout and the
+        # log window showed stale content from the old separate-process engine.
+        try:
+            from LIAS.run import _init_lias_logger
+            _init_lias_logger()
+        except Exception as _le:
+            print(f"[engine] log init skipped: {_le}")
+
         try:
             from core.download import SESSION_SETTINGS
             SESSION_SETTINGS["lias_mode"] = True

@@ -326,3 +326,14 @@ body.fv-docked-mode{padding-left:min(47vw,740px)}
 .fv .fv-doc::-webkit-scrollbar-track{background:rgba(0,0,0,.12);border-radius:8px}
 .fv .fv-doc::-webkit-scrollbar-thumb{background:#2F7DF6;border-radius:8px;border:3px solid transparent;background-clip:content-box}
 .fv .fv-doc::-webkit-scrollbar-thumb:hover{background:#1d64d8;border:2px solid transparent;background-clip:content-box}
+
+/* ─── platform-first sync screen ─── */
+.sync-plat{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:16px 8px;font-size:26px;border-radius:12px;cursor:pointer;
+  background:rgba(127,127,127,.08);border:2px solid transparent;color:inherit;transition:all .15s}
+.sync-plat div{font-size:13px;font-weight:700}
+.sync-plat:hover{background:rgba(47,125,246,.12)}
+.sync-plat.on{border-color:#2F7DF6;background:rgba(47,125,246,.16)}
+.sync-opt-row{margin-bottom:12px}
+.btn-accent.sync-opt{width:100%;padding:13px;font-size:14px;text-align:right}
+.sync-opt-hint{font-size:11.5px;color:rgba(127,127,127,.9);margin-top:4px;line-height:1.5}

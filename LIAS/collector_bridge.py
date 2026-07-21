@@ -49,6 +49,12 @@ def _reimport_folder(case_dir: Path) -> int:
     for d, csv_path in _find_manifest_dirs(case_dir):
         docs, _ = _import_manifest(d, csv_path, downloads_root)
         n += docs
+    # Fold fragmented case-folder clients into their real person/entity client
+    # so the dashboard groups everything under the right client automatically.
+    try:
+        db.merge_case_folder_clients()
+    except Exception as _me:
+        print(f"[reimport] client merge skipped: {_me}")
     return n
 
 
@@ -224,6 +230,40 @@ def organize_clients(payload: dict, ctx: JobContext) -> str:
     return f"{moved} תיקים שויכו, {n} מסמכים יובאו מחדש"
 
 
+@handler("open_case_view")
+def open_case_view(payload: dict, ctx: JobContext) -> str:
+    """EN: open a case visually in the automation browser so the lawyer can
+        see it, logging in only if the portal demands it. No download.
+    HE: פתיחת התיק ויזואלית בדפדפן האוטומציה לצפייה, בלי להוריד."""
+    portal = (payload.get("portal") or "").upper()
+    case_number = payload.get("case_number", "")
+    target = ctx.bdr_browser or ctx.browser if portal == "BDR" else ctx.browser
+    if target is None:
+        raise RuntimeError("no browser attached")
+    urls = {
+        "ECA": f"https://publicsso.eca.gov.il/he/caseinfo/{case_number}",
+        "NET": config.NET_HOME_URL,
+        "BDR": config.BDR_FILES_URL,
+    }
+    url = urls.get(portal, "")
+    if not url:
+        return "פורטל לא נתמך"
+
+    def _run(page):
+        try:
+            target.show()          # always visible — the point is to look at it
+        except Exception:
+            pass
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        return f"נפתח {portal} {case_number}"
+
+    _saved = ctx.browser
+    ctx.browser = target
+    result = _run_portal(ctx, "open_case_view", _run, timeout=300)
+    ctx.browser = _saved
+    return str(result)
+
+
 @handler("eca_list")
 def eca_list(payload: dict, ctx: JobContext) -> str:
     """EN: connect to ECA and broadcast the list of open cases (no download)
@@ -264,7 +304,8 @@ def eca_sync(payload: dict, ctx: JobContext) -> str:
         sys.path.insert(0, str(config.PROJECT_ROOT))
         from eca_download import run_eca_download
         cases = payload.get("cases") or None
-        return run_eca_download(page, config.COURT_DOCS_DIR, cases_filter=cases)
+        return run_eca_download(page, config.COURT_DOCS_DIR, cases_filter=cases,
+                                progress=ctx.progress)
 
     result = _run_portal(ctx, "eca_sync", _run, timeout=3600)
     ctx.progress(0.9, "מייבא לדשבורד…")

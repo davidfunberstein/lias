@@ -137,6 +137,7 @@ function connectEngineSSE(){
     if(e.type==='drive'){ logEvent('☁ '+(e.message||'')); }
     if(e.type==='drive_error'){ logEvent('⚠ '+(e.message||'')); toast(e.message||'שגיאת Drive', true); }
     if(e.type==='net_cases'){ showNetCases(e.cases||[]); }
+    if(e.type==='eca_cases'){ showEcaCases(e.cases||[]); }
     if(e.type==='download_stats'){
       _dlStats=e; try{sessionStorage.setItem('dlStats',JSON.stringify(e));}catch(_){}
       if(e.job_id && !_netDownloadJobId){ _netDownloadJobId=e.job_id; try{sessionStorage.setItem('dlJobId',e.job_id);}catch(_){} }
@@ -276,7 +277,7 @@ async function _refreshTasks(){
     </div>`;
     el.innerHTML =
       (st?`<div style="padding:7px 10px;margin-bottom:6px;border-radius:10px;background:var(--accent-soft,#eef4ff)">
-        ⬇ <b>${st.done||0}</b>/${st.total||'?'} מסמכים · תיק ${st.case_idx||'?'}/${st.cases_total||'?'}
+        ⬇ <b>${st.done||0}</b>${st.total?'/'+st.total:''} מסמכים${st.cases_total?` · תיק ${st.case_idx||0}/${st.cases_total}`:''}
         ${st.rate?` · ${st.rate} מסמכים/דקה`:''} ${st.errors?` · <span style="color:var(--danger)">${st.errors} שגיאות</span>`:''}
       </div>`:'')
       + (active.length? '<div style="font-weight:700;margin:4px 0">רץ עכשיו / בהמתנה</div>'+active.map(row).join('') : '<div class="empty">אין משימות פעילות</div>')
@@ -305,13 +306,14 @@ function maximizeLogWin(){
 
 /* ─── real automation browser — show/hide ─── */
 let _realBrowserVisible=false;
-function runBdrBatch(){
-  // Optional filter: download only cases whose party matches a name
-  const flt = prompt('בית דין רבני — מה להוריד?\n' +
-    '• השאר ריק ולחץ אישור — כל התיקים\n' +
-    '• או הקלד שם לקוח כדי להוריד רק את התיקים שלו');
-  if(flt === null) return;                // ביטול
-  const client_filter = flt.trim();
+function runBdrByClient(){
+  const flt = prompt('שם הלקוח להורדת תיקיו מבית הדין הרבני:');
+  if(flt === null) return;
+  if(!flt.trim()){ toast('לא הוזן שם', true); return; }
+  runBdrBatch(flt.trim());
+}
+function runBdrBatch(client_filter){
+  client_filter = client_filter || '';
   toast(client_filter ? `מוריד תיקי בד"ר של "${client_filter}"…` : 'מתחבר לבית הדין הרבני ומוריד את כל התיקים…');
   logEvent('→ הורדת תיקי BDR' + (client_filter? ' — '+client_filter : ' (הכל)'));
   fetch('/api/proxy/actions/bdr_batch', {
@@ -323,23 +325,52 @@ function runBdrBatch(){
     else toast('שגיאה בהפעלת BDR', true);
   }).catch(e=>toast('שגיאה: '+e.message, true));
 }
-function runEcaSync(){
-  // Let the user pick: all cases, or specific case numbers
-  const pick = prompt('אילו תיקי הוצאה לפועל להוריד?\n' +
-    '• השאר ריק ולחץ אישור — כל התיקים\n' +
-    '• או הדבק מספרי תיקים מופרדים בפסיק, למשל: 503795-07-25, 528421-07-25');
-  if(pick === null) return;               // ביטול
-  const cases = pick.split(',').map(x=>x.trim()).filter(Boolean);
-  toast(cases.length ? `מוריד ${cases.length} תיקי הוצל"פ…` : 'מוריד את כל תיקי ההוצל"פ…');
-  logEvent('→ הורדת תיקי הוצאה לפועל' + (cases.length? ' ('+cases.join(', ')+')' : ' (הכל)'));
+/* ECA: connect → list cases (with parties) → pick with checkboxes → download */
+let _ecaCases = [];
+function ecaConnectAndList(){
+  toast('מתחבר להוצאה לפועל ושולף תיקים…');
+  logEvent('→ התחברות והצגת תיקי הוצל"פ');
+  const picker=$('sync-case-picker');
+  if(picker){ picker.style.display='block';
+    picker.innerHTML='<div style="padding:10px;color:rgba(255,255,255,.7)">מתחבר לפורטל ההוצאה לפועל… (ייתכן שיידרש קוד אימות)</div>'; }
+  act('eca_list','חיבור והצגת תיקי הוצל"פ');
+}
+function showEcaCases(cases){
+  _ecaCases = cases||[];
+  const picker=$('sync-case-picker'); if(!picker) return;
+  if(!_ecaCases.length){ picker.style.display='none'; toast('לא נמצאו תיקי הוצל"פ', true); return; }
+  picker.style.display='block';
+  picker.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,.7);margin-bottom:6px">
+      נמצאו ${_ecaCases.length} תיקי הוצאה לפועל — סמן מה להוריד</div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllEca(true)">סמן הכל</button>
+      <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllEca(false)">נקה הכל</button>
+    </div>
+    <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
+      ${_ecaCases.map((c,i)=>`<label style="display:flex;gap:8px;align-items:center;padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;cursor:pointer">
+        <input type="checkbox" class="eca-cb" data-i="${i}" checked>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:13px">${c.number} <span style="font-weight:400;opacity:.7">· ${c.type||''}</span></div>
+          <div style="font-size:11.5px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            ${c.role||''}${c.party?` · הצד שכנגד: ${c.party}`:''}</div>
+        </div>
+      </label>`).join('')}
+    </div>
+    <button class="btn-accent" style="width:100%;margin-top:10px;padding:12px" onclick="runEcaSelected()">⬇ הורד את המסומנים</button>`;
+}
+function _selectAllEca(v){ document.querySelectorAll('.eca-cb').forEach(cb=>cb.checked=v); }
+function runEcaSelected(){
+  const picked = [...document.querySelectorAll('.eca-cb:checked')].map(cb=>_ecaCases[+cb.dataset.i].number);
+  if(!picked.length){ toast('לא סומן אף תיק', true); return; }
+  const all = picked.length===_ecaCases.length;
+  toast(all?'מוריד את כל תיקי ההוצל"פ…':`מוריד ${picked.length} תיקי הוצל"פ…`);
+  logEvent('→ הורדת הוצל"פ ('+(all?'הכל':picked.join(', '))+')');
   fetch('/api/proxy/actions/eca_sync', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(cases.length ? {cases} : {})
-  }).then(r=>{
-    if(r.ok) toast('הורדת הוצל"פ הופעלה ✓');
-    else toast('שגיאה בהפעלת הוצל"פ', true);
-  }).catch(e=>toast('שגיאה: '+e.message, true));
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(all ? {} : {cases:picked})
+  }).then(r=>{ if(r.ok) toast('הורדת הוצל"פ הופעלה ✓'); else toast('שגיאה', true); })
+    .catch(e=>toast('שגיאה: '+e.message, true));
+  const picker=$('sync-case-picker'); if(picker){ picker.style.display='none'; }
 }
 async function toggleRealBrowser(){
   if(!D?.live){
@@ -411,41 +442,73 @@ function toggleBrowserWin(){
 
 /* ─── sync card ─── */
 let _currentScope = 'all';
+/* Platform-first sync: pick a portal, THEN see only its relevant options.
+   The three portals are independent — NET/BDR/ECA never share a flow. */
+let _syncPlatform = null;
 function syncCard(el){
-  el.innerHTML = `<h2>הורדת תיקים</h2>
-    <div class="meta">בחר מאיפה להוריד ומה להוריד.
+  el.innerHTML = `<h2>סנכרון — הורדת תיקים</h2>
+    <div class="meta">בחר תחילה מאיזה פורטל להוריד, ואז מה להוריד.
       ☁ אם Drive מוגדר, הקבצים עולים אוטומטית במקביל.</div>
-    <div id="sync-scope-label" style="font-size:12px;color:rgba(255,255,255,.55);margin:10px 0 6px"></div>
     <div id="dl-stats-panel" style="display:none"></div>
-    <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px" id="sync-buttons">
-      <button class="btn-accent" style="padding:14px;font-size:15px" id="btn-net-dl"
-        onclick="startNetDownload()">⬇ הורד מנט המשפט</button>
-      <button class="btn-accent" style="padding:14px;font-size:15px" id="btn-bdr-dl"
-        onclick="runBdrBatch()">⬇ הורד מבית הדין הרבני</button>
-      <button class="btn-accent" style="padding:14px;font-size:15px" id="btn-eca-dl"
-        onclick="runEcaSync()">⬇ הורד מהוצאה לפועל</button>
+    <div style="display:flex;gap:10px;margin-top:12px" id="sync-platforms">
+      <button class="sync-plat" id="plat-NET" onclick="pickPlatform('NET')">🏛<div>נט המשפט</div></button>
+      <button class="sync-plat" id="plat-BDR" onclick="pickPlatform('BDR')">🕍<div>בית הדין הרבני</div></button>
+      <button class="sync-plat" id="plat-ECA" onclick="pickPlatform('ECA')">⚖️<div>הוצאה לפועל</div></button>
     </div>
+    <div id="sync-options" style="margin-top:14px"></div>
     <div id="sync-case-picker" style="display:none;margin-top:12px"></div>
-    <div id="nc-search-box" style="display:none;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;margin-top:10px">
-      <div style="font-size:12px;color:rgba(255,255,255,.6);margin-bottom:6px">איתור תיק חדש בנט המשפט לפי מספר (תיקים שכבר במערכת — בלשונית "תיקים" עם חיפוש חופשי)</div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <input id="nc-num" placeholder="מספר תיק" style="flex:1;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:7px 10px;font-size:13px;background:rgba(255,255,255,.08);color:#fff">
-        <input id="nc-my" type="month" style="width:130px;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:7px 8px;font-size:12px;background:rgba(255,255,255,.08);color:#fff">
-        <button class="btn-accent" style="padding:7px 14px;font-size:12px;white-space:nowrap" onclick="openNetCase(true)">🔍 אתר</button>
-      </div>
-    </div>
 `;
-  // Auto-show browser when download starts (no toggle button needed)
-
   fetch('/api/settings').then(r=>r.json()).then(st=>{
     _currentScope = st.case_scope || 'all';
-    const lbl = $('sync-scope-label');
-    if(lbl) lbl.textContent = 'היקף NET: ' + (SCOPE_LABELS[_currentScope]||_currentScope) + ' (ניתן לשנות בהגדרות ⚙)';
   }).catch(()=>{});
-  // Show case search only when engine is live
-  if(D?.live){ const sb=$('nc-search-box'); if(sb) sb.style.display=''; }
+  if(_syncPlatform) pickPlatform(_syncPlatform);
   if(_dlStats) _renderDlStats();
 }
+
+function pickPlatform(p){
+  _syncPlatform = p;
+  ['NET','BDR','ECA'].forEach(x=>{
+    const b=$('plat-'+x); if(b) b.classList.toggle('on', x===p);
+  });
+  const box=$('sync-options'); if(!box) return;
+  const picker=$('sync-case-picker'); if(picker){ picker.style.display='none'; picker.innerHTML=''; }
+  if(p==='NET'){
+    box.innerHTML = `
+      <div class="sync-opt-row">
+        <button class="btn-accent sync-opt" onclick="startNetDownload()">📥 הצג את כל תיקיי בנט ובחר מה להוריד</button>
+        <div class="sync-opt-hint">מתחבר, שולף את כל התיקים שהמערכת רואה בפורטל, ומאפשר לסמן. ניתן לכלול תיקים קשורים דרך הגדרת "היקף".</div>
+      </div>
+      <div class="sync-opt-row">
+        <button class="btn-accent sync-opt" onclick="syncOpenNetCase()">🔄 סנכרן את התיק הפתוח בדפדפן</button>
+        <div class="sync-opt-hint">מוריד את המסמכים החדשים של התיק שפתוח כרגע בדפדפן האוטומציה.</div>
+      </div>
+      <div class="sync-opt-row" style="border:1px solid var(--line,rgba(255,255,255,.15));border-radius:10px;padding:10px 12px">
+        <div class="sync-opt-hint" style="margin-bottom:6px">🔎 בדיקת עדכונים בתיק ספציפי לפי מספר (גם אם עוד לא במערכת):</div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input id="nc-num" placeholder="מספר תיק" style="flex:1;border:1px solid var(--line,rgba(255,255,255,.2));border-radius:8px;padding:7px 10px;font-size:13px;background:rgba(127,127,127,.08);color:inherit">
+          <input id="nc-my" type="month" style="width:130px;border:1px solid var(--line,rgba(255,255,255,.2));border-radius:8px;padding:7px 8px;font-size:12px;background:rgba(127,127,127,.08);color:inherit">
+          <button class="btn-accent" style="padding:7px 14px;font-size:12px;white-space:nowrap" onclick="openNetCase(true)">אתר וסנכרן</button>
+        </div>
+      </div>`;
+  } else if(p==='BDR'){
+    box.innerHTML = `
+      <div class="sync-opt-row">
+        <button class="btn-accent sync-opt" onclick="runBdrBatch('')">📥 הורד את כל תיקי בית הדין הרבני</button>
+        <div class="sync-opt-hint">שולף את כל התיקים ומשייך כל אחד ללקוח שלו אוטומטית.</div>
+      </div>
+      <div class="sync-opt-row">
+        <button class="btn-accent sync-opt" onclick="runBdrByClient()">👤 הורד תיקים של לקוח מסוים</button>
+        <div class="sync-opt-hint">מוריד רק תיקים שאחד הצדדים בהם תואם לשם שתקליד.</div>
+      </div>`;
+  } else if(p==='ECA'){
+    box.innerHTML = `
+      <div class="sync-opt-row">
+        <button class="btn-accent sync-opt" onclick="ecaConnectAndList()">🔌 התחבר והצג את תיקי ההוצאה לפועל</button>
+        <div class="sync-opt-hint">מתחבר לפורטל, מציג את התיקים הפתוחים עם הצדדים (מי נגד מי), ומאפשר לסמן מה להוריד.</div>
+      </div>`;
+  }
+}
+function syncOpenNetCase(){ act('sync_current/NET','סנכרון התיק הפתוח בנט'); }
 function startNetDownload(){
   toast('מתחבר לנט המשפט ומחפש תיקים…');
   act('net_list_cases','חיפוש תיקים בנט');

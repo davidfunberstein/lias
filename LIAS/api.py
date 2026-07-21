@@ -382,6 +382,13 @@ def act_bdr_batch(force_rerun: bool = False, client_filter: str = ""):
                                                 "client_filter": client_filter})}
 
 
+@app.post("/api/actions/open_case_view")
+def act_open_case_view(portal: str = "", case_number: str = ""):
+    """פתיחת התיק ויזואלית בדפדפן האוטומציה."""
+    return {"job_id": jobs.submit("open_case_view",
+                                  {"portal": portal, "case_number": case_number})}
+
+
 @app.post("/api/actions/eca_list")
 def act_eca_list():
     """התחברות והצגת תיקי הוצל"פ לבחירה."""

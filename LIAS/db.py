@@ -300,3 +300,81 @@ def update_job(job_id: int, **fields: Any) -> None:
     cols = ", ".join(f"{k}=?" for k in fields)
     conn.execute(f"UPDATE jobs SET {cols} WHERE job_id=?", (*fields.values(), job_id))
     conn.commit()
+
+
+def merge_case_folder_clients() -> int:
+    """Fold "case-folder" clients into the real person/entity clients.
+
+    After a flat BDR/NET import, folders like "15083-09-24 — פונברשטיין נ' בר"
+    each became their own client_id. But the recurring party (the lawyer's
+    client) already exists as a plain client (e.g. "דוד פונברשטיין"). This
+    reassigns every case of a case-folder-client to the real client whose name
+    shares a token with one of the folder's parties, then deletes the emptied
+    shell. Conservative: only merges on a clear token match, never guesses.
+    Returns the number of cases reassigned. Idempotent.
+    """
+    import re
+    conn = get_conn()
+    rows = conn.execute("SELECT client_id, display_name FROM clients").fetchall()
+
+    def _is_case_folder(name: str) -> bool:
+        return bool(re.search(r"\bנ['׳’]\b", name) or re.match(r"^\d+-\d+-\d+", name.strip()))
+
+    def _tokens(name: str) -> set:
+        return {t for t in re.split(r"[\s'׳’\-–.]+", name) if len(t) >= 2}
+
+    def _parties(folder: str) -> list[str]:
+        tail = folder
+        for sep in (" — ", " - "):
+            if sep in tail:
+                tail = tail.split(sep, 1)[1]; break
+        return [p.strip() for p in re.split(r"\s+נ['׳’]\s+|\s+-\s+", tail) if p.strip()]
+
+    real = [(r["client_id"], r["display_name"], _tokens(r["display_name"]))
+            for r in rows if not _is_case_folder(r["display_name"])]
+    reassigned = 0
+    for r in rows:
+        if not _is_case_folder(r["display_name"]):
+            continue
+        party_tokens = set()
+        for p in _parties(r["display_name"]):
+            party_tokens |= _tokens(p)
+        # best real client = most shared tokens (min 1), skip generic stop-tokens
+        party_tokens -= {"ואח"}
+        best = None; best_overlap = 0
+        for cid, _nm, toks in real:
+            ov = len(toks & party_tokens)
+            if ov > best_overlap:
+                best_overlap, best = ov, cid
+        if best is None or best == r["client_id"]:
+            continue
+        conn.execute("UPDATE cases SET client_id=? WHERE client_id=?", (best, r["client_id"]))
+        n = conn.execute("SELECT changes()").fetchone()[0]
+        reassigned += n or 0
+        # delete the emptied shell client
+        left = conn.execute("SELECT COUNT(*) FROM cases WHERE client_id=?", (r["client_id"],)).fetchone()[0]
+        if left == 0:
+            conn.execute("DELETE FROM clients WHERE client_id=?", (r["client_id"],))
+    conn.commit()
+
+    # Second pass: fold multi-party "couple/procedure" folders (e.g.
+    # "אישות - דוד פונברשטיין - חנה פונברשטיין") into the plain person client
+    # ("דוד פונברשטיין") whose full name is contained in the folder.
+    rows = conn.execute("SELECT client_id, display_name FROM clients").fetchall()
+    def _is_person(name: str) -> bool:
+        return " - " not in name and " — " not in name and not re.search(r"\bנ['׳’]\b", name)
+    persons = [(r["client_id"], _tokens(r["display_name"]))
+               for r in rows if _is_person(r["display_name"])]
+    for r in rows:
+        if _is_person(r["display_name"]):
+            continue
+        folder_toks = _tokens(r["display_name"])
+        for cid, ptoks in persons:
+            if cid != r["client_id"] and len(ptoks) >= 2 and ptoks <= folder_toks:
+                conn.execute("UPDATE cases SET client_id=? WHERE client_id=?", (cid, r["client_id"]))
+                reassigned += conn.execute("SELECT changes()").fetchone()[0] or 0
+                if conn.execute("SELECT COUNT(*) FROM cases WHERE client_id=?", (r["client_id"],)).fetchone()[0] == 0:
+                    conn.execute("DELETE FROM clients WHERE client_id=?", (r["client_id"],))
+                break
+    conn.commit()
+    return reassigned

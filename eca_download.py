@@ -46,7 +46,8 @@ def _stats_tick(status: str) -> None:
         mins = max((time.time() - _STATS["t0"]) / 60.0, 0.05)
         _jobs.broadcast({"type": "download_stats", "portal": "ECA",
                          "done": _STATS["done"], "errors": _STATS["errors"],
-                         "total": _STATS["total"] or None,
+                         # ECA total isn't known upfront (discovered per case) —
+                         # report case progress as the primary metric.
                          "case_idx": _STATS["case_idx"],
                          "cases_total": _STATS["cases_total"],
                          "rate": round(_STATS["done"] / mins, 1)})
@@ -698,15 +699,20 @@ def _write_case_manifest(case_dir: Path, case_num: str) -> None:
 # Sync entry point (called from LIAS jobs on an already-open page)
 # ---------------------------------------------------------------------------
 
-def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None = None) -> str:
+def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None = None,
+                     progress=None) -> str:
     """Download all ECA cases into root_output_dir/downloads/{client}/הוצאה לפועל/{case}.
 
     Assumes the caller provides a Playwright page; handles ECA login itself
-    (reuses gov.il auto-login). Returns a short summary string.
+    (reuses gov.il auto-login). `progress(fraction, message)` — optional
+    callback so the job bar / tasks balloon reflect per-case progress.
+    Returns a short summary string.
     """
     downloads_dir = Path(root_output_dir) / "downloads"
     downloads_dir.mkdir(parents=True, exist_ok=True)
 
+    if progress:
+        progress(0.1, "מתחבר להוצאה לפועל…")
     if not _login_eca(page):
         raise RuntimeError("ההתחברות להוצאה לפועל נכשלה")
 
@@ -726,13 +732,17 @@ def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None
     ok = 0
     for case in cases:
         _STATS["case_idx"] += 1
+        if progress:
+            # spread cases across 0.15..0.85 of the bar
+            frac = 0.15 + 0.70 * (_STATS["case_idx"] - 1) / max(len(cases), 1)
+            progress(frac, f"תיק {_STATS['case_idx']}/{len(cases)}: {case['number']}")
         try:
             _process_case(page, case, downloads_dir, by_client=True)
             ok += 1
         except Exception as e:
             _log(f"✗ שגיאה בתיק {case['number']}: {e}")
         time.sleep(1)
-    return f"הוצל\"פ: {ok}/{len(cases)} תיקים סונכרנו"
+    return f"הוצל\"פ: {ok}/{len(cases)} תיקים ({_STATS['done']} מסמכים, {_STATS['errors']} כשלו)"
 
 
 # ---------------------------------------------------------------------------

@@ -350,6 +350,13 @@ async function deleteCase(){
   await act('delete_case?sub_case_id='+K.sub_case_id, 'מחיקת תיק');
   setTimeout(()=>go('home'), 1200);
 }
+async function openCaseInPortal(){
+  if(!K) return;
+  const portal = K.portal || (K.arkaa==='הוצאה לפועל'?'ECA':K.arkaa==='בית דין רבני'?'BDR':'NET');
+  toast('פותח את התיק בפורטל…');
+  await act(`open_case_view?portal=${portal}&case_number=${encodeURIComponent(K.sub_number||'')}`,
+            `פתיחת תיק ${K.sub_number} בפורטל`);
+}
 async function shareCase(){
   if(!K?.sub_case_id) return;
   const emails = prompt('מיילים לשיתוף התיק הזה בצפייה בלבד (מופרדים בפסיק):');
@@ -372,7 +379,8 @@ function renderCase(){
       ${K?(caseStatusMap()[K.sub_case_id]==='closed'
         ? `<span class="pill gray">תיק סגור</span> <button class="fv-btn" style="font-size:11px" onclick="toggleCaseStatus(${K.sub_case_id})">סמן כפתוח</button>`
         : `<span class="pill ok">תיק פתוח</span> <button class="fv-btn" style="font-size:11px" onclick="toggleCaseStatus(${K.sub_case_id})">סמן כסגור</button>`):''}
-      ${K?`<button class="fv-btn" style="font-size:11px" onclick="uploadToCase()" title="העלה מסמך אחד או כמה לתיק — יסומנו 'לא מהתיק'">➕ הוסף מסמכים</button>
+      ${K?`<button class="fv-btn" style="font-size:11px" onclick="openCaseInPortal()" title="פתח את התיק בפורטל בדפדפן לצפייה ויזואלית">🌐 פתח בפורטל</button>
+        <button class="fv-btn" style="font-size:11px" onclick="uploadToCase()" title="העלה מסמך אחד או כמה לתיק — יסומנו 'לא מהתיק'">➕ הוסף מסמכים</button>
         <button class="fv-btn" style="font-size:11px" onclick="shareCase()" title="שתף רק את התיק הזה בצפייה">🔗 שתף תיק</button>
         <button class="fv-btn" style="font-size:11px;color:var(--danger)" onclick="deleteCase()" title="מחק את כל התיק (ל-trash + דרייב)">🗑 מחק תיק</button>`:''}</h1>
     <div class="sub" style="margin-top:6px">${K?`לקוח: <b>${(D?.clients||[]).find(c=>c.client_id===K.client_id)?.display_name||'—'}</b>
