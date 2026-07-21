@@ -59,19 +59,13 @@ def start() -> dict:
         try:
             from LIAS.browser_manager import BrowserManager
             import playwright  # noqa: F401
-            import os as _os, json as _json
             from LIAS.run import _restore
-            # Visible by DEFAULT so the user sees login + downloads happening.
-            # Controlled by the "browser_visible" setting (Settings ⚙); env
-            # LIAS_HEADLESS=1 forces headless.
-            _visible = True
-            try:
-                _dp = config.PROJECT_ROOT / "session_defaults.json"
-                if _dp.exists():
-                    _visible = _json.loads(_dp.read_text(encoding="utf-8")).get("browser_visible", True)
-            except Exception:
-                pass
-            _headless = (_os.environ.get("LIAS_HEADLESS") == "1") or (not _visible)
+            # Start BOTH browsers HEADLESS so opening the app never pops windows.
+            # A portal's window appears only when you actually sync it (each
+            # portal job calls browser.show() when the "browser_visible"
+            # setting is on) — so you see login + download for the one you run,
+            # not two stray windows at startup.
+            _headless = True
             browser = BrowserManager(headless=_headless, restore=_restore)
             browser.start()
             bdr_browser = BrowserManager(

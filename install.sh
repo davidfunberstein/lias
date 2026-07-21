@@ -17,31 +17,53 @@ if [ "$1" = "docker" ]; then
     exit 0
 fi
 
-# ── native install ──────────────────────────────────────────
-command -v python3 >/dev/null || { echo "✗ Python 3 לא מותקן"; exit 1; }
-echo "→ Python: $(python3 --version)"
+# ── locate a suitable Python (3.9+) ──────────────────────────
+PY=""
+for cand in python3.12 python3.11 python3.10 python3.9 python3 python; do
+    if command -v "$cand" >/dev/null 2>&1; then
+        VER=$("$cand" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo "0.0")
+        MAJ=${VER%%.*}; MIN=${VER##*.}
+        if [ "$MAJ" = "3" ] && [ "$MIN" -ge 9 ] 2>/dev/null; then PY="$cand"; break; fi
+    fi
+done
+if [ -z "$PY" ]; then
+    echo "✗ לא נמצא Python 3.9 ומעלה. התקן מ- https://python.org ונסה שוב."
+    echo "  (במק:  brew install python@3.12)"
+    exit 1
+fi
+echo "→ משתמש ב-$PY ($($PY --version))"
 
-# Homebrew deps (Mac) — ffmpeg for transcription
-if command -v brew >/dev/null; then
-    command -v ffmpeg >/dev/null || { echo "→ מתקין ffmpeg…"; brew install ffmpeg; }
-    [ -d "/Applications/LibreOffice.app" ] || echo "⚠ מומלץ להתקין LibreOffice לתצוגת Word: brew install --cask libreoffice"
+# ── system deps ──────────────────────────────────────────────
+if command -v brew >/dev/null 2>&1; then
+    command -v ffmpeg >/dev/null 2>&1 || { echo "→ מתקין ffmpeg…"; brew install ffmpeg || echo "  ⚠ התקנת ffmpeg נכשלה — התקן ידנית"; }
+    [ -d "/Applications/LibreOffice.app" ] || echo "  ℹ (אופציונלי) לתצוגת Word: brew install --cask libreoffice"
+elif command -v apt-get >/dev/null 2>&1; then
+    echo "→ מתקין ffmpeg + libreoffice (apt)…"
+    sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libreoffice-writer || echo "  ⚠ בדוק הרשאות sudo"
 else
-    command -v ffmpeg >/dev/null || echo "⚠ התקן ffmpeg ידנית (נדרש לתמלול)"
+    command -v ffmpeg >/dev/null 2>&1 || echo "  ⚠ התקן ffmpeg ידנית (נדרש לתמלול)"
 fi
 
+# ── Python packages ──────────────────────────────────────────
 echo "→ מתקין חבילות Python…"
-python3 -m pip install --quiet --upgrade pip
-python3 -m pip install --quiet -r requirements.txt
-python3 -m pip install --quiet playwright faster-whisper
+"$PY" -m pip install --quiet --upgrade pip
+"$PY" -m pip install --quiet -r requirements.txt
+"$PY" -m pip install --quiet playwright faster-whisper
 
 echo "→ מתקין דפדפן אוטומציה (Chromium)…"
-python3 -m playwright install chromium
+"$PY" -m playwright install chromium
+
+# ── rebuild DB if documents shipped without an up-to-date lias.db ──
+if [ -d "court_documents/downloads" ] && [ ! -f "lias.db" ]; then
+    echo "→ נמצאו מסמכים ללא DB — בונה את lias.db מהמסמכים…"
+    "$PY" rebuild_db.py || echo "  ⚠ בניית DB נכשלה — הרץ ידנית: $PY rebuild_db.py"
+fi
 
 echo ""
 echo "✓ ההתקנה הושלמה!"
-echo "  הרצה:   python3 app.py"
-echo "  כתובת:  http://localhost:8500"
+echo "  הרצה:   $PY app.py       →  http://localhost:8500"
 echo ""
 echo "  אופציונלי:"
 echo "  • Google Drive: שים credentials.json (OAuth) בתיקייה זו"
-echo "  • OCR/AI: הזן מפתח Groq או xAI בהגדרות ⚙ באפליקציה"
+echo "  • OCR/AI: הזן מפתח Groq/xAI בהגדרות ⚙ באפליקציה"
+echo "  • אישורי gov.il: הזן ת\"ז וסיסמה בהגדרות ⚙ (נשמר ב-Keychain בלבד)"

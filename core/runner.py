@@ -31,7 +31,9 @@ _SETTINGS_FILE = Path("session_defaults.json")
 _PERSISTENT_KEYS = ["lang", "mode", "date_filter", "storage_mode", "login_method",
                     "bdr_entity_type", "user_mode", "lawyer_name", "email_enabled",
                     "download_related_cases", "gemini_enabled", "gemini_api_key",
-                    "check_viewers", "otp_method", "share_email", "groq_api_key"]
+                    "check_viewers", "otp_method", "share_email", "groq_api_key",
+                    "net_scope", "net_related", "bdr_scope", "eca_scope",
+                    "browser_visible", "case_scope"]
 
 def _load_persistent_settings() -> None:
     """Load saved settings from session_defaults.json into SESSION_SETTINGS."""

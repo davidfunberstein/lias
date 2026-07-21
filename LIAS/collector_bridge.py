@@ -357,6 +357,16 @@ def _run_portal(ctx: JobContext, name: str, fn, timeout: int):
     import time as _t
     from .browser_manager import BrowserDead
 
+    # Show THIS portal's browser window (only) when the user wants to watch —
+    # so a sync pops exactly one relevant window, not two at startup.
+    try:
+        from core.download import SESSION_SETTINGS as _ss
+        if _ss.get("browser_visible", True) and getattr(ctx.browser, "_headless", False):
+            ctx.progress(0.06, "פותח דפדפן לצפייה בהתחברות ובהורדה…")
+            ctx.browser.show()
+    except Exception:
+        pass
+
     _BLOCK_MARKS = ("ERR_CONNECTION_RESET", "ERR_HTTP2", "ERR_CONNECTION_CLOSED",
                     "ERR_EMPTY_RESPONSE", "ERR_TIMED_OUT", "timed out", "נתקעה")
     # (wait-before, go-visible-first) / (המתנה לפני, לעבור לגלוי קודם)
