@@ -383,6 +383,9 @@ function renderCase(){
         <button class="fv-btn" style="font-size:11px" onclick="uploadToCase()" title="העלה מסמך אחד או כמה לתיק — יסומנו 'לא מהתיק'">➕ הוסף מסמכים</button>
         <button class="fv-btn" style="font-size:11px" onclick="shareCase()" title="שתף רק את התיק הזה בצפייה">🔗 שתף תיק</button>
         <button class="fv-btn" style="font-size:11px;color:var(--danger)" onclick="deleteCase()" title="מחק את כל התיק (ל-trash + דרייב)">🗑 מחק תיק</button>`:''}</h1>
+    ${K&&(K.parties?.length||K.location)?`<div class="sub" style="margin-top:8px;padding:8px 12px;border-radius:8px;background:var(--accent-soft,rgba(47,125,246,.08))">
+      ${K.parties?.length?`⚖ <b>הצדדים:</b> ${K.parties.join(' &nbsp;נ׳&nbsp; ')}`:''}
+      ${K.location?` &nbsp;·&nbsp; 📍 <b>${K.location}</b>`:''}</div>`:''}
     <div class="sub" style="margin-top:6px">${K?`לקוח: <b>${(D?.clients||[]).find(c=>c.client_id===K.client_id)?.display_name||'—'}</b>
       · ערכאה: <b>${K.arkaa}</b> · פורטל: <b>${K.portal}</b>
       · מסמך ראשון: <b>${K.first_date||'—'}</b> · עדכון אחרון בתיק: <b>${K.last_date||'—'}</b>

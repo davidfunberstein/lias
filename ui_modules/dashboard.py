@@ -275,6 +275,73 @@ def search_all(q: str, db_path: str) -> dict:
     return out
 
 
+def _case_parties_and_location(rows: list, portal: str) -> tuple:
+    """Best-effort parties + location for the case-detail header.
+    - ECA: read case_info.json (role/name/id) saved on first visit.
+    - BDR/NET: parse the client/couple folder ("אישות - דוד x - חנה x") for
+      the two person parties, and the trailing city from the sub-case folder
+      ("... - פתח תקוה"). Returns (parties_list, location_str)."""
+    import json, re, os
+    from pathlib import Path as _Path
+    try:
+        from LIAS.config import COURT_DOCS_DIR as _DOCS
+    except Exception:
+        _DOCS = _Path(os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                   "court_documents"))
+    parties: list = []
+    location = ""
+
+    lp = ""
+    for r in rows:
+        if r.get("local_path"):
+            lp = r["local_path"]; break
+    if not lp:
+        return parties, location
+
+    parts = _Path(lp).parts                       # downloads/client/case/sub/file
+    body = list(parts[1:-1]) if len(parts) > 2 else []
+
+    # 1) ECA parties from case_info.json (saved on first visit to the case)
+    case_dir = _DOCS / _Path(lp).parent
+    for anc in [case_dir, case_dir.parent, case_dir.parent.parent]:
+        try:
+            info_p = anc / "case_info.json"
+            if info_p.exists():
+                info = json.loads(info_p.read_text(encoding="utf-8"))
+                for pr in info.get("parties", []):
+                    nm = (pr.get("name") or "").strip()
+                    role = (pr.get("role") or "").strip()
+                    if nm:
+                        parties.append(f"{role}: {nm}" if role else nm)
+                location = info.get("city") or info.get("location") or ""
+                break
+        except Exception:
+            pass
+
+    _NAME = re.compile(r"[\u05d0-\u05ea]{2,}\s+[\u05d0-\u05ea]{2,}")
+    def _people(seg: str) -> list:
+        if " - " in seg or " \u2014 " in seg:
+            cand = [x.strip() for x in re.split(r"\s+-\s+|\s+\u2014\s+", seg)]
+            return [c for c in cand if _NAME.search(c)]
+        m = re.split(r"\s+\u05e0['\u05f3\u2019]\s+", seg)
+        return [x.strip() for x in m if x.strip()] if len(m) > 1 else []
+
+    # 2) parties from the first folder segment that names >=2 people
+    if not parties:
+        for seg in body:
+            ppl = _people(seg)
+            if len(ppl) >= 2:
+                parties = ppl; break
+
+    # 3) location: trailing city in the sub-case folder ("... - פתח תקוה")
+    if not location and body:
+        sub = body[-1]
+        tail = sub.rsplit(" - ", 1)[-1].strip() if " - " in sub else ""
+        if tail and not re.search(r"\d", tail) and len(tail) <= 20:
+            location = tail
+    return parties, location
+
+
 def case_view(sub_case_id: int, params: dict, db_path: str) -> dict:
     """Case screen: stats + filtered docs."""
     con = _connect(db_path)
@@ -316,12 +383,15 @@ def case_view(sub_case_id: int, params: dict, db_path: str) -> dict:
               reverse=True)
     dates = sorted(d for d in (_parse_ddmmyyyy(r["submission_date"]) for r in rows) if d)
     first = rows[0]
+    parties, location = _case_parties_and_location(rows, first["portal"])
     return {
         "sub_case_id": sub_case_id,
         "sub_number": first["sub_number"],
         "portal": first["portal"],
         "arkaa": _arkaa(first["portal"], first["sub_number"]),
         "client_id": first["client_id"],
+        "parties": parties,
+        "location": location,
         "stats": stats,
         "total": len(rows),
         "shown": len(docs),
