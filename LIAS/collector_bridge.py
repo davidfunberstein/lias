@@ -224,6 +224,32 @@ def organize_clients(payload: dict, ctx: JobContext) -> str:
     return f"{moved} תיקים שויכו, {n} מסמכים יובאו מחדש"
 
 
+@handler("eca_list")
+def eca_list(payload: dict, ctx: JobContext) -> str:
+    """EN: connect to ECA and broadcast the list of open cases (no download)
+        so the UI can offer a checkbox picker before syncing.
+    HE: התחברות להוצל"פ ושידור רשימת התיקים ל-UI לבחירה — בלי להוריד."""
+    if ctx.browser is None:
+        raise RuntimeError("no browser attached / אין דפדפן מחובר")
+    ctx.progress(0.1, "מתחבר להוצאה לפועל…")
+
+    def _run(page):
+        import sys
+        sys.path.insert(0, str(config.PROJECT_ROOT))
+        from eca_download import _login_eca, _extract_cases, OPEN_CASES_URL
+        import time as _t
+        if not _login_eca(page):
+            raise RuntimeError("ההתחברות להוצאה לפועל נכשלה")
+        if "/home/OpenCase" not in (page.url or ""):
+            page.goto(OPEN_CASES_URL, wait_until="domcontentloaded", timeout=30000)
+            _t.sleep(3)
+        return _extract_cases(page)
+
+    cases = _run_portal(ctx, "eca_list", _run, timeout=600)
+    jobs.broadcast({"type": "eca_cases", "cases": cases})
+    return f"נמצאו {len(cases)} תיקי הוצל\"פ"
+
+
 @handler("eca_sync")
 def eca_sync(payload: dict, ctx: JobContext) -> str:
     """EN: download all ECA (הוצאה לפועל) cases — motions + decisions per

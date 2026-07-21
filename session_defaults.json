@@ -5,11 +5,11 @@
   "storage_mode": "both",
   "login_method": "standard",
   "bdr_entity_type": "עו\"ד מייצג",
-  "user_mode": "lawyer",
+  "user_mode": "private",
   "email_enabled": false,
-  "download_related_cases": true,
+  "download_related_cases": false,
   "check_viewers": false,
   "otp_method": "email",
   "share_email": "",
-  "case_scope": "related"
+  "case_scope": "selected"
 }

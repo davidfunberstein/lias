@@ -382,6 +382,12 @@ def act_bdr_batch(force_rerun: bool = False, client_filter: str = ""):
                                                 "client_filter": client_filter})}
 
 
+@app.post("/api/actions/eca_list")
+def act_eca_list():
+    """התחברות והצגת תיקי הוצל"פ לבחירה."""
+    return {"job_id": jobs.submit("eca_list", {})}
+
+
 @app.post("/api/actions/eca_sync")
 def act_eca_sync():
     """הורדת כל תיקי ההוצאה לפועל לפי לקוח."""
