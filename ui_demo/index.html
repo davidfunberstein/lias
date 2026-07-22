@@ -138,12 +138,12 @@
     <div class="note" style="margin:4px 0 10px">כל פורטל עצמאי. ההגדרה קובעת מה קורה בלחיצת ההורדה בלשונית "סנכרון".</div>
 
     <label>🏛 נט המשפט — היקף</label>
-    <select id="g-net-scope" style="width:100%">
+    <select id="g-net-scope" style="width:100%" onchange="_syncNetRelated()">
       <option value="all">כל התיקים (הכל ללא בחירה)</option>
       <option value="selected">תיקים מסוימים (בחירה מרשימה)</option>
     </select>
-    <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:400">
-      <input type="checkbox" id="g-net-related" style="width:auto"> כלול תיקים קשורים (נט בלבד, רלוונטי לתיקים מסוימים)
+    <label id="g-net-related-row" style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:400">
+      <input type="checkbox" id="g-net-related" style="width:auto"> כלול תיקים קשורים (רק כשמורידים תיקים מסוימים)
     </label>
 
     <label style="margin-top:12px">🕍 בית הדין הרבני — היקף</label>

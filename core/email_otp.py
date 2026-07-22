@@ -115,6 +115,16 @@ class EmailOTPReader:
                     print(f"{_ts()} [EmailOTP] OTP found: {code}")
                     return code
             except Exception as exc:
+                # Invalid credentials will NEVER succeed by retrying — abort now
+                # with a clear message instead of hammering the server for 60s.
+                if "AUTHENTICATIONFAILED" in str(exc) or "Invalid credentials" in str(exc):
+                    msg = (f"{_ts()} [EmailOTP] ✗ פרטי חשבון המייל שגויים — "
+                           f"הזן סיסמת אפליקציה תקינה בהגדרות ⚙ (App Password).")
+                    print(msg)
+                    if self.logger:
+                        self.logger.warn(msg)
+                    raise RuntimeError("EMAIL_AUTH_FAILED: חשבון המייל לא מוגדר נכון "
+                                       "(סיסמת אפליקציה שגויה). עדכן בהגדרות.") from exc
                 msg = f"{_ts()} [EmailOTP] Poll error: {exc}"
                 print(msg)
                 if self.logger:

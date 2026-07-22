@@ -39,13 +39,18 @@ ECA_URL = "https://publicsso.eca.gov.il/he/home/OpenCase"
 
 
 def _is_already_logged_in_eca(page: Page) -> bool:
-    """Authenticated ECA session = on publicsso.eca.gov.il, not on login.gov.il,
-    and the Angular app rendered content (case carousel or dashboard)."""
+    """Authenticated ECA session = on publicsso.eca.gov.il, not on login.gov.il
+    or the /login page, and the REAL cases UI rendered (carousel or case cards).
+    A bare mat-card is NOT enough — the login page has those too."""
     try:
         url = page.url or ""
         if "login.gov.il" in url or "publicsso.eca.gov.il" not in url:
             return False
-        return page.locator("#carousel-cases, app-mycases-cards, mat-card").count() > 0
+        if "/login" in url:
+            return False
+        # require the actual cases carousel / case cards, not any mat-card
+        return page.locator(
+            "#carousel-cases, app-mycases-cards, mat-card[id^='card-case']").count() > 0
     except Exception:
         return False
 
@@ -212,10 +217,26 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
         return True
 
     if is_eca:
-        # ECA redirects straight to login.gov.il; a system-choice screen
+        # Go through the ECA /login page first — it triggers the gov.il SSO
+        # redirect properly. Navigating straight to OpenCase before auth just
+        # renders an empty Angular shell (the "0 cases" symptom).
+        if "login.gov.il" not in (page.url or ""):
+            try:
+                page.goto("https://publicsso.eca.gov.il/he/login",
+                          wait_until="domcontentloaded", timeout=25000)
+                time.sleep(2)
+            except Exception:
+                pass
+        # ECA redirects to login.gov.il; a system-choice screen
         # (בד"ר נט / הוצאה לפועל) may appear before or after the login.
         _click_eca_system_choice(page)
         _run_gov_autologin(page, "ECA")
+        # after auth, land on the cases page
+        try:
+            page.goto(ECA_URL, wait_until="domcontentloaded", timeout=25000)
+            time.sleep(2)
+        except Exception:
+            pass
         for _ in range(3):
             time.sleep(2)
             _click_eca_system_choice(page)

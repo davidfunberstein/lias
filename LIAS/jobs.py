@@ -170,8 +170,20 @@ class WorkerPool:
 
     def _loop(self) -> None:
         import time
+        import sqlite3
         while not self._stop.is_set():
-            row = db.claim_next_job(list(_HANDLERS.keys()))
+            # A transient DB error (e.g. the file was replaced) must never kill
+            # the worker thread — reset the connection and keep polling.
+            try:
+                row = db.claim_next_job(list(_HANDLERS.keys()))
+            except sqlite3.OperationalError as _dbe:
+                self._log(f"[worker] DB error, reconnecting: {_dbe}")
+                try:
+                    db._reset_conn()
+                except Exception:
+                    pass
+                time.sleep(1.0)
+                continue
             if row is None:
                 time.sleep(1.0)               # simple poll; SSE hides the latency / פולינג פשוט
                 continue

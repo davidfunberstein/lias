@@ -293,13 +293,40 @@ def claim_next_job(kinds: Iterable[str]) -> Optional[sqlite3.Row]:
     return row
 
 
+def _reset_conn(db_path: Optional[Path] = None) -> "sqlite3.Connection":
+    """Drop the (possibly broken) thread-local connection and reopen. Used to
+    recover from "disk I/O error" — e.g. after the DB file was replaced."""
+    path = str(db_path or config.DB_PATH)
+    old = getattr(_local, "conn_" + path, None)
+    if old is not None:
+        try:
+            old.close()
+        except Exception:
+            pass
+        try:
+            delattr(_local, "conn_" + path)
+        except Exception:
+            pass
+    return get_conn(db_path)
+
+
 def update_job(job_id: int, **fields: Any) -> None:
-    conn = get_conn()
     if fields.get("state") in ("COMPLETED", "ERROR", "CANCELLED"):
         fields.setdefault("finished_at", _now())
     cols = ", ".join(f"{k}=?" for k in fields)
-    conn.execute(f"UPDATE jobs SET {cols} WHERE job_id=?", (*fields.values(), job_id))
-    conn.commit()
+    sql = f"UPDATE jobs SET {cols} WHERE job_id=?"
+    args = (*fields.values(), job_id)
+    for attempt in range(2):
+        try:
+            conn = get_conn()
+            conn.execute(sql, args)
+            conn.commit()
+            return
+        except sqlite3.OperationalError:
+            if attempt == 0:
+                _reset_conn()        # reconnect once and retry
+                continue
+            raise
 
 
 def merge_case_folder_clients() -> int:

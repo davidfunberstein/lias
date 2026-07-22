@@ -29,6 +29,15 @@ def main() -> int:
         print("  ודא שתיקיית court_documents/downloads קיימת עם התיקים.")
         return 1
 
+    # Refuse to run while the app is up — deleting the DB out from under live
+    # connections causes "disk I/O error" and crashes the running engine.
+    import socket
+    for port in (8500, 8400):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                print(f"✗ האפליקציה פועלת (פורט {port}). סגור אותה קודם (Ctrl+C) והרץ שוב.")
+                return 1
+
     print(f"→ בונה מחדש את lias.db מתוך {downloads}")
 
     # Start from a clean database so stale/duplicate rows never linger.

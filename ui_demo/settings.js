@@ -19,6 +19,7 @@ async function openSettings(){
     // per-platform sync settings
     if($('g-net-scope')) $('g-net-scope').value = st.net_scope || 'selected';
     if($('g-net-related')) $('g-net-related').checked = !!st.net_related;
+    _syncNetRelated();
     if($('g-bdr-scope')) $('g-bdr-scope').value = st.bdr_scope || 'all';
     if($('g-eca-scope')) $('g-eca-scope').value = st.eca_scope || 'selected';
     if($('g-browser-visible')) $('g-browser-visible').checked = st.browser_visible !== false;
@@ -34,6 +35,14 @@ async function openSettings(){
     if(em.address && $('g-email')) $('g-email').value = em.address;
   }catch(e){}
   toggleEmailBox();
+}
+function _syncNetRelated(){
+  // "Related cases" only makes sense when downloading SELECTED cases, not all.
+  const all = $('g-net-scope')?.value === 'all';
+  const row = $('g-net-related-row'), cb = $('g-net-related');
+  if(cb && all) cb.checked = false;
+  if(cb) cb.disabled = all;
+  if(row) row.style.opacity = all ? .4 : 1;
 }
 function toggleEmailBox(){
   const box=$('email-box'); if(!box) return;

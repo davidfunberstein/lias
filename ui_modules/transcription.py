@@ -114,16 +114,34 @@ def _transcribe_chunk(model, chunk_path: str, time_offset: float,
     return results
 
 
+def _tlog(msg: str) -> None:
+    """Write a transcription line to the shared live log (latest.log) so it
+    shows in the app's log window (תמלול tab), plus stdout."""
+    line = f"[{datetime.now().strftime('%H:%M:%S')}] [תמלול] {msg}"
+    print(line, flush=True)
+    try:
+        from LIAS import config as _cfg
+        logp = _cfg.COURT_DOCS_DIR / "logs" / "latest.log"
+        logp.parent.mkdir(parents=True, exist_ok=True)
+        with open(logp, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:
+        pass
+
+
 def _transcribe_worker(job_id: str, audio_path: str, language: str,
                        original_name: str, transcriptions_dir: str):
     """Split -> parallel transcribe -> merge -> save MD."""
     def _update(state: str, **kw):
         with _transcription_lock:
             _transcription_jobs[job_id].update(state=state, **kw)
+        if kw.get("message"):
+            _tlog(kw["message"])
 
     with _transcription_lock:
         _transcription_jobs[job_id]["transcriptions_dir"] = transcriptions_dir
         _transcription_jobs[job_id]["original_name"] = original_name
+    _tlog(f"▶ מתחיל תמלול: {original_name}")
     _update("loading_model", progress=0.05, message="טוען מודל תמלול…")
     try:
         from faster_whisper import WhisperModel  # noqa: F401
