@@ -73,7 +73,7 @@
 
 <!-- ═══ Settings ═══ -->
 <div class="drawer-bg" id="set-bg" onclick="closeSettings()"></div>
-<div class="login" id="settings" style="position:fixed;top:50%;right:50%;transform:translate(50%,-50%);z-index:95;display:none">
+<div class="login" id="settings" style="position:fixed;top:50%;right:50%;transform:translate(50%,-50%);z-index:95;display:none;max-height:90vh;overflow-y:auto;overscroll-behavior:contain">
   <div class="logo"><div class="logo-badge">⚙</div> הגדרות</div>
   <p class="sub">חיבור ל-gov.il — נשמר ישירות ב-Keychain של המחשב</p>
   <div id="gov-status" class="sub" style="text-align:center;margin-bottom:8px;font-weight:700"></div>
@@ -93,10 +93,30 @@
     <option value="manual">ידנית — התחברות עצמאית דרך הדפדפן או האתר</option>
   </select>
   <label style="margin-top:12px">קבלת קוד אימות</label>
-  <select id="g-otp" onchange="saveOtpMethod(this.value)" style="width:100%">
+  <select id="g-otp" onchange="saveOtpMethod(this.value); toggleEmailBox()" style="width:100%">
     <option value="email">מייל — נקרא אוטומטית, בלי מגע</option>
     <option value="sms">טלפון (SMS) — הקוד יוזן ידנית בחלון שיקפוץ כאן, או ישירות בדף gov.il</option>
   </select>
+  <div id="email-box" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px">
+    <b style="font-size:13.5px">📧 חשבון המייל שמקבל את קוד האימות מ-gov.il</b>
+    <div id="email-status" class="sub" style="margin:4px 0;font-weight:700"></div>
+    <label>כתובת המייל (זו שאליה gov.il שולח את הקוד)</label>
+    <input id="g-email" type="email" placeholder="name@gmail.com" autocomplete="off">
+    <label>סיסמת אפליקציה (App Password) — לא הסיסמה הרגילה!</label>
+    <input id="g-email-pw" type="password" placeholder="16 תווים מ-Google" autocomplete="off">
+    <button class="btn-accent" style="width:100%;margin-top:8px" onclick="saveEmail()">💾 שמור חשבון מייל</button>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-size:12.5px;color:var(--accent-strong)">איך משיגים סיסמת אפליקציה של Gmail? (הוראות)</summary>
+      <div class="note" style="line-height:1.7">
+        1. היכנס לחשבון Google → <b>ניהול החשבון</b> → אבטחה.<br>
+        2. הפעל <b>אימות דו-שלבי</b> (2-Step Verification) אם עדיין לא מופעל.<br>
+        3. חפש <b>"סיסמאות אפליקציות" (App passwords)</b> — או היכנס ל-myaccount.google.com/apppasswords<br>
+        4. צור סיסמה חדשה (בחר "Mail"/"Other"), Google ייתן <b>16 תווים</b>.<br>
+        5. הדבק אותם כאן. (הסיסמה נשמרת ב-Keychain בלבד, לא בקבצים.)<br>
+        <b>Outlook/Yahoo/וואלה</b> — נתמכים גם; השתמש בסיסמת אפליקציה של אותו ספק.
+      </div>
+    </details>
+  </div>
   <div class="note" id="g-method-note">בשיטה המהירה ההתחברות רצה לבד; במצב SMS יופיע חלון להזנת הקוד מהטלפון.</div>
   <div id="manual-auth-note" style="display:none;margin-top:10px;padding:10px 14px;background:rgba(255,200,50,.18);border:2px solid #e6a800;border-radius:10px;font-size:13px;line-height:1.6">
     <b style="font-size:14px">⚠️ אימות ידני</b><br>

@@ -159,6 +159,11 @@ function connectEngineSSE(){
         logEvent(`${JOB_LABELS[e.kind]||e.kind||'משימה'} — ${e.state}`);
         finishJobBar(e.state==='COMPLETED', e.error||'');
         toast(`${JOB_LABELS[e.kind]||e.kind||'משימה'} — ${e.state==='COMPLETED'?'הושלמה ✓':'שגיאה'}`, e.state==='ERROR');
+        // Login failure → offer a one-click retry (refresh + try again)
+        if(e.state==='ERROR' && /התחברות|login|gov\.il|נכשל|OTP|אימות/i.test((e.error||'')+(e.message||''))
+           && ['eca_sync','eca_list','bdr_batch','net_smart_download','net_download_all','net_list_cases','open_portal'].includes(e.kind)){
+          showLoginRetry(e.kind, e.error||e.message||'ההתחברות נכשלה');
+        }
         refresh(true);
       }
     }
@@ -505,20 +510,23 @@ function pickPlatform(p){
   const scopeText = scope==='all' ? 'כל התיקים (לפי ההגדרות)' : 'הצג רשימה ובחר תיקים (לפי ההגדרות)';
   const relNote = p==='NET' && s.net_related ? ' · כולל תיקים קשורים' : '';
   const runFn = {NET:'runNet()', BDR:'runBdr()', ECA:'ecaConnectAndList()'}[p];
+  // Known cases of this portal — so "check a case" lets you PICK one
+  // (people don't remember numbers by heart) as well as type a new one.
+  const known = (D?.case_cards||[]).filter(cc=>{
+    const a=cc.arkaa||'';
+    return p==='ECA' ? a.includes('הוצאה') : p==='BDR' ? a.includes('רבני') : (!a.includes('רבני') && !a.includes('הוצאה'));
+  });
+  const dl = `<datalist id="nc-list">${known.map(cc=>`<option value="${cc.sub_number}">`).join('')}</datalist>`;
   box.innerHTML = `
     <div class="sync-opt-row">
       <button class="btn-accent sync-opt" onclick="${runFn}">⬇ הורד מ${label} — ${scopeText}</button>
-      <div class="sync-opt-hint">ההתנהגות נקבעת ב<a onclick="openSettings()" style="text-decoration:underline;cursor:pointer">הגדרות ⚙</a>:
-        היקף = <b>${scope==='all'?'כל התיקים':'תיקים מסוימים'}</b>${relNote}.</div>
+      <div class="sync-opt-hint">ההיקף נקבע ב<a onclick="openSettings()" style="text-decoration:underline;cursor:pointer">הגדרות ⚙</a>${relNote?' · כולל תיקים קשורים':''}.</div>
     </div>
-    ${p==='NET'?`<div class="sync-opt-row">
-      <button class="btn-accent sync-opt" onclick="syncOpenNetCase()">🔄 סנכרן את התיק הפתוח בדפדפן</button>
-      <div class="sync-opt-hint">מוריד את המסמכים החדשים של התיק שפתוח כרגע בדפדפן האוטומציה.</div>
-    </div>`:''}
+    ${dl}
     <div class="sync-opt-row" style="border:1px solid var(--line,rgba(255,255,255,.15));border-radius:10px;padding:10px 12px">
-      <div class="sync-opt-hint" style="margin-bottom:6px">🔎 בדיקת עדכונים בתיק ספציפי לפי מספר (גם אם עוד לא במערכת):</div>
+      <div class="sync-opt-hint" style="margin-bottom:6px">🔎 עדכן/הורד תיק בודד — בחר מהרשימה או הקלד מספר חדש${p==='NET'?' + חודש':''}:</div>
       <div style="display:flex;gap:6px;align-items:center">
-        <input id="nc-num" placeholder="מספר תיק" style="flex:1;border:1px solid var(--line,rgba(255,255,255,.2));border-radius:8px;padding:7px 10px;font-size:13px;background:rgba(127,127,127,.08);color:inherit">
+        <input id="nc-num" list="nc-list" placeholder="בחר תיק או הקלד מספר" style="flex:1;border:1px solid var(--line,rgba(255,255,255,.2));border-radius:8px;padding:7px 10px;font-size:13px;background:rgba(127,127,127,.08);color:inherit">
         ${p==='NET'?`<input id="nc-my" type="month" style="width:130px;border:1px solid var(--line,rgba(255,255,255,.2));border-radius:8px;padding:7px 8px;font-size:12px;background:rgba(127,127,127,.08);color:inherit">`:''}
         <button class="btn-accent" style="padding:7px 14px;font-size:12px;white-space:nowrap" onclick="checkCaseByNumber('${p}')">אתר וסנכרן</button>
       </div>
@@ -550,6 +558,27 @@ function checkCaseByNumber(portal){
   }
 }
 function syncOpenNetCase(){ act('sync_current/NET','סנכרון התיק הפתוח בנט'); }
+/* Login failure → clear message + one-click retry */
+function showLoginRetry(kind, err){
+  $('login-retry')?.remove();
+  const map={eca_sync:'eca_sync',eca_list:'eca_list',bdr_batch:'bdr_batch',
+    net_smart_download:'net_list_cases',net_download_all:'net_download_all',
+    net_list_cases:'net_list_cases',open_portal:'open_portal'};
+  const retryKind=map[kind]||kind;
+  const d=document.createElement('div'); d.id='login-retry';
+  d.style.cssText='position:fixed;top:50%;right:50%;transform:translate(50%,-50%);z-index:140;'
+    +'background:var(--surface,#fff);border:1px solid var(--danger,#c62828);border-radius:14px;'
+    +'padding:20px;width:min(420px,92vw);box-shadow:0 16px 60px rgba(0,0,0,.4);direction:rtl';
+  d.innerHTML=`<b style="font-size:15px;color:var(--danger)">⚠️ ההתחברות נכשלה</b>
+    <div class="sub" style="margin:8px 0;line-height:1.6">${(err||'').slice(0,160)}</div>
+    <div class="note" style="margin-bottom:12px">ייתכן שהקוד לא נקרא מהמייל, או שהפורטל דרש רענון. אפשר לנסות שוב:</div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-accent" style="flex:1" onclick="$('login-retry').remove(); act('${retryKind}','ניסיון חוזר')">🔄 נסה שוב</button>
+      <button class="fv-btn" onclick="openSettings();$('login-retry').remove()">בדוק הגדרות מייל</button>
+      <button class="fv-btn" onclick="$('login-retry').remove()">בטל</button>
+    </div>`;
+  document.body.appendChild(d);
+}
 function startNetDownload(){
   toast('מתחבר לנט המשפט ומחפש תיקים…');
   act('net_list_cases','חיפוש תיקים בנט');

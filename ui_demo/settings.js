@@ -1,6 +1,8 @@
 /* ─── settings: gov.il credentials ─── */
 async function openSettings(){
   $('settings').style.display='block'; $('set-bg').classList.add('on');
+  document.body.style.overflow='hidden';   // lock background scroll — scroll the modal, not the page
+  $('settings').scrollTop=0;
   try{
     const s = await (await fetch('/api/govil/status')).json();
     $('gov-status').innerHTML = s.configured
@@ -20,7 +22,36 @@ async function openSettings(){
     if($('g-bdr-scope')) $('g-bdr-scope').value = st.bdr_scope || 'all';
     if($('g-eca-scope')) $('g-eca-scope').value = st.eca_scope || 'selected';
     if($('g-browser-visible')) $('g-browser-visible').checked = st.browser_visible !== false;
+    if(st.otp_method && $('g-otp')) $('g-otp').value = st.otp_method;
   }catch(e){}
+  // email account status
+  try{
+    const em = await (await fetch('/api/email/status')).json();
+    const es=$('email-status');
+    if(es) es.innerHTML = em.configured
+      ? `<span style="color:var(--accent-strong)">✓ מוגדר: ${em.address}</span>`
+      : '<span style="color:var(--warn,#e6a800)">עדיין לא הוגדר — קוד המייל לא ייקרא אוטומטית עד שתגדיר</span>';
+    if(em.address && $('g-email')) $('g-email').value = em.address;
+  }catch(e){}
+  toggleEmailBox();
+}
+function toggleEmailBox(){
+  const box=$('email-box'); if(!box) return;
+  box.style.display = ($('g-otp')?.value==='sms') ? 'none' : 'block';
+}
+async function saveEmail(){
+  const address=($('g-email')?.value||'').trim();
+  const app_password=($('g-email-pw')?.value||'').trim();
+  if(!address){ toast('נא להזין כתובת מייל', true); return; }
+  try{
+    const r = await (await fetch('/api/email/save',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({address, app_password})})).json();
+    if(r.ok){
+      toast('חשבון המייל נשמר ✓');
+      $('g-email-pw').value='';
+      const es=$('email-status'); if(es) es.innerHTML=`<span style="color:var(--accent-strong)">✓ מוגדר: ${address}</span>`;
+    } else toast('שגיאה: '+(r.error||''), true);
+  }catch(e){ toast('שגיאה בשמירה', true); }
 }
 async function saveSyncSettings(){
   const body = {
@@ -111,7 +142,7 @@ function togglePw(){
   const p=$('g-pw'); p.type = p.type==='password' ? 'text' : 'password';
   $('pw-eye').style.opacity = p.type==='text' ? 1 : .55;
 }
-function closeSettings(){ $('settings').style.display='none'; $('set-bg').classList.remove('on'); }
+function closeSettings(){ $('settings').style.display='none'; $('set-bg').classList.remove('on'); document.body.style.overflow=''; }
 async function saveGovil(){
   const id=$('g-id').value.trim(), pw=$('g-pw').value;
   if(!id||!pw){ toast('נא למלא ת.ז. וסיסמה', true); return; }

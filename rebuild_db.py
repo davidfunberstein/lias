@@ -31,6 +31,16 @@ def main() -> int:
 
     print(f"→ בונה מחדש את lias.db מתוך {downloads}")
 
+    # Start from a clean database so stale/duplicate rows never linger.
+    db_file = config.PROJECT_ROOT / "lias.db"
+    for suffix in ("", "-wal", "-shm"):
+        f = Path(str(db_file) + suffix)
+        if f.exists():
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
     # 1) ECA cases: write a manifest so they get imported like any portal
     try:
         from eca_download import _write_case_manifest

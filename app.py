@@ -126,6 +126,61 @@ def _govil_save(payload: dict) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+# ── email OTP account (reads the gov.il one-time code from your inbox) ──────
+def _email_status() -> dict:
+    import json
+    cfg_path = os.path.join(HERE, "email_config.json")
+    address = ""
+    has_pw = False
+    try:
+        if os.path.exists(cfg_path):
+            cfg = json.loads(open(cfg_path, encoding="utf-8").read())
+            address = cfg.get("imap_user", "")
+            if (cfg.get("imap_password") or "").strip():
+                has_pw = True
+        if not has_pw and address:
+            import keyring
+            has_pw = bool(keyring.get_password("gov-il-connect-email", address))
+    except Exception:
+        pass
+    return {"ok": True, "configured": bool(address and has_pw), "address": address}
+
+
+def _email_save(payload: dict) -> dict:
+    """Save the inbox that receives the gov.il OTP. Address → email_config.json,
+    app-password → OS keychain (never stored in the file)."""
+    import json
+    cfg_path = os.path.join(HERE, "email_config.json")
+    address = (payload.get("address") or "").strip()
+    app_pw = (payload.get("app_password") or "").strip()
+    if not address:
+        return {"ok": False, "error": "missing address"}
+    host = "imap.gmail.com"
+    low = address.lower()
+    if "outlook" in low or "hotmail" in low or "live." in low:
+        host = "outlook.office365.com"
+    elif "yahoo" in low:
+        host = "imap.mail.yahoo.com"
+    elif "walla" in low:
+        host = "imap.walla.co.il"
+    try:
+        cfg = {}
+        if os.path.exists(cfg_path):
+            cfg = json.loads(open(cfg_path, encoding="utf-8").read())
+        cfg.update({"backend": "imap", "imap_host": host, "imap_port": 993,
+                    "imap_user": address, "imap_password": "",
+                    "imap_folder": cfg.get("imap_folder", "INBOX"),
+                    "sender_filter": cfg.get("sender_filter", "DoNotReply@digital.gov.il"),
+                    "otp_regex": cfg.get("otp_regex", r"\b(\d{6})\b")})
+        open(cfg_path, "w", encoding="utf-8").write(json.dumps(cfg, ensure_ascii=False, indent=2))
+        if app_pw:
+            import keyring
+            keyring.set_password("gov-il-connect-email", address, app_pw)
+        return {"ok": True, "configured": True, "host": host}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 # ── HTTP handler ────────────────────────────────────────────────────────────
 
 class Handler(BaseHTTPRequestHandler):
@@ -198,6 +253,8 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         elif path == "/api/govil/status":
             self._json(_govil_status())
+        elif path == "/api/email/status":
+            self._json(_email_status())
         elif path == "/api/notes":
             self._json(_read_notes(NOTES_PATH))
         elif path == "/api/settings":
@@ -403,6 +460,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = {}
         if path == "/api/govil/save":
             self._json(_govil_save(payload))
+        elif path == "/api/email/save":
+            self._json(_email_save(payload))
         elif path == "/api/settings":
             code, body, _ct = engine_inproc.request(
                 "POST", "/api/settings", json.dumps(payload).encode())

@@ -83,10 +83,15 @@ def _detect_portal(case_dir: Path) -> str:
 def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tuple[int, int]:
     """Import one folder / ייבוא תיקייה אחת. Returns (docs, runs)."""
     rel = case_dir.relative_to(downloads_root)
-    parts = rel.parts
+    parts = list(rel.parts)
     # EN: hierarchy = client / [case] / [sub_case]; flat folders are their own case.
     # HE: היררכיה = לקוח / [תיק] / [תת-תיק]; תיקייה שטוחה היא תיק בפני עצמו.
     client_name = parts[0]
+    # ECA folders are client/"הוצאה לפועל"/case-number/... — drop the portal
+    # segment so the case number is the REAL number, not the literal
+    # "הוצאה לפועל" (which would collide across clients and merge them).
+    if len(parts) > 1 and parts[1] in ("הוצאה לפועל", "הוצל\"פ"):
+        del parts[1]
     case_number = parts[1] if len(parts) > 1 else parts[0]
     sub_number = parts[-1]
 
