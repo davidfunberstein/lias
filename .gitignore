@@ -13,3 +13,16 @@ email_config.json
 *.DS_Store
 .fuse_hidden*
 browser_profile_bdr/
+browser_profile_eca/
+transcriptions/
+logs/
+*.log
+latest.log
+user_feedback.log
+nohup.out
+.update_backup_*.tar.gz
+lias_share_*.zip
+session_defaults.json
+.uploads/
+scratch/
+*.tmp
