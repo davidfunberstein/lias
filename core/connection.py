@@ -200,6 +200,15 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
     if already(page):
         return True
 
+    if is_eca:
+        # CDN workaround — ECA's CloudFront sometimes serves index.html for
+        # the site's own assets to automation clients (blank Angular shell).
+        try:
+            from eca_download import install_eca_asset_fix
+            install_eca_asset_fix(page)
+        except Exception:
+            pass
+
     _progress(f"פותח פורטל {portal}")
     for attempt in range(2):
         try:
@@ -220,7 +229,8 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
         def _eca_shell_dead() -> bool:
             try:
                 return page.evaluate(
-                    "(document.querySelector('app-root')?.innerHTML||'').length < 50")
+                    "(document.querySelector('app-root')?.innerHTML||'').length < 50"
+                    " && (document.body?.innerText||'').trim().length < 10")
             except Exception:
                 return False
         # Go through the ECA /login page first — it triggers the gov.il SSO
@@ -236,14 +246,36 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
         # ECA redirects to login.gov.il; a system-choice screen
         # (בד"ר נט / הוצאה לפועל) may appear before or after the login.
         _click_eca_system_choice(page)
-        _run_gov_autologin(page, "ECA")
-        # after auth, land on the cases page
-        try:
-            page.goto(ECA_URL, wait_until="domcontentloaded", timeout=25000)
+        # With a live gov.il SSO session, /he/login silently runs the OAuth
+        # dance itself (→ /he/callback?code=… → cases). That takes up to ~2
+        # minutes — navigating away mid-flight ABORTS it, so first just wait.
+        _progress("ממתין לזרימת ההתחברות האוטומטית של הוצל\"פ…")
+        sso_done = False
+        deadline = time.time() + 240
+        while time.time() < deadline:
             time.sleep(4)
-        except Exception:
-            pass
-        if _eca_shell_dead():
+            u = page.url or ""
+            if already(page):
+                sso_done = True
+                break
+            if "login.gov.il" in u:      # no session — real login form appeared
+                break
+            if "/callback" in u:          # OAuth exchange in progress — keep waiting
+                continue
+        if not sso_done and "login.gov.il" in (page.url or ""):
+            _run_gov_autologin(page, "ECA")
+        if not sso_done:
+            # after auth, land on the cases page and give Angular time to render
+            try:
+                page.goto(ECA_URL, wait_until="domcontentloaded", timeout=25000)
+            except Exception:
+                pass
+            for _ in range(10):
+                time.sleep(4)
+                if already(page):
+                    sso_done = True
+                    break
+        if not already(page) and _eca_shell_dead():
             _progress("⛔ אתר ההוצאה לפועל לא נטען — תקלה באתר הממשלתי עצמו. נסה מאוחר יותר.")
             raise RuntimeError("אתר ההוצאה לפועל אינו זמין כרגע (תקלה בצד הממשלתי) — נסה מאוחר יותר")
         for _ in range(3):

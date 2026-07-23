@@ -45,7 +45,7 @@ ECA_URL = "https://publicsso.eca.gov.il/he/home/OpenCase"
 #     watchdog declares it dead and relaunches the persistent profile.
 # HE: זמן המתנה לפקודה — אם הדפדפן לא עונה בחלון הזה ה-Watchdog מכריז
 #     שהוא מת ומרים מחדש את הפרופיל המתמשך.
-BROWSER_CMD_TIMEOUT_SEC = 120          # long: downloads can be slow / הורדות איטיות
+BROWSER_CMD_TIMEOUT_SEC = 900          # ECA SSO alone can take ~2-4 min; downloads are slow / התחברות הוצל"פ + הורדות איטיות
 BROWSER_PING_INTERVAL_SEC = 20         # watchdog ping / פינג של ה-Watchdog
 BROWSER_PING_TIMEOUT_SEC = 15
 BROWSER_RELAUNCH_BACKOFF_SEC = [2, 5, 15, 30, 60]  # escalating / מדורג

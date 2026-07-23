@@ -142,9 +142,58 @@ def _click_system_choice(page) -> None:
             continue
 
 
+def install_eca_asset_fix(page) -> None:
+    """The ECA CDN (CloudFront) sometimes serves its index.html instead of the
+    site's own JS/CSS/JSON assets to automation clients — the Angular shell
+    never boots and the page stays blank ("אנא המתן" forever / 0 cases).
+    Workaround (verified live): intercept publicsso asset requests, re-fetch
+    them via the API client with plain-Chrome headers (+ a cache-busting query
+    on a poisoned response) and fulfill with the correct MIME type."""
+    import random
+    import re as _re
+    ctx = page.context
+    if getattr(ctx, "_eca_asset_fix", False):
+        return
+    ctx._eca_asset_fix = True
+    _EXT = _re.compile(r"\.(js|css|json|svg|png|jpg|woff2?|ico)(\?|$)")
+    _MIME = {"js": "application/javascript", "css": "text/css",
+             "json": "application/json", "svg": "image/svg+xml",
+             "png": "image/png", "jpg": "image/jpeg", "woff": "font/woff",
+             "woff2": "font/woff2", "ico": "image/x-icon"}
+    _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+           "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+
+    def _route(route):
+        url = route.request.url
+        try:
+            hdrs = {"User-Agent": _UA, "Accept": "*/*"}
+            r = ctx.request.get(url, headers=hdrs, timeout=20000)
+            body = r.body()
+            if body[:9].lower() == b"<!doctype":  # poisoned CDN cache — bust it
+                r = ctx.request.get(
+                    url + ("&" if "?" in url else "?") + f"cb={random.randint(1, 10**9)}",
+                    headers=hdrs, timeout=20000)
+                body = r.body()
+            if body[:9].lower() == b"<!doctype":
+                route.fallback()
+                return
+            ext = _EXT.search(url).group(1)
+            route.fulfill(status=r.status, body=body,
+                          content_type=_MIME.get(ext, "application/octet-stream"))
+        except Exception:
+            try:
+                route.fallback()
+            except Exception:
+                pass
+
+    ctx.route(lambda u: "publicsso.eca.gov.il" in u and _EXT.search(u), _route)
+    _log("✓ הותקן עוקף CDN לנכסי אתר ההוצאה לפועל")
+
+
 def _login_eca(page) -> bool:
     """Navigate to ECA and authenticate via the unified login chain
     (core.connection.ensure_logged_in — same mechanism as NET/BDR)."""
+    install_eca_asset_fix(page)
     try:
         from core.connection import ensure_logged_in
         if ensure_logged_in(page, "ECA"):
@@ -199,8 +248,11 @@ def _portal_down(page) -> bool:
     (broken deploy/CDN) — the Angular shell never boots and every page is
     blank. Detect that so we say 'the portal is down' instead of '0 cases'."""
     try:
+        # Down = Angular never booted AND nothing rendered at all (the legit
+        # loading state shows "אנא המתן…" in the body, so body text > 10).
         return page.evaluate(
-            "(document.querySelector('app-root')?.innerHTML||'').length < 50")
+            "(document.querySelector('app-root')?.innerHTML||'').length < 50"
+            " && (document.body?.innerText||'').trim().length < 10")
     except Exception:
         return False
 
@@ -749,6 +801,7 @@ def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None
     callback so the job bar / tasks balloon reflect per-case progress.
     Returns a short summary string.
     """
+    install_eca_asset_fix(page)
     downloads_dir = Path(root_output_dir) / "downloads"
     downloads_dir.mkdir(parents=True, exist_ok=True)
 

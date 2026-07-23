@@ -252,6 +252,11 @@ class BrowserManager:
             user_data_dir=str(profile),
             accept_downloads=True,
             headless=False,
+            # EN: service workers bypass Playwright route interception — the
+            #     ECA CDN workaround (and any future one) needs them off.
+            # HE: service workers עוקפים את יירוט הבקשות — חוסמים אותם כדי
+            #     שעוקף ה-CDN של הוצל"פ יעבוד.
+            service_workers="block",
         )
         if self._headless:
             args.append("--headless=new")    # new headless — real fingerprint
