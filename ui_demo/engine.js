@@ -510,26 +510,11 @@ function pickPlatform(p){
   const scopeText = scope==='all' ? 'כל התיקים (לפי ההגדרות)' : 'הצג רשימה ובחר תיקים (לפי ההגדרות)';
   const relNote = p==='NET' && s.net_related ? ' · כולל תיקים קשורים' : '';
   const runFn = {NET:'runNet()', BDR:'runBdr()', ECA:'ecaConnectAndList()'}[p];
-  // Known cases of this portal — so "check a case" lets you PICK one
-  // (people don't remember numbers by heart) as well as type a new one.
-  const known = (D?.case_cards||[]).filter(cc=>{
-    const a=cc.arkaa||'';
-    return p==='ECA' ? a.includes('הוצאה') : p==='BDR' ? a.includes('רבני') : (!a.includes('רבני') && !a.includes('הוצאה'));
-  });
-  const dl = `<datalist id="nc-list">${known.map(cc=>`<option value="${cc.sub_number}">`).join('')}</datalist>`;
   box.innerHTML = `
     <div class="sync-opt-row">
       <button class="btn-accent sync-opt" onclick="${runFn}">⬇ הורד מ${label} — ${scopeText}</button>
-      <div class="sync-opt-hint">ההיקף נקבע ב<a onclick="openSettings()" style="text-decoration:underline;cursor:pointer">הגדרות ⚙</a>${relNote?' · כולל תיקים קשורים':''}.</div>
-    </div>
-    ${dl}
-    <div class="sync-opt-row" style="border:1px solid var(--line,rgba(255,255,255,.15));border-radius:10px;padding:10px 12px">
-      <div class="sync-opt-hint" style="margin-bottom:6px">🔎 עדכן/הורד תיק בודד — בחר מהרשימה או הקלד מספר חדש${p==='NET'?' + חודש':''}:</div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <input id="nc-num" list="nc-list" placeholder="בחר תיק או הקלד מספר" style="flex:1;border:1px solid var(--line,rgba(255,255,255,.2));border-radius:8px;padding:7px 10px;font-size:13px;background:rgba(127,127,127,.08);color:inherit">
-        ${p==='NET'?`<input id="nc-my" type="month" style="width:130px;border:1px solid var(--line,rgba(255,255,255,.2));border-radius:8px;padding:7px 8px;font-size:12px;background:rgba(127,127,127,.08);color:inherit">`:''}
-        <button class="btn-accent" style="padding:7px 14px;font-size:12px;white-space:nowrap" onclick="checkCaseByNumber('${p}')">אתר וסנכרן</button>
-      </div>
+      <div class="sync-opt-hint">ההיקף נקבע ב<a onclick="openSettings()" style="text-decoration:underline;cursor:pointer">הגדרות ⚙</a>${relNote?' · כולל תיקים קשורים':''}.
+        ${scope==='selected'?'לאחר ההתחברות תוצג רשימת התיקים מהאתר לבחירה.':''}</div>
     </div>`;
 }
 function runNet(){

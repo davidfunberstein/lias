@@ -143,7 +143,17 @@ class BrowserManager:
                 return
             # Browser died while visible — fall through to relaunch
         self._headless = False
+        old_watchdog = self._watchdog
         self.shutdown()
+        # CRITICAL: wait for the OLD watchdog to actually exit before clearing
+        # _stop. Otherwise it keeps running next to the new one — two watchdogs
+        # relaunching Chrome on the SAME profile → SingletonLock crash-loop
+        # that floods the terminal.
+        try:
+            if old_watchdog and old_watchdog.is_alive():
+                old_watchdog.join(timeout=10)
+        except Exception:
+            pass
         self._stop.clear()
         self._alive.clear()
         self._relaunch_count = 0
@@ -214,6 +224,27 @@ class BrowserManager:
             ה-headless הישן; החדש נראה כמו Chrome אמיתי."""
         profile = self._profile_dir or config.BROWSER_PROFILE_DIR
         profile.mkdir(exist_ok=True)
+        # Remove a STALE SingletonLock (owner process dead) — otherwise every
+        # relaunch after a crash fails with "profile is already in use" and
+        # the relaunch loop floods the log. The lock is a symlink to
+        # "hostname-pid"; if that pid is gone, the lock is garbage.
+        try:
+            import os as _os
+            lock = profile / "SingletonLock"
+            if lock.is_symlink() or lock.exists():
+                owner_alive = False
+                try:
+                    target = _os.readlink(str(lock))
+                    pid = int(target.rsplit("-", 1)[-1])
+                    _os.kill(pid, 0)             # raises if pid is dead
+                    owner_alive = True
+                except (OSError, ValueError):
+                    owner_alive = False
+                if not owner_alive:
+                    lock.unlink(missing_ok=True)
+                    self._log("[browser] removed stale SingletonLock / הוסר נעילת פרופיל ישנה")
+        except Exception:
+            pass
         args = ["--disable-blink-features=AutomationControlled"]
         kwargs: dict = dict(
             user_data_dir=str(profile),
@@ -233,7 +264,9 @@ class BrowserManager:
                 channel="chrome", args=args, **kwargs)
             self._log("[browser] using real Google Chrome / משתמש ב-Chrome אמיתי")
         except Exception as exc:
-            self._log(f"[browser] Chrome channel unavailable ({exc}) — bundled Chromium")
+            # keep the log readable — Playwright errors carry a huge call log
+            brief = str(exc).split("Call log:")[0].strip()[:200]
+            self._log(f"[browser] Chrome channel unavailable ({brief}) — bundled Chromium")
             ctx = p.chromium.launch_persistent_context(args=args, **kwargs)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         return ctx, page
@@ -279,7 +312,9 @@ class BrowserManager:
                 if self._stop.is_set():
                     return
             except Exception:
-                self._log("[browser] crashed / קרס:\n" + traceback.format_exc(limit=3))
+                _tb = traceback.format_exc(limit=3)
+                _tb = _tb.split("Call log:")[0].strip()   # drop the huge Playwright arg dump
+                self._log("[browser] crashed / קרס:\n" + _tb[:600])
             # escalating backoff before relaunch / המתנה מדורגת לפני הרמה מחדש
             self._alive.clear()
             delay = config.BROWSER_RELAUNCH_BACKOFF_SEC[
