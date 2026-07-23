@@ -154,14 +154,21 @@ def _login_eca(page) -> bool:
 
     # Standalone fallback (no LIAS engine available)
     page.goto(OPEN_CASES_URL, wait_until="domcontentloaded", timeout=30000)
-    time.sleep(2)
+    time.sleep(4)
+    if _portal_down(page):
+        raise RuntimeError("אתר ההוצאה לפועל אינו זמין כרגע — תקלה באתר הממשלתי "
+                           "(קבצי האתר עצמם לא נטענים). נסה שוב מאוחר יותר.")
 
     url = page.url or ""
 
-    # Already authenticated
-    if "publicsso.eca.gov.il" in url and "login.gov.il" not in url:
-        _log("✓ כבר מחובר")
-        return True
+    # Already authenticated — require REAL case cards, not just the URL
+    try:
+        if "publicsso.eca.gov.il" in url and "login.gov.il" not in url and \
+           page.locator("#carousel-cases, mat-card[id^='card-case']").count() > 0:
+            _log("✓ כבר מחובר")
+            return True
+    except Exception:
+        pass
 
     _click_system_choice(page)
     url = page.url or ""
@@ -187,9 +194,25 @@ def _login_eca(page) -> bool:
 # Case list
 # ---------------------------------------------------------------------------
 
+def _portal_down(page) -> bool:
+    """The ECA site sometimes serves its index.html for its own JS assets
+    (broken deploy/CDN) — the Angular shell never boots and every page is
+    blank. Detect that so we say 'the portal is down' instead of '0 cases'."""
+    try:
+        return page.evaluate(
+            "(document.querySelector('app-root')?.innerHTML||'').length < 50")
+    except Exception:
+        return False
+
+
 def _extract_cases(page) -> list[dict]:
     """Extract all open cases from the carousel."""
     _log("מחלץ רשימת תיקים…")
+    time.sleep(4)
+    if _portal_down(page):
+        _log("⛔ אתר ההוצאה לפועל אינו נטען כרגע (תקלה באתר הממשלתי — "
+             "הקבצים של האתר עצמו לא מוגשים). נסה שוב מאוחר יותר.")
+        raise RuntimeError("אתר ההוצאה לפועל אינו זמין כרגע (תקלה בצד הממשלתי) — נסה מאוחר יותר")
     # Angular can take a while; wait for cards, retrying and re-navigating once.
     cards = []
     for attempt in range(3):

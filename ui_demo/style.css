@@ -393,3 +393,16 @@ header .nav button{font-size:15px;padding:10px 16px}
 .fresh.green{background:#E3F6E8;color:#1d7a34}
 .fresh.orange{background:#FFF0DB;color:#c46a00}
 .fresh.gray{background:#EEF1F5;color:#78828E}
+
+/* tooltip: open BELOW and right-aligned so it never clips inside modals */
+.qtip:hover::after{bottom:auto;top:135%;right:0;transform:none;max-width:230px}
+/* global font bump — bigger and clearer everywhere */
+html,body{font-size:15px}
+.card h2{font-size:16.5px}
+.card .sub{font-size:13px}
+td{font-size:13.5px}
+th{font-size:12px}
+.dl-item{font-size:13.5px}
+.hello .small{font-size:15px}
+/* clearer language button */
+#lang-btn{background:var(--accent-soft);border-color:var(--accent) !important}

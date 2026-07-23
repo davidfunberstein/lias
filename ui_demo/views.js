@@ -20,13 +20,13 @@ function renderLawyer(){
       אין נתונים להצגה — ${D.empty_reason||'בצע סנכרון ראשון בלשונית "סנכרון"'}</div>`:''}</div>
   <div class="grid">
     <div class="card c4 clicky" onclick="openDrawer('clients')">
-      <div class="kpi-top"><h3>לקוחות</h3><div class="kpi-arrow">↗</div></div>
+      <div class="kpi-top"><h3>לקוחות <span class="qtip" data-tip="כל הצדדים שהמערכת זיהתה כלקוחות שלך. לחיצה פותחת את הרשימה.">?</span></h3><div class="kpi-arrow">↗</div></div>
       <div class="kpi-num">${k?nf.format(k.clients):'…'}</div>
       <div class="kpi-sub">לחץ לרשימת הלקוחות</div>
       <div class="kpi-viz" id="viz-clients"></div>
     </div>
     <div class="card c4 clicky" onclick="openDrawer('cases')">
-      <div class="kpi-top"><h3>תיקים פעילים</h3><div class="kpi-arrow">↗</div></div>
+      <div class="kpi-top"><h3>תיקים פעילים <span class="qtip" data-tip="כל התיקים שהורדו מהפורטלים, מכל הערכאות.">?</span></h3><div class="kpi-arrow">↗</div></div>
       <div class="kpi-num">${k?nf.format(k.sub_cases):'…'}</div>
       <div class="kpi-sub">${k?`${D.arkaa.length} ערכאות · NET + BDR`:''}</div>
       <div class="kpi-viz" id="viz-cases"></div>

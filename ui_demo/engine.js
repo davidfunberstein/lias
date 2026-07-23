@@ -512,7 +512,8 @@ let _currentScope = 'all';
    The three portals are independent — NET/BDR/ECA never share a flow. */
 let _syncPlatform = null;
 function syncCard(el){
-  el.innerHTML = `<h2>סנכרון — הורדת תיקים</h2>
+  el.innerHTML = `<h2>סנכרון — הורדת תיקים
+      <span class="qtip" data-tip="בוחרים פורטל, לוחצים הורדה — והמערכת מתחברת ומורידה לבד. ההיקף (הכל / נבחרים) נקבע בהגדרות ⚙.">?</span></h2>
     <div class="meta">בחר תחילה מאיזה פורטל להוריד, ואז מה להוריד.
       ☁ אם Drive מוגדר, הקבצים עולים אוטומטית במקביל.</div>
     <div id="dl-stats-panel" style="display:none"></div>

@@ -217,6 +217,12 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
         return True
 
     if is_eca:
+        def _eca_shell_dead() -> bool:
+            try:
+                return page.evaluate(
+                    "(document.querySelector('app-root')?.innerHTML||'').length < 50")
+            except Exception:
+                return False
         # Go through the ECA /login page first — it triggers the gov.il SSO
         # redirect properly. Navigating straight to OpenCase before auth just
         # renders an empty Angular shell (the "0 cases" symptom).
@@ -234,9 +240,12 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
         # after auth, land on the cases page
         try:
             page.goto(ECA_URL, wait_until="domcontentloaded", timeout=25000)
-            time.sleep(2)
+            time.sleep(4)
         except Exception:
             pass
+        if _eca_shell_dead():
+            _progress("⛔ אתר ההוצאה לפועל לא נטען — תקלה באתר הממשלתי עצמו. נסה מאוחר יותר.")
+            raise RuntimeError("אתר ההוצאה לפועל אינו זמין כרגע (תקלה בצד הממשלתי) — נסה מאוחר יותר")
         for _ in range(3):
             time.sleep(2)
             _click_eca_system_choice(page)
