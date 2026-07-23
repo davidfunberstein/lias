@@ -92,6 +92,7 @@ class BrowserManager:
         self._stop = threading.Event()
         self._last_pong = 0.0
         self._relaunch_count = 0
+        self._generation = 0             # bumped on show(); zombie loops exit
         self._busy = False               # a command is executing right now / פקודה רצה כרגע
         self._last_url = ""              # cached — readable without the queue / נקרא בלי התור
         self._thread = threading.Thread(target=self._browser_loop, name="lias-browser", daemon=True)
@@ -143,6 +144,7 @@ class BrowserManager:
                 return
             # Browser died while visible — fall through to relaunch
         self._headless = False
+        self._generation += 1            # invalidate every existing loop NOW
         old_watchdog = self._watchdog
         self.shutdown()
         # CRITICAL: wait for the OLD watchdog to actually exit before clearing
@@ -282,6 +284,7 @@ class BrowserManager:
         import asyncio
         from playwright.sync_api import sync_playwright
 
+        my_gen = self._generation
         while not self._stop.is_set():
             # Playwright's sync API creates its own event loop per-thread.
             # After a crash the old loop may still be registered — replace it
@@ -315,6 +318,10 @@ class BrowserManager:
                 _tb = traceback.format_exc(limit=3)
                 _tb = _tb.split("Call log:")[0].strip()   # drop the huge Playwright arg dump
                 self._log("[browser] crashed / קרס:\n" + _tb[:600])
+            # a newer generation took over (show() relaunched) → this loop is
+            # a zombie; exit instead of fighting over the profile lock.
+            if self._generation != my_gen:
+                return
             # escalating backoff before relaunch / המתנה מדורגת לפני הרמה מחדש
             self._alive.clear()
             delay = config.BROWSER_RELAUNCH_BACKOFF_SEC[
@@ -332,6 +339,8 @@ class BrowserManager:
             if self._relaunch_count >= 3:
                 delay = max(delay, 60)
             self._log(f"[browser] relaunch in {delay}s / הרמה מחדש בעוד {delay} שניות")
+            if self._generation != my_gen:
+                return
             if self._stop.wait(delay):
                 return
 

@@ -17,6 +17,7 @@ LIAS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = LIAS_DIR.parent                      # gov-il-connect-v2
 BROWSER_PROFILE_DIR = PROJECT_ROOT / "browser_profile"  # shared with terminal mode
 BROWSER_PROFILE_BDR_DIR = PROJECT_ROOT / "browser_profile_bdr"  # separate BDR browser
+BROWSER_PROFILE_ECA_DIR = PROJECT_ROOT / "browser_profile_eca"  # separate ECA browser (full parallelism)
 DB_PATH = PROJECT_ROOT / "lias.db"
 UI_DIR = LIAS_DIR / "ui"
 

@@ -380,3 +380,16 @@ header .nav button{font-size:15px;padding:10px 16px}
   transform:translateX(50%);background:#16243D;color:#fff;font-size:12px;font-weight:400;
   padding:8px 12px;border-radius:8px;white-space:pre-line;width:max-content;max-width:260px;
   z-index:300;box-shadow:0 6px 20px rgba(0,0,0,.3);direction:rtl;text-align:right;line-height:1.5}
+
+/* log window: bigger readable font, clearly separated colorful tabs */
+#logwin-body{font-size:13.5px !important;line-height:1.8 !important}
+#logwin .fv-title{font-size:16px}
+.log-tab-btn{font-size:13.5px !important;padding:7px 16px !important;margin:0 2px;
+  border:1.5px solid #3a4a5c !important;background:rgba(255,255,255,.06) !important}
+.log-tab-btn:hover{background:rgba(47,125,246,.35) !important}
+
+/* freshness chip on case cards */
+.fresh{display:inline-block;font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;margin-inline-start:6px}
+.fresh.green{background:#E3F6E8;color:#1d7a34}
+.fresh.orange{background:#FFF0DB;color:#c46a00}
+.fresh.gray{background:#EEF1F5;color:#78828E}

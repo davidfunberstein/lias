@@ -56,6 +56,9 @@
       background:var(--surface,#fff);border:1px solid var(--line,#e5e5e5);border-radius:12px;
       box-shadow:0 16px 50px rgba(0,0,0,.25);z-index:200;max-height:60vh;overflow-y:auto;direction:rtl"></div>
   </div>
+  <button class="iconbtn" onclick="setLang(curLang()==='he'?'en':'he')"
+    title="החלף שפה / Switch language"
+    style="width:auto;height:36px;border-radius:999px;border:1px solid var(--line);padding:0 12px;font-weight:800;font-size:13px;color:var(--accent-strong)">HE/EN</button>
   <button class="iconbtn" title="המרכזייה שלי — מסמכים מתויקים" onclick="openPinboard()" style="width:36px;height:36px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-soft)">📌</button>
   <button class="iconbtn" title="הגדרות" onclick="openSettings()" style="width:36px;height:36px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-soft)">⚙</button>
   <button class="iconbtn" title="סגירה בטוחה — עוצר את המנוע וסוגר את כל החלונות" onclick="safeShutdown()" style="width:36px;height:36px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-soft)">⏻</button>

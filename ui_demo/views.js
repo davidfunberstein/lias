@@ -206,13 +206,23 @@ function renderClient(){
 }
 
 function fillClient(){
+  const freshChip = c=>{
+    const closed = caseStatusMap()[c.sub_case_id]==='closed';
+    if(closed) return '<span class="fresh gray">סגור</span>';
+    if(!c.last) return '';
+    const days = Math.floor((Date.now()-new Date(c.last))/864e5);
+    const dstr = c.last.split('-').reverse().join('/');
+    if(days<=7)  return `<span class="fresh green" title="עודכן לאחרונה: ${dstr}">✓ לפני ${days} ימים</span>`;
+    if(days>30) return `<span class="fresh orange" title="עודכן לאחרונה: ${dstr}">⚠ ${dstr} · לפני ${days} ימים</span>`;
+    return `<span class="fresh gray" title="עודכן לאחרונה">${dstr}</span>`;
+  };
   const card = c=>{
     const dec=(c.groups['החלטה']||0)+(c.groups['פסק דין']||0);
     const who = (c.parties&&c.parties.length>=2)? c.parties.join(' נ׳ ') : '';
     const where = [c.arkaa, c.location].filter(Boolean).join(' · ');
     const fav = isFav(c.sub_case_id);
     return `<div class="card ${_caseView==='rows'?'c12 crow':'c4'} clicky ccard" onclick="go('case',${c.sub_case_id})">
-      <div class="head"><b>${c.sub_number}</b>
+      <div class="head"><b>${c.sub_number}</b>${freshChip(c)}
         <span class="favstar ${fav?'on':''}" onclick="event.stopPropagation();toggleFav(${c.sub_case_id})" title="הוסף/הסר ממועדפים">${fav?'★':'☆'}</span>
         ${arkaaTag(c.arkaa,c.portal)}</div>
       ${who?`<div class="whoWhere">⚖ <b>${who}</b></div>`:''}

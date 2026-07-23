@@ -237,7 +237,8 @@ def open_case_view(payload: dict, ctx: JobContext) -> str:
     HE: פתיחת התיק ויזואלית בדפדפן האוטומציה לצפייה, בלי להוריד."""
     portal = (payload.get("portal") or "").upper()
     case_number = payload.get("case_number", "")
-    target = ctx.bdr_browser or ctx.browser if portal == "BDR" else ctx.browser
+    target = (ctx.bdr_browser or ctx.browser) if portal == "BDR" \
+             else (ctx.eca_browser or ctx.browser) if portal == "ECA" else ctx.browser
     if target is None:
         raise RuntimeError("no browser attached")
     urls = {
@@ -269,7 +270,8 @@ def eca_list(payload: dict, ctx: JobContext) -> str:
     """EN: connect to ECA and broadcast the list of open cases (no download)
         so the UI can offer a checkbox picker before syncing.
     HE: התחברות להוצל"פ ושידור רשימת התיקים ל-UI לבחירה — בלי להוריד."""
-    if ctx.browser is None:
+    eca = ctx.eca_browser or ctx.browser
+    if eca is None:
         raise RuntimeError("no browser attached / אין דפדפן מחובר")
     ctx.progress(0.1, "מתחבר להוצאה לפועל…")
 
@@ -285,7 +287,12 @@ def eca_list(payload: dict, ctx: JobContext) -> str:
             _t.sleep(3)
         return _extract_cases(page)
 
-    cases = _run_portal(ctx, "eca_list", _run, timeout=600)
+    _saved = ctx.browser
+    ctx.browser = eca
+    try:
+        cases = _run_portal(ctx, "eca_list", _run, timeout=600)
+    finally:
+        ctx.browser = _saved
     jobs.broadcast({"type": "eca_cases", "cases": cases})
     return f"נמצאו {len(cases)} תיקי הוצל\"פ"
 
@@ -294,9 +301,13 @@ def eca_list(payload: dict, ctx: JobContext) -> str:
 def eca_sync(payload: dict, ctx: JobContext) -> str:
     """EN: download all ECA (הוצאה לפועל) cases — motions + decisions per
         process — into downloads/{client}/הוצאה לפועל/{case}/{process}/.
-    HE: הורדת כל תיקי ההוצאה לפועל, בקשות והחלטות לפי הליך, לתיקיית הלקוח."""
-    if ctx.browser is None:
+        Runs on the DEDICATED ECA browser → parallel to NET and BDR.
+    HE: הורדת כל תיקי ההוצאה לפועל על דפדפן ייעודי — במקביל לנט ולבד"ר."""
+    eca = ctx.eca_browser or ctx.browser
+    if eca is None:
         raise RuntimeError("no browser attached / אין דפדפן מחובר")
+    _saved = ctx.browser
+    ctx.browser = eca
     ctx.progress(0.05, "מתחבר להוצאה לפועל…")
     _cancel_flags[ctx.job_id] = False
 
@@ -312,6 +323,7 @@ def eca_sync(payload: dict, ctx: JobContext) -> str:
     try:
         result = _run_portal(ctx, "eca_sync", _run, timeout=3600)
     finally:
+        ctx.browser = _saved
         _cancel_flags.pop(ctx.job_id, None)
     ctx.progress(0.9, "מייבא לדשבורד…")
     n = _reimport_folder(config.COURT_DOCS_DIR / "downloads")

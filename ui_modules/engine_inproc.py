@@ -55,7 +55,7 @@ def start() -> dict:
 
         db.init_db()
 
-        browser = bdr_browser = None
+        browser = bdr_browser = eca_browser = None
         try:
             from LIAS.browser_manager import BrowserManager
             import playwright  # noqa: F401
@@ -74,11 +74,31 @@ def start() -> dict:
                 log=lambda m: print(f"[BDR] {m}"),
             )
             bdr_browser.start()
-            print("[engine] browser threads up (NET+BDR)")
+            # Dedicated ECA browser → ECA runs in parallel with NET and BDR.
+            # Seed its profile from the main one (cold copy) so the existing
+            # gov.il session carries over instead of forcing a fresh OTP.
+            try:
+                import shutil as _sh
+                if not config.BROWSER_PROFILE_ECA_DIR.exists() and \
+                   config.BROWSER_PROFILE_DIR.exists():
+                    _sh.copytree(config.BROWSER_PROFILE_DIR,
+                                 config.BROWSER_PROFILE_ECA_DIR,
+                                 ignore=_sh.ignore_patterns("Singleton*"))
+                    print("[engine] seeded ECA profile from main profile")
+            except Exception as _pe:
+                print(f"[engine] ECA profile seed skipped: {_pe}")
+            eca_browser = BrowserManager(
+                headless=_headless, restore=_restore,
+                profile_dir=config.BROWSER_PROFILE_ECA_DIR,
+                log=lambda m: print(f"[ECA] {m}"),
+            )
+            eca_browser.start()
+            print("[engine] browser threads up (NET+BDR+ECA)")
         except ImportError:
             print("[engine] playwright missing — browser jobs disabled")
 
-        pool = jobs.WorkerPool(browser=browser, bdr_browser=bdr_browser)
+        pool = jobs.WorkerPool(browser=browser, bdr_browser=bdr_browser,
+                               eca_browser=eca_browser)
         pool.start()
         jobs._pool = pool
 
@@ -88,7 +108,8 @@ def start() -> dict:
         client = TestClient(fastapi_app, base_url="http://engine.internal")
 
         _state.update(started=True, starting=False, client=client,
-                      browser=browser, bdr=bdr_browser, pool=pool, err="")
+                      browser=browser, bdr=bdr_browser, eca=eca_browser,
+                      pool=pool, err="")
         print("[engine] in-process engine up — port 8400 is GONE")
         return {"ok": True, "starting": True}
     except Exception as exc:  # pragma: no cover
@@ -106,7 +127,7 @@ def stop() -> bool:
         _state["pool"] and _state["pool"].stop()
     except Exception:
         pass
-    for key in ("browser", "bdr"):
+    for key in ("browser", "bdr", "eca"):
         try:
             _state[key] and _state[key].shutdown()
         except Exception:
