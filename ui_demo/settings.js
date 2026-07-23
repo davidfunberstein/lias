@@ -35,6 +35,8 @@ async function openSettings(){
     if(em.address && $('g-email')) $('g-email').value = em.address;
   }catch(e){}
   toggleEmailBox();
+  if($('g-lang')) $('g-lang').value = (typeof curLang==='function'?curLang():'he');
+  if($('g-feedback')) $('g-feedback').checked = localStorage.getItem('lias_feedback')!=='0';
 }
 function _syncNetRelated(){
   // "Related cases" only makes sense when downloading SELECTED cases, not all.

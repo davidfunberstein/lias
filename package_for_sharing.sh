@@ -40,6 +40,19 @@ else
 fi
 
 rm -f "$OUT"
+# MANIFEST: list every file + sha256 so future support knows exactly what was
+# shipped and in use (compare against a later state to see what changed).
+MANIFEST="PACKAGE_MANIFEST.txt"
+{
+  echo "LIAS package manifest — $(date '+%Y-%m-%d %H:%M')"
+  echo "git: $(git rev-parse --short HEAD 2>/dev/null || echo 'no-git')"
+  echo "python: $(python3 --version 2>&1)"
+  echo "─────────────────────────────────────────────"
+  find . -type f \( -name "*.py" -o -name "*.js" -o -name "*.html" -o -name "*.css" \
+       -o -name "*.sh" -o -name "*.yml" -o -name "Dockerfile" -o -name "requirements.txt" \) \
+    ! -path "./.git/*" ! -path "*/__pycache__/*" ! -path "./court_documents/*" \
+    -exec shasum -a 256 {} \; | sort -k2
+} > "$MANIFEST"
 zip -r -q "$OUT" . "${EXCLUDES[@]}"
 
 SIZE=$(du -h "$OUT" | cut -f1)

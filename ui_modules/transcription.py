@@ -261,8 +261,13 @@ transcribed_at: {datetime.now().isoformat(timespec='seconds')}
     except OSError:
         pass
 
+    # Keep the recording NEXT TO the transcript (playback + future re-runs).
     try:
-        os.unlink(audio_path)
+        import shutil
+        kept = os.path.join(transcriptions_dir,
+                            stem + os.path.splitext(audio_path)[1].lower())
+        if os.path.abspath(audio_path) != os.path.abspath(kept):
+            shutil.move(audio_path, kept)
     except OSError:
         pass
     chunk_dir = audio_path + ".chunks"

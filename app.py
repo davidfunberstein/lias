@@ -328,9 +328,21 @@ class Handler(BaseHTTPRequestHandler):
             import mimetypes
             from urllib.parse import quote
             job_id = re.match(r"^/api/transcription_audio/(.+)$", path).group(1)
-            upload_dir = os.path.join(TRANSCRIPTIONS_DIR, ".uploads")
+            from urllib.parse import unquote as _unq
+            job_id = _unq(job_id)
             found = None
-            if os.path.isdir(upload_dir):
+            # 1) a kept recording next to the transcript (by filename/stem)
+            cand = os.path.join(TRANSCRIPTIONS_DIR, os.path.basename(job_id))
+            if os.path.isfile(cand):
+                found = cand
+            else:
+                for ext in (".mp3", ".m4a", ".wav", ".ogg", ".webm"):
+                    c2 = os.path.join(TRANSCRIPTIONS_DIR, os.path.basename(job_id) + ext)
+                    if os.path.isfile(c2):
+                        found = c2; break
+            # 2) an active job's upload
+            upload_dir = os.path.join(TRANSCRIPTIONS_DIR, ".uploads")
+            if not found and os.path.isdir(upload_dir):
                 for f in os.listdir(upload_dir):
                     if f.startswith(job_id):
                         found = os.path.join(upload_dir, f)
@@ -343,7 +355,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", mime)
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Content-Disposition",
-                    f"attachment; filename*=UTF-8''{quote(os.path.basename(found), safe='')}")
+                    f"inline; filename*=UTF-8''{quote(os.path.basename(found), safe='')}")
                 self.end_headers()
                 self.wfile.write(body)
             else:
@@ -462,6 +474,61 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_govil_save(payload))
         elif path == "/api/email/save":
             self._json(_email_save(payload))
+        elif path == "/api/transcription_delete":
+            # payload: {name: file to delete (md or audio)} — moves to .trash
+            try:
+                name = os.path.basename(payload.get("name", ""))
+                src = os.path.join(TRANSCRIPTIONS_DIR, name)
+                if not name or not os.path.exists(src):
+                    self._json({"ok": False, "error": "not found"}, 404)
+                    return
+                trash = os.path.join(TRANSCRIPTIONS_DIR, ".trash")
+                os.makedirs(trash, exist_ok=True)
+                import shutil as _sh
+                _sh.move(src, os.path.join(trash, name))
+                self._json({"ok": True})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
+        elif path == "/api/transcription_resume":
+            # payload: {stem} — re-run transcription on the KEPT audio
+            try:
+                stem = os.path.basename(payload.get("stem", ""))
+                audio = None
+                for ext in (".mp3", ".m4a", ".wav", ".ogg", ".webm"):
+                    c = os.path.join(TRANSCRIPTIONS_DIR, stem + ext)
+                    if os.path.isfile(c):
+                        audio = c; break
+                if not audio:
+                    self._json({"ok": False, "error": "ההקלטה לא נשמרה — העלה אותה מחדש"}, 404)
+                    return
+                import shutil as _sh
+                job_id = uuid.uuid4().hex[:12]
+                upload_dir = os.path.join(TRANSCRIPTIONS_DIR, ".uploads")
+                os.makedirs(upload_dir, exist_ok=True)
+                work = os.path.join(upload_dir, job_id + os.path.splitext(audio)[1])
+                _sh.copy(audio, work)
+                _transcription_jobs[job_id] = {"state": "queued", "progress": 0,
+                                               "message": "ממשיך תמלול…",
+                                               "original_name": os.path.basename(audio)}
+                threading.Thread(target=_transcribe_worker,
+                                 args=(job_id, work, "he", os.path.basename(audio),
+                                       TRANSCRIPTIONS_DIR),
+                                 daemon=True).start()
+                self._json({"ok": True, "id": job_id})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
+        elif path == "/api/feedback":
+            # Debug-phase user notes → dedicated log for the developer
+            try:
+                line = (f"[{__import__('datetime').datetime.now().isoformat(timespec='seconds')}] "
+                        f"[{payload.get('page','?')}] {payload.get('note','').strip()}\n")
+                with open(os.path.join(HERE, "user_feedback.log"), "a", encoding="utf-8") as fh:
+                    fh.write(line)
+                self._json({"ok": True})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
         elif path == "/api/settings":
             code, body, _ct = engine_inproc.request(
                 "POST", "/api/settings", json.dumps(payload).encode())

@@ -332,6 +332,44 @@ function maximizeLogWin(){
   else{ w.style.width='min(560px,94vw)'; w.style.height='380px'; w.style.left='16px'; w.style.bottom='16px'; }
 }
 
+/* ─── debug-phase feedback widget (💬) — writes to user_feedback.log ─── */
+function feedbackEnabled(){ return localStorage.getItem('lias_feedback')!=='0'; }
+function ensureFeedback(){
+  $('fb-note-btn')?.remove();
+  if(!feedbackEnabled()) return;
+  const b=document.createElement('button');
+  b.id='fb-note-btn'; b.textContent='💬';
+  b.title='הערה למפתח — נרשמת ליומן ייעודי לשיפור המערכת';
+  b.style.cssText='position:fixed;bottom:16px;right:16px;z-index:117;width:40px;height:40px;'
+    +'border-radius:50%;background:var(--warn,#F5A623);color:#fff;font-size:18px;'
+    +'box-shadow:0 6px 20px rgba(0,0,0,.25);border:none;cursor:pointer';
+  b.onclick=()=>{
+    $('fb-box')?.remove();
+    const d=document.createElement('div'); d.id='fb-box';
+    d.style.cssText='position:fixed;bottom:66px;right:16px;z-index:130;width:min(340px,90vw);'
+      +'background:var(--surface,#fff);border:1px solid var(--line);border-radius:12px;'
+      +'padding:14px;box-shadow:0 12px 40px rgba(0,0,0,.3);direction:rtl';
+    d.innerHTML=`<b style="font-size:13px">💬 הערה על המסך הנוכחי</b>
+      <textarea id="fb-text" rows="3" placeholder="מה לא עובד / מה כדאי לשפר…"
+        style="width:100%;margin-top:8px;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px;resize:vertical"></textarea>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn-accent" style="flex:1;padding:8px" onclick="sendFeedback()">שלח</button>
+        <button class="fv-btn" onclick="$('fb-box').remove()">בטל</button></div>`;
+    document.body.appendChild(d); $('fb-text').focus();
+  };
+  document.body.appendChild(b);
+}
+async function sendFeedback(){
+  const note=($('fb-text')?.value||'').trim();
+  if(!note){ toast('ההערה ריקה', true); return; }
+  try{
+    await fetch('/api/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({page:(location.hash||'#home'), note})});
+    toast('ההערה נרשמה — תודה! 💬'); $('fb-box').remove();
+  }catch(e){ toast('שגיאה בשליחה', true); }
+}
+document.addEventListener('DOMContentLoaded', ensureFeedback);
+
 /* ─── real automation browser — show/hide ─── */
 let _realBrowserVisible=false;
 function runBdrByClient(){

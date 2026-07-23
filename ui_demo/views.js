@@ -144,6 +144,18 @@ function fillBreakdown(){
     || '<div class="empty">אין נתונים</div>';
 }
 
+/* ─── favorites + view helpers ─── */
+function _favs(){ try{return JSON.parse(localStorage.getItem('lias_favs'))||[]}catch(e){return []} }
+function isFav(id){ return _favs().includes(id); }
+function toggleFav(id){
+  const f=_favs(); const i=f.indexOf(id);
+  if(i>=0) f.splice(i,1); else f.push(id);
+  localStorage.setItem('lias_favs', JSON.stringify(f));
+  render();
+}
+let _caseView = localStorage.getItem('lias_case_view')||'tiles';
+function setCaseView(v){ _caseView=v; localStorage.setItem('lias_case_view',v); render(); }
+
 /* ─── client view ─── */
 function renderClient(){
   const u=curUser();
@@ -158,18 +170,23 @@ function renderClient(){
   <div class="grid">
     <div class="card c3 clicky" onclick="openDrawer('cases')" title="לרשימת התיקים">
       <div class="kpi-top"><h3>תיקים</h3><div class="kpi-arrow">↗</div></div>
-      <div class="kpi-num">${k?nf.format(k.cases):'…'}</div>
+      <div class="kpi-num">${(k&&k.cases!=null&&!isNaN(k.cases))?nf.format(k.cases):'—'}</div>
       <div class="kpi-sub">לחץ לרשימת התיקים</div></div>
     <div class="card c3 clicky" onclick="openDocList('כל המסמכים — '+(C?.display_name||''), {client_id:C?.client_id})" title="לרשימת כל המסמכים">
       <div class="kpi-top"><h3>מסמכים</h3><div class="kpi-arrow">↗</div></div>
-      <div class="kpi-num">${k?nf.format(k.docs):'…'}</div><div class="kpi-sub">לחץ לרשימה</div></div>
+      <div class="kpi-num">${(k&&k.docs!=null&&!isNaN(k.docs))?nf.format(k.docs):'—'}</div><div class="kpi-sub">לחץ לרשימה</div></div>
     <div class="card c3 clicky" onclick="openDocList('בקשות — '+(C?.display_name||''), {client_id:C?.client_id, group:'בקשה'})" title="לרשימת הבקשות">
       <div class="kpi-top"><h3>בקשות</h3><div class="kpi-arrow">↗</div></div>
-      <div class="kpi-num">${k?nf.format(k.requests):'…'}</div><div class="kpi-sub">לחץ לרשימה</div></div>
+      <div class="kpi-num">${(k&&k.requests!=null&&!isNaN(k.requests))?nf.format(k.requests):'—'}</div><div class="kpi-sub">לחץ לרשימה</div></div>
     <div class="card c3 clicky" onclick="openDocList('החלטות ופס״ד — '+(C?.display_name||''), {client_id:C?.client_id, group:'החלטה'})" title="לרשימת ההחלטות">
       <div class="kpi-top"><h3>החלטות ופס״ד</h3><div class="kpi-arrow">↗</div></div>
-      <div class="kpi-num">${k?nf.format(k.decisions):'…'}</div><div class="kpi-sub">לחץ לרשימה</div></div>
-    <div class="card c12"><h2>התיקים</h2><div class="sub">לחץ על תיק לפירוט מלא</div>
+      <div class="kpi-num">${(k&&k.decisions!=null&&!isNaN(k.decisions))?nf.format(k.decisions):'—'}</div><div class="kpi-sub">לחץ לרשימה</div></div>
+    <div class="card c12"><div class="kpi-top"><div><h2>התיקים</h2><div class="sub">לחץ על תיק לפירוט מלא · ★ מסמן מועדף שמוצג תמיד למעלה</div></div>
+      <div style="display:flex;gap:6px">
+        <button class="fv-btn" id="cv-tiles" onclick="setCaseView('tiles')" title="תצוגת משבצות">▦</button>
+        <button class="fv-btn" id="cv-rows" onclick="setCaseView('rows')" title="תצוגת שורות">☰</button>
+      </div></div>
+      <div id="fav-cases"></div>
       <div class="grid" style="margin-top:14px" id="case-cards"></div></div>
     <div class="card c12"><div class="kpi-top"><div><h2>מפת עומס — בקשות והחלטות לפי יום</h2>
       <div class="sub">כל נקודה = יום בתיק; גודל = כמות; ירוק = בקשות, כהה = החלטות. לחץ על נקודה לרשימת המסמכים</div></div></div>
@@ -191,8 +208,15 @@ function renderClient(){
 function fillClient(){
   const card = c=>{
     const dec=(c.groups['החלטה']||0)+(c.groups['פסק דין']||0);
-    return `<div class="card c4 clicky ccard" onclick="go('case',${c.sub_case_id})">
-      <div class="head"><b>${c.sub_number}</b>${arkaaTag(c.arkaa,c.portal)}</div>
+    const who = (c.parties&&c.parties.length>=2)? c.parties.join(' נ׳ ') : '';
+    const where = [c.arkaa, c.location].filter(Boolean).join(' · ');
+    const fav = isFav(c.sub_case_id);
+    return `<div class="card ${_caseView==='rows'?'c12 crow':'c4'} clicky ccard" onclick="go('case',${c.sub_case_id})">
+      <div class="head"><b>${c.sub_number}</b>
+        <span class="favstar ${fav?'on':''}" onclick="event.stopPropagation();toggleFav(${c.sub_case_id})" title="הוסף/הסר ממועדפים">${fav?'★':'☆'}</span>
+        ${arkaaTag(c.arkaa,c.portal)}</div>
+      ${who?`<div class="whoWhere">⚖ <b>${who}</b></div>`:''}
+      <div class="whoWhere" style="opacity:.75">${where}</div>
       <div class="range">${c.first?c.first.split('-').reverse().join('/'):''} — ${c.last?c.last.split('-').reverse().join('/'):''}</div>
       <div class="nums">
         <div><div class="n">${nf.format(c.docs)}</div><div class="t">מסמכים</div></div>
@@ -200,6 +224,14 @@ function fillClient(){
         <div><div class="n">${dec}</div><div class="t">החלטות</div></div></div>
       <div class="strip">${strip(c.groups,c.other,c.docs)}</div></div>`;
   };
+  // favorites first — always shown on top
+  const favs = C.case_cards.filter(c=>isFav(c.sub_case_id));
+  const favEl = $('fav-cases');
+  if(favEl) favEl.innerHTML = favs.length
+    ? `<div style="margin:10px 0 -4px;font-weight:800;font-size:13px">★ תיקים במעקב</div>
+       <div class="grid" style="margin-top:8px">${favs.map(card).join('')}</div>
+       <div style="border-bottom:1px solid var(--line);margin:14px 0 4px"></div>`
+    : '';
   const byArkaa = {};
   C.case_cards.forEach(c=>{ (byArkaa[c.arkaa]=byArkaa[c.arkaa]||[]).push(c); });
   const _arkaaOrder = {'בית דין רבני הגדול':1, 'בית דין רבני':2, 'בית דין רבני אזורי':3,
@@ -220,9 +252,14 @@ function fillClient(){
         .sort((a,b)=>b[1].reduce((s,c)=>s+c.docs,0)-a[1].reduce((s,c)=>s+c.docs,0))
         .map(([mn,list])=>{
           const md = list.reduce((s,c)=>s+(c.docs||0),0);
+          const gWho=(list.find(x=>x.parties&&x.parties.length>=2)||{}).parties;
+          const gLoc=(list.find(x=>x.location)||{}).location||'';
           return `<details ${_det('dash:'+ark+':'+mn)} style="margin:8px 0;border:1px solid var(--line);border-radius:10px;padding:6px 12px">
             <summary style="cursor:pointer;font-weight:700;font-size:13.5px;padding:5px 0">
-              📁 תיק ${mn} <span style="font-weight:400;opacity:.6;font-size:12px">· ${list.length} תתי-תיקים · ${nf.format(md)} מסמכים</span>
+              📁 תיק ${mn}
+              ${gWho?`<span style="font-weight:600;font-size:12.5px"> · ${gWho.join(' נ׳ ')}</span>`:''}
+              ${gLoc?`<span style="font-weight:400;opacity:.7;font-size:12px"> · 📍 ${gLoc}</span>`:''}
+              <span style="font-weight:400;opacity:.6;font-size:12px">· ${list.length} תתי-תיקים · ${nf.format(md)} מסמכים</span>
             </summary>
             <div class="grid" style="margin-top:8px">${list.sort((a,b)=>(b.docs||0)-(a.docs||0)).map(card).join('')}</div>
           </details>`;
@@ -388,7 +425,8 @@ function renderCase(){
       ${K.location?` &nbsp;·&nbsp; 📍 <b>${K.location}</b>`:''}</div>`:''}
     <div class="sub" style="margin-top:6px">${K?`לקוח: <b>${(D?.clients||[]).find(c=>c.client_id===K.client_id)?.display_name||'—'}</b>
       · ערכאה: <b>${K.arkaa}</b> · פורטל: <b>${K.portal}</b>
-      · מסמך ראשון: <b>${K.first_date||'—'}</b> · עדכון אחרון בתיק: <b>${K.last_date||'—'}</b>
+      · מסמך ראשון: <b>${K.first_date||'—'}</b> · מסמך אחרון: <b>${K.last_date||'—'}</b>
+      ${K.last_sync?` · 🔄 סונכרן מול הפורטל: <b>${(K.last_sync.at||'').replace('T',' ').slice(0,16)}</b>${K.last_sync.new?` (+${K.last_sync.new} חדשים)`:''}`:' · <span style="opacity:.6">טרם סונכרן ישירות</span>'}
       · סה״כ: <b>${nf.format(K.total)}</b> מסמכים
       (${['בקשה','תגובה','החלטה','פסק דין','פרוטוקול'].map(g=>`${g}: ${K.stats?.[g]??0}`).join(' · ')})`:''}</div></div>
   <div class="grid">
@@ -628,16 +666,37 @@ async function loadTranscriptions(){
       ? '<span class="pill pend" style="font-size:10px">⏸ נעצר באמצע</span>'
       : '<span class="pill ok" style="font-size:10px">✓ הושלם</span>';
     const item = t=>`
-      <div class="tr-item" onclick="viewTranscription('${t.name}')">
-        <div class="ic">${t.status==='partial'?'⏸':'📝'}</div>
-        <div class="info"><b>${(t.stem||t.name)}</b> ${badge(t)}
-          <span>${t.size_kb} KB · ${t.modified?.replace('T',' ')}${t.has_audio?' · 🔊 יש הקלטה':''}</span></div>
+      <div class="tr-item" style="flex-direction:column;align-items:stretch">
+        <div style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="viewTranscription('${t.name}')">
+          <div class="ic">${t.status==='partial'?'⏸':'📝'}</div>
+          <div class="info" style="flex:1"><b>${(t.stem||t.name)}</b> ${badge(t)}
+            <span>${t.size_kb} KB · ${t.modified?.replace('T',' ')}</span></div>
+          <div style="display:flex;gap:6px" onclick="event.stopPropagation()">
+            ${t.status==='partial'&&t.has_audio?`<button class="fv-btn" style="font-size:11px" onclick="resumeTr('${t.stem}')" title="ממשיך את התמלול מההקלטה השמורה">▶ המשך תמלול</button>`:''}
+            ${t.has_audio?`<button class="fv-btn" style="font-size:11px;color:var(--danger)" onclick="delTr('${t.audio_name}','ההקלטה')" title="מחק את קובץ ההקלטה (התמלול נשאר)">🗑 הקלטה</button>`:''}
+            <button class="fv-btn" style="font-size:11px;color:var(--danger)" onclick="delTr('${t.name}','התמלול')" title="מחק את קובץ התמלול">🗑 תמלול</button>
+          </div>
+        </div>
+        ${t.has_audio?`<audio controls preload="none" src="/api/transcription_audio/${encodeURIComponent(t.audio_name)}" style="width:100%;height:32px;margin-top:6px"></audio>`:''}
       </div>`;
     el.innerHTML =
       (done.length? '<div class="sub" style="font-weight:700;margin:4px 0">תמלולים שהושלמו</div>'+done.map(item).join('') : '')
       + (partial.length? '<div class="sub" style="font-weight:700;margin:12px 0 4px">נעצרו באמצע (ניתן לצפות בחלק שתומלל)</div>'+partial.map(item).join('') : '')
       || '<div class="empty">אין תמלולים עדיין — העלה הקלטה</div>';
   }catch(e){ el.innerHTML='<div class="empty">שגיאה בטעינה</div>'; }
+}
+async function delTr(name, what){
+  if(!confirm(`למחוק את ${what} "${name}"? (עובר ל-.trash — לא נמחק לצמיתות)`)) return;
+  const r = await (await fetch('/api/transcription_delete',{method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})})).json();
+  if(r.ok){ toast(what+' נמחק ✓'); loadTranscriptions(); }
+  else toast('שגיאה: '+(r.error||''), true);
+}
+async function resumeTr(stem){
+  const r = await (await fetch('/api/transcription_resume',{method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({stem})})).json();
+  if(r.ok){ toast('ממשיך את התמלול ▶'); if(typeof pollTranscription==='function') pollTranscription(r.id, stem); }
+  else toast('שגיאה: '+(r.error||''), true);
 }
 async function viewTranscription(name){
   try{

@@ -384,6 +384,14 @@ def case_view(sub_case_id: int, params: dict, db_path: str) -> dict:
         return {"error": "no db"}
     try:
         rows = _doc_rows(con, sub_case_id=sub_case_id)
+        _ls_row = None
+        try:
+            _ls_row = con.execute(
+                """SELECT started_at, downloaded_new, failed FROM sync_runs
+                   WHERE sub_case_id=? ORDER BY run_id DESC LIMIT 1""",
+                (sub_case_id,)).fetchone()
+        except Exception:
+            pass
     finally:
         con.close()
     if not rows:
@@ -419,7 +427,10 @@ def case_view(sub_case_id: int, params: dict, db_path: str) -> dict:
     dates = sorted(d for d in (_parse_ddmmyyyy(r["submission_date"]) for r in rows) if d)
     first = rows[0]
     parties, location = _case_parties_and_location(rows, first["portal"])
+    last_sync = ({"at": _ls_row["started_at"], "new": _ls_row["downloaded_new"],
+                  "failed": _ls_row["failed"]} if _ls_row else None)
     return {
+        "last_sync": last_sync,
         "sub_case_id": sub_case_id,
         "sub_number": first["sub_number"],
         "portal": first["portal"],

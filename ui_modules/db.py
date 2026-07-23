@@ -120,6 +120,36 @@ def _doc_rows(con, sub_case_id: int | None = None, client_id: int | None = None)
     return [dict(r) for r in con.execute(sql, args)]
 
 
+_HEB_NAME = re.compile(r"[\u05d0-\u05ea]{2,}\s+[\u05d0-\u05ea]{2,}")
+
+
+def parties_location_from_path(local_path: str) -> tuple:
+    """Parties + city out of a doc path: the client/couple folder names the
+    people; the sub-case folder's trailing segment is often the city."""
+    if not local_path:
+        return [], ""
+    parts = list(__import__("pathlib").Path(local_path).parts)
+    body = parts[1:-1] if len(parts) > 2 else []
+    parties: list = []
+    for seg in body:
+        if " - " in seg or " — " in seg:
+            cand = [x.strip() for x in re.split(r"\s+-\s+|\s+—\s+", seg)]
+            ppl = [c for c in cand if _HEB_NAME.search(c)]
+            if len(ppl) >= 2:
+                parties = ppl; break
+        m = re.split(r"\s+נ['\u05f3\u2019]\s+", seg)
+        if len(m) > 1:
+            # strip a leading case-number prefix ("15083-09-24 — ")
+            parties = [re.sub(r"^[\d\-]+\s*[—-]\s*", "", x).strip()
+                       for x in m if x.strip()]; break
+    location = ""
+    if body:
+        tail = body[-1].rsplit(" - ", 1)[-1].strip() if " - " in body[-1] else ""
+        if tail and not re.search(r"\d", tail) and len(tail) <= 20:
+            location = tail
+    return parties, location
+
+
 def _case_cards(rows: list[dict]) -> list[dict]:
     """Aggregate docs into one card per sub-case."""
     by: dict[int, dict] = {}
@@ -129,8 +159,10 @@ def _case_cards(rows: list[dict]) -> list[dict]:
             "portal": r["portal"], "client_id": r["client_id"],
             "arkaa": _arkaa(r["portal"], r["sub_number"]),
             "docs": 0, "errors": 0, "groups": {g: 0 for g in GROUPS}, "other": 0,
-            "first": None, "last": None,
+            "first": None, "last": None, "parties": [], "location": "",
         })
+        if not c["parties"] and r.get("local_path"):
+            c["parties"], c["location"] = parties_location_from_path(r["local_path"])
         c["docs"] += 1
         if (r.get("download_status") or "").upper() in ("ERROR", "FAILED") \
                 or "Failed" in (r.get("download_status") or ""):

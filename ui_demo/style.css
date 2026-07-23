@@ -343,3 +343,40 @@ body.fv-docked-mode{padding-left:min(47vw,740px)}
 .sr-head{font-size:11px;font-weight:800;color:var(--ink-soft,#888);padding:8px 12px 3px}
 .sr-item{padding:8px 12px;font-size:13px;cursor:pointer;border-radius:8px}
 .sr-item:hover{background:var(--accent-soft,rgba(47,125,246,.1))}
+
+/* ─── UX round: bigger chrome, stars, rows view, tooltips, log tabs ─── */
+/* bigger top bar + settings text */
+header .nav button{font-size:15px;padding:10px 16px}
+.search input{font-size:14.5px;padding:10px 12px}
+#settings label{font-size:14px}
+#settings input,#settings select{font-size:14px;padding:10px}
+/* bigger close buttons everywhere */
+.fv .fv-btn{font-size:15px;padding:8px 12px}
+.drawer .x{font-size:26px;width:40px;height:40px;display:grid;place-items:center}
+#settings button[onclick*="closeSettings"]{font-size:15px;padding:12px;font-weight:700;
+  border:1px solid var(--line);border-radius:10px}
+/* case card: parties + place line */
+.ccard .whoWhere{font-size:12.5px;margin:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.favstar{cursor:pointer;font-size:17px;color:#c9a227;opacity:.45;margin:0 4px}
+.favstar.on{opacity:1}
+/* rows view: full-width horizontal card */
+.ccard.crow{display:flex;align-items:center;gap:14px;padding:10px 16px}
+.ccard.crow .head{flex:0 0 220px;margin:0}
+.ccard.crow .whoWhere{flex:1;margin:0}
+.ccard.crow .range{flex:0 0 150px}
+.ccard.crow .nums{flex:0 0 200px;display:flex;gap:10px;margin:0}
+.ccard.crow .strip{flex:0 0 120px}
+/* pretty log tabs */
+.log-tab-btn{border-radius:20px !important;padding:6px 14px !important;font-size:12.5px !important;
+  transition:all .15s}
+.log-tab-btn.active,.log-tab-btn[style*="rgba(255, 255, 255, 0.15)"]{background:#2F7DF6 !important;
+  color:#fff !important;border-color:#2F7DF6 !important}
+/* ? tooltip + ! tip markers */
+.qtip{display:inline-grid;place-items:center;width:17px;height:17px;border-radius:50%;
+  background:var(--accent-soft,#e3edff);color:var(--accent-strong,#1d64d8);
+  font-size:11px;font-weight:800;cursor:help;position:relative;margin:0 4px;vertical-align:middle}
+.qtip.warn{background:#fff3e0;color:#e65100}
+.qtip:hover::after{content:attr(data-tip);position:absolute;bottom:130%;right:50%;
+  transform:translateX(50%);background:#16243D;color:#fff;font-size:12px;font-weight:400;
+  padding:8px 12px;border-radius:8px;white-space:pre-line;width:max-content;max-width:260px;
+  z-index:300;box-shadow:0 6px 20px rgba(0,0,0,.3);direction:rtl;text-align:right;line-height:1.5}

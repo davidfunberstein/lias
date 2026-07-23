@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <link rel="stylesheet" href="style.css">
+<script src="i18n.js"></script>
 </head>
 <body>
 
@@ -39,16 +40,16 @@
 <div class="topbar" id="topbar">
   <div class="logo"><div class="logo-badge">⚖</div> LIAS <span style="font-size:10px;color:var(--ink-soft);font-weight:400" title="אם לא רואים את מספר הגרסה — רץ קוד ישן, יש לאתחל">v3.1</span></div>
   <nav class="nav">
-    <button class="active" data-nav="home" onclick="go('home')">דשבורד</button>
-    <button onclick="openDrawer('cases')">תיקים</button>
-    <button data-nav="sync" onclick="go('sync')">סנכרון</button>
-    <button data-nav="transcribe" onclick="go('transcribe')">תמלול</button>
+    <button class="active" data-nav="home" onclick="go('home')" data-i18n="nav_dash">דשבורד</button>
+    <button onclick="openDrawer('cases')" data-i18n="nav_cases">תיקים</button>
+    <button data-nav="sync" onclick="go('sync')" data-i18n="nav_sync">סנכרון</button>
+    <button data-nav="transcribe" onclick="go('transcribe')" data-i18n="nav_transcribe">תמלול</button>
     <button title="בשלב הבא">מסמכים <span class="soon">בקרוב</span></button>
     <button title="בשלב הבא">עוזר AI <span class="soon">בקרוב</span></button>
   </nav>
   <div class="search" style="position:relative">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-    <input id="topsearch" placeholder="חפש לקוח, תיק, צד או ערכאה…" autocomplete="off"
+    <input id="topsearch" data-i18n-ph="search_ph" placeholder="חפש לקוח, תיק, צד או ערכאה…" autocomplete="off"
       oninput="topSearch(this.value)" onfocus="topSearch(this.value)"
       onkeydown="if(event.key==='Escape'){this.value='';$('search-results').style.display='none'}">
     <div id="search-results" style="display:none;position:absolute;top:calc(100% + 6px);right:0;left:0;
@@ -133,6 +134,11 @@
     <option value="lawyer">עו״ד מייצג</option>
     <option value="pleader">טו״ר מייצג</option>
   </select>
+  <label style="margin-top:12px">🌐 שפת ממשק / Interface language</label>
+  <select onchange="setLang(this.value)" style="width:100%" id="g-lang">
+    <option value="he">עברית</option>
+    <option value="en">English</option>
+  </select>
   <div style="margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:10px">
     <b style="font-size:13.5px">הגדרות סנכרון — לכל פורטל בנפרד</b>
     <div class="note" style="margin:4px 0 10px">כל פורטל עצמאי. ההגדרה קובעת מה קורה בלחיצת ההורדה בלשונית "סנכרון".</div>
@@ -160,6 +166,12 @@
 
     <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-weight:400">
       <input type="checkbox" id="g-browser-visible" style="width:auto"> הצג את דפדפן האוטומציה (לראות התחברות והורדה)
+      <span class="qtip" data-tip="כשמסומן — חלון הדפדפן נפתח בזמן סנכרון כדי שתראה את ההתחברות וההורדה בשידור חי. נפתח רק לפורטל שמסונכרן.">?</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:400">
+      <input type="checkbox" id="g-feedback" style="width:auto" checked
+        onchange="localStorage.setItem('lias_feedback', this.checked?'1':'0'); ensureFeedback()"> כפתור הערות למפתח 💬 (שלב הרצה)
+      <span class="qtip warn" data-tip="! בשלב ההרצה: כל הערה שתכתוב נרשמת ל-user_feedback.log — כך אפשר לשפר בדיוק את מה שמפריע.">!</span>
     </label>
 
     <button class="btn-accent" style="width:100%;margin-top:12px" onclick="saveSyncSettings()">💾 שמור הגדרות סנכרון</button>

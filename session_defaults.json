@@ -14,7 +14,7 @@
   "case_scope": "selected",
   "browser_visible": true,
   "net_scope": "selected",
-  "bdr_scope": "all",
+  "bdr_scope": "selected",
   "eca_scope": "selected",
   "net_related": false
 }
