@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="utf-8">
+<style>
+  :root{
+    --blue:#2563EB; --blue2:#1D4ED8; --navy:#16243D; --yellow:#F5B301;
+    --light:#EAF1FE; --ink:#22304A; --soft:#5B6B85;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:"Heebo","Segoe UI",Arial,sans-serif;color:var(--ink)}
+  .page{width:210mm;height:296mm;position:relative;overflow:hidden;page-break-after:always;background:#fff}
+
+  /* ── cover ── */
+  .cover{background:linear-gradient(160deg,#3B82F6 0%,#2563EB 45%,#1E40AF 100%);color:#fff;
+    display:flex;flex-direction:column;align-items:center;text-align:center}
+  .cover .shape1{position:absolute;top:-90mm;right:-60mm;width:220mm;height:220mm;background:rgba(255,255,255,.08);transform:rotate(18deg);border-radius:40mm}
+  .cover .shape2{position:absolute;bottom:-100mm;left:-70mm;width:230mm;height:230mm;background:rgba(13,35,90,.35);transform:rotate(-14deg);border-radius:44mm}
+  .logo-chip{position:absolute;top:12mm;right:12mm;background:#fff;color:var(--blue2);border-radius:7mm;
+    padding:5mm 8mm;font-weight:900;font-size:9mm;box-shadow:0 3mm 8mm rgba(0,0,0,.18)}
+  .cover .star{font-size:22mm;margin-top:52mm;line-height:1}
+  .cover h1{font-size:26mm;font-weight:900;letter-spacing:1mm;line-height:1.05}
+  .cover h2{font-size:11mm;font-weight:800;margin-top:4mm;line-height:1.25}
+  .badge{display:inline-block;background:var(--yellow);color:var(--navy);font-weight:900;
+    padding:2.5mm 8mm;border-radius:2mm;margin-top:16mm;font-size:5.5mm}
+  .cover .desc{background:#fff;color:var(--ink);width:120mm;margin-top:6mm;border-radius:6mm;
+    padding:8mm 10mm;font-size:4.6mm;line-height:1.75;box-shadow:0 4mm 10mm rgba(0,0,0,.22)}
+  .cover .desc b{color:var(--blue2)}
+  .pills{display:flex;gap:5mm;margin-top:9mm}
+  .pill-b{background:var(--navy);color:#fff;border-radius:10mm;padding:3.5mm 9mm;font-weight:800;font-size:4.6mm}
+  .pill-w{background:#fff;color:var(--navy);border-radius:10mm;padding:3.5mm 9mm;font-weight:800;font-size:4.6mm;border:.6mm solid var(--navy)}
+
+  /* ── content pages ── */
+  .head{display:flex;align-items:center;justify-content:space-between;padding:8mm 14mm 4mm}
+  .head .title{color:var(--blue2);font-size:8.5mm;font-weight:900}
+  .head .mini{background:var(--blue);color:#fff;border-radius:4mm;padding:2.5mm 5mm;font-weight:900;font-size:5mm}
+  .rule{height:1.1mm;background:linear-gradient(90deg,var(--blue),transparent);margin:0 14mm 6mm;border-radius:1mm}
+
+  .sec{display:flex;gap:6mm;padding:0 14mm;margin-bottom:7mm;position:relative}
+  .nums{position:absolute;left:5mm;top:2mm;width:9mm;text-align:center}
+  .num{width:9mm;height:9mm;border-radius:50%;border:.8mm solid var(--blue);color:var(--blue);
+    font-weight:900;font-size:4.5mm;display:flex;align-items:center;justify-content:center;background:#fff}
+  .ico{flex:0 0 16mm;width:16mm;height:16mm;background:var(--blue);border-radius:5mm;color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:8.5mm;box-shadow:0 2mm 5mm rgba(37,99,235,.35)}
+  .sec .body{flex:1;padding-left:12mm}
+  .sec h3{color:var(--navy);font-size:7.2mm;font-weight:900;line-height:1.15;margin-bottom:1.5mm}
+  .sec .lead{font-weight:800;font-size:4.4mm;color:var(--ink);margin-bottom:1.5mm;line-height:1.5}
+  .sec p{font-size:3.9mm;color:var(--soft);line-height:1.65}
+  .sec ul{margin:1.5mm 4mm 0 0;padding-right:4mm}
+  .sec li{font-size:3.9mm;color:var(--soft);line-height:1.7}
+  .sec li b{color:var(--ink)}
+  .cta{display:inline-block;background:var(--navy);color:#fff;border-radius:8mm;
+    padding:2mm 7mm;font-weight:800;font-size:3.9mm;margin-top:2.5mm}
+  .code{display:inline-block;background:var(--light);color:var(--blue2);border-radius:2mm;
+    padding:1mm 3.5mm;font-family:Menlo,monospace;font-size:3.7mm;font-weight:700;direction:ltr}
+  .foot{position:absolute;bottom:7mm;left:0;right:0;display:flex;justify-content:space-between;
+    padding:0 14mm;color:var(--soft);font-size:3.8mm;font-weight:700}
+  .foot .fchip{color:var(--blue2)}
+
+  /* two-col tip cards */
+  .cards{display:flex;flex-wrap:wrap;gap:5mm;padding:0 14mm}
+  .card{flex:1 1 44%;background:var(--light);border-radius:5mm;padding:5mm 6mm}
+  .card .t{font-weight:900;color:var(--navy);font-size:4.4mm;margin-bottom:1mm}
+  .card .d{font-size:3.8mm;color:var(--soft);line-height:1.6}
+  .yellow{background:#FDF3D7}
+</style>
+</head>
+<body>
+
+<!-- ════════ COVER ════════ -->
+<div class="page cover">
+  <div class="shape1"></div><div class="shape2"></div>
+  <div class="logo-chip">⚖ LIAS</div>
+  <div class="star">✳</div>
+  <h1>LIAS</h1>
+  <h2>מערכת ניהול תיקים<br>למשרד עורכי דין</h2>
+  <div class="badge">נעים להכיר</div>
+  <div class="desc">
+    <b>LIAS</b> מרכזת את כל תיקי הלקוחות משלושת הפורטלים הממשלתיים —
+    <b>נט המשפט · בית הדין הרבני · הוצאה לפועל</b> —
+    במערכת אחת: הורדה אוטומטית, דשבורד חי, מציג מסמכים, תמלול ושיתוף.
+    הכל רץ במחשב שלך בלבד.
+  </div>
+  <div class="pills">
+    <div class="pill-b">⬅ לכניסה למערכת</div>
+    <div class="pill-w">להסבר על המערכת</div>
+  </div>
+</div>
+
+<!-- ════════ PAGE 2: what's in the system ════════ -->
+<div class="page">
+  <div class="head"><div class="title">?מה יש במערכת</div><div class="mini">✳ LIAS</div></div>
+  <div class="rule"></div>
+
+  <div class="sec">
+    <div class="ico">🖥</div>
+    <div class="body">
+      <h3>הפעלה בפקודה אחת</h3>
+      <div class="lead">‏<span class="code">python3 app.py</span> — והמערכת נפתחת בדפדפן.</div>
+      <p>הכל בתהליך אחד: השרת, מנוע הסנכרון, הדפדפנים האוטומטיים ותור המשימות עולים לבד.
+      במחשב חדש — <span class="code">bash install.sh</span> מתקין את כל הדרוש אוטומטית.</p>
+      <div class="cta">http://localhost:8500 ⬅</div>
+    </div>
+    <div class="nums"><div class="num">1</div></div>
+  </div>
+
+  <div class="sec">
+    <div class="ico">🔑</div>
+    <div class="body">
+      <h3>התחברות אוטומטית ל-gov.il</h3>
+      <div class="lead">ת״ז + סיסמה נשמרים ב-Keychain; קוד האימות נקרא מהמייל לבד.</div>
+      <p>מגדירים פעם אחת בהגדרות ⚙: אישורי gov.il, וחשבון המייל שמקבל את הקוד
+      (עם הוראות מובנות להשגת App Password). מרגע זה — כל התחברות רצה לבד,
+      ואם משהו נכשל קופץ חלון עם כפתור "נסה שוב".</p>
+      <div class="cta">הגדרות ⚙ ⬅</div>
+    </div>
+    <div class="nums"><div class="num">2</div></div>
+  </div>
+
+  <div class="sec">
+    <div class="ico">📥</div>
+    <div class="body">
+      <h3>סנכרון — שלושה פורטלים</h3>
+      <div class="lead">בוחרים פורטל, לוחצים הורדה — והמערכת עושה את השאר.</div>
+      <p>ההיקף נקבע בהגדרות לכל פורטל בנפרד: <b>כל התיקים</b> או <b>תיקים לבחירה</b>
+      (במצב בחירה — אחרי ההתחברות מוצגת רשימת התיקים החיה מהאתר לסימון).
+      בנט בלבד: אפשרות לכלול תיקים קשורים. נט ובד״ר יורדים גם במקביל,
+      וכל הורדה ממשיכה מהנקודה שנעצרה.</p>
+      <div class="cta">לשונית סנכרון ⬅</div>
+    </div>
+    <div class="nums"><div class="num">3</div></div>
+  </div>
+
+  <div class="sec">
+    <div class="ico">📊</div>
+    <div class="body">
+      <h3>דשבורד חי</h3>
+      <div class="lead">כל מה שירד — מסודר לפי לקוח, ערכאה ותיק, מתעדכן תוך כדי הורדה.</div>
+      <p>מספרי מפתח, גרפים לפי חודש וערכאה, מפת עומס של בקשות והחלטות,
+      ומסמכים אחרונים עם עמודת לקוח. המערכת מזהה לבד שתיקים בשמות שונים
+      שייכים לאותו לקוח ומאחדת אותם.</p>
+      <div class="cta">לשונית דשבורד ⬅</div>
+    </div>
+    <div class="nums"><div class="num">4</div></div>
+  </div>
+
+  <div class="foot"><div>לחצו על מספר לעמוד הבא ↙</div><div class="fchip">1/4</div></div>
+</div>
+
+<!-- ════════ PAGE 3: working with cases ════════ -->
+<div class="page">
+  <div class="head"><div class="title">עבודה עם תיקים</div><div class="mini">✳ LIAS</div></div>
+  <div class="rule"></div>
+
+  <div class="sec">
+    <div class="ico">🔎</div>
+    <div class="body">
+      <h3>חיפוש שמוצא הכל</h3>
+      <div class="lead">שורת החיפוש העליונה מאתרת תיק, לקוח, צד או ערכאה — תוך כדי הקלדה.</div>
+      <p>אין צורך לזכור מספרי תיקים: מקלידים "פונברשטיין" או "רבני" או חלק ממספר —
+      ותפריט תוצאות חי מציג לקוחות, תיקים ומסמכים ללחיצה.</p>
+    </div>
+    <div class="nums"><div class="num">5</div></div>
+  </div>
+
+  <div class="sec">
+    <div class="ico">📁</div>
+    <div class="body">
+      <h3>בתוך התיק</h3>
+      <div class="lead">הצדדים והמיקום בכותרת: דוד פונברשטיין נ׳ חנה פונברשטיין · 📍 פתח תקוה</div>
+      <ul>
+        <li><b>צפייה במסמך</b> — ‏PDF/Word נפתחים בתוך המערכת, בלי וורד. "⇤ לצד" מצמיד את המסמך לגלילה מקבילה.</li>
+        <li><b>🌐 פתח בפורטל</b> — צפייה ויזואלית בתיק באתר המקורי.</li>
+        <li><b>➕ הוסף מסמכים</b> — קבצים חיצוניים מסומנים "לא מהתיק".</li>
+        <li><b>📌 תיוק</b> לפי נושא עם הערה · <b>🔗 שיתוף</b> בצפייה דרך Drive.</li>
+        <li><b>מיון וסינון</b> — לפי תאריך, סוג ומגיש; פתוח בירוק, סגור באדום.</li>
+      </ul>
+    </div>
+    <div class="nums"><div class="num">6</div></div>
+  </div>
+
+  <div class="sec">
+    <div class="ico">🎙</div>
+    <div class="body">
+      <h3>תמלול הקלטות בעברית</h3>
+      <div class="lead">גוררים קובץ שמע — ומקבלים תמלול מלא עם חותמות זמן.</div>
+      <p>ההקלטה מפוצלת לקטעים ומתומללת במקביל (מודל עברית ייעודי). נגן מובנה להאזנה,
+      שמירה חלקית תוך כדי, ותיקייה מסודרת שמפרידה תמלולים <b>שהושלמו ✓</b>
+      מכאלה <b>שנעצרו באמצע ⏸</b>.</p>
+      <div class="cta">לשונית תמלול ⬅</div>
+    </div>
+    <div class="nums"><div class="num">7</div></div>
+  </div>
+
+  <div class="sec">
+    <div class="ico">⏱</div>
+    <div class="body">
+      <h3>שליטה מלאה במשימות</h3>
+      <div class="lead">רואים מה רץ, מה ממתין, בכמה מהירות — ועוצרים מה שרוצים.</div>
+      <p>בלון המשימות ⏱ מציג הורדות חיות עם מונים וקצב, כפתור עצירה לכל תיק או לכולם,
+      ונשמר גם אחרי רענון. היומן החי 📜 עם טאבים (כללי/Drive/תמלול), שגיאות באדום,
+      העתקה והורדה בלחיצה.</p>
+    </div>
+    <div class="nums"><div class="num">8</div></div>
+  </div>
+
+  <div class="foot"><div>לחצו על מספר לעמוד הבא ↙</div><div class="fchip">2/4</div></div>
+</div>
+
+<!-- ════════ PAGE 4: data, sharing, safety ════════ -->
+<div class="page">
+  <div class="head"><div class="title">הנתונים שלך, אצלך</div><div class="mini">✳ LIAS</div></div>
+  <div class="rule"></div>
+
+  <div class="sec">
+    <div class="ico">🗄</div>
+    <div class="body">
+      <h3>דאטהבייס פתוח</h3>
+      <div class="lead">כל הנתונים בקובץ SQLite אחד — ‏<span class="code">lias.db</span> — ניתן לחיבור ולניתוח.</div>
+      <p>טבלאות: לקוחות, תיקים, תתי-תיקים, מסמכים, משימות והיסטוריית סנכרון.
+      מתחברים עם <span class="code">sqlite3 lias.db</span> או DB Browser.
+      קיבלת תיקייה ממישהו? <span class="code">python3 rebuild_db.py</span> בונה את ה-DB מהמסמכים.</p>
+    </div>
+    <div class="nums"><div class="num">9</div></div>
+  </div>
+
+  <div class="sec">
+    <div class="ico">☁</div>
+    <div class="body">
+      <h3>גיבוי, שיתוף והפצה</h3>
+      <div class="lead">שלושה סקריפטים — גיבוי מלא, חבילה לשליחה, ובנייה מחדש.</div>
+      <ul>
+        <li><span class="code">bash backup.sh</span> — גיבוי מלא (קוד + נתונים) ל-‏<span class="code">~/LIAS_backups</span>.</li>
+        <li><span class="code">bash package_for_sharing.sh</span> — ‏ZIP נקי לשליחה לעמית (בלי הנתונים שלך). ‏<span class="code">--with-data</span> כולל אותם.</li>
+        <li>‏Google Drive — העלאה אוטומטית ושיתוף תיקים בצפייה בלבד (כשמוגדר).</li>
+      </ul>
+    </div>
+    <div class="nums"><div class="num">10</div></div>
+  </div>
+
+  <div class="sec">
+    <div class="ico">🔒</div>
+    <div class="body">
+      <h3>פרטיות כברירת מחדל</h3>
+      <div class="lead">שום נתון לא עוזב את המחשב — אלא אם בחרת בכך.</div>
+      <p>סיסמאות gov.il והמייל נשמרות ב-Keychain של מערכת ההפעלה בלבד — לא בקבצים,
+      לא נשלחות בחבילות שיתוף, ולא ניתנות לצפייה חוזרת. הדפדפנים האוטומטיים
+      נפתחים לעיניך רק כשמריצים סנכרון (ואפשר להסתירם בהגדרות).</p>
+    </div>
+    <div class="nums"><div class="num">11</div></div>
+  </div>
+
+  <div class="sec">
+    <div class="ico">🤖</div>
+    <div class="body">
+      <h3>OCR והמרה לטקסט</h3>
+      <div class="lead">מסמכים סרוקים הופכים לטקסט ניתן לחיפוש.</div>
+      <p>עם מפתח Groq או xAI (מוזן בהגדרות), כל PDF סרוק מומר אוטומטית לטקסט בעברית
+      אחרי ההורדה — הבסיס לחיפוש בתוכן ולסיכומי AI בהמשך.</p>
+    </div>
+    <div class="nums"><div class="num">12</div></div>
+  </div>
+
+  <div class="foot"><div>לחצו על מספר לעמוד הבא ↙</div><div class="fchip">3/4</div></div>
+</div>
+
+<!-- ════════ PAGE 5: quick answers ════════ -->
+<div class="page">
+  <div class="head"><div class="title">תשובות מהירות</div><div class="mini">✳ LIAS</div></div>
+  <div class="rule"></div>
+
+  <div class="cards">
+    <div class="card"><div class="t">🔌 "נמצאו 0 תיקים"</div>
+      <div class="d">ההתחברות לא הושלמה. ודא ש"הצג דפדפן" פעיל בהגדרות וצפה היכן זה נעצר — המערכת מנסה שוב לבד 3 פעמים.</div></div>
+    <div class="card"><div class="t">📧 הקוד לא נקרא מהמייל</div>
+      <div class="d">בדוק שהוגדרה סיסמת אפליקציה (App Password) תקינה בהגדרות ⚙ — יש שם הוראות שלב-אחר-שלב.</div></div>
+    <div class="card"><div class="t">🚫 "מסמך אינו זמין"</div>
+      <div class="d">המסמך חסום בפורטל — המערכת מדלגת וממשיכה, והוא מסומן ככשל בטבלה לניסיון מאוחר.</div></div>
+    <div class="card"><div class="t">🛡 הפורטל חוסם (WAF)</div>
+      <div class="d">המערכת ממתינה ומנסה שוב אוטומטית עד 5 פעמים. אם נמשך — המתן 30–60 דקות או החלף רשת.</div></div>
+    <div class="card"><div class="t">📄 וורד לא נפתח</div>
+      <div class="d">התקן LibreOffice ‏(brew install --cask libreoffice) — נדרש להמרת Word ל-PDF לתצוגה פנימית.</div></div>
+    <div class="card"><div class="t">🗄 הדשבורד ריק</div>
+      <div class="d">קיבלת מסמכים בלי DB? סגור את האפליקציה והרץ python3 rebuild_db.py — הכל ייבנה מהקבצים.</div></div>
+    <div class="card yellow"><div class="t">💡 טיפ: הגדר פעם אחת</div>
+      <div class="d">קבע בהגדרות את ההיקף לכל פורטל, אישורי gov.il והמייל — ומאז כל סנכרון הוא לחיצה אחת.</div></div>
+    <div class="card yellow"><div class="t">💡 טיפ: גיבוי לפני עדכון</div>
+      <div class="d">‏bash backup.sh לפני כל שינוי גדול — שחזור מלא בדקה.</div></div>
+  </div>
+
+  <div style="position:absolute;bottom:22mm;left:0;right:0;text-align:center">
+    <div style="display:inline-block;background:var(--navy);color:#fff;border-radius:10mm;padding:4mm 14mm;font-weight:900;font-size:5.5mm">
+      ⚖ LIAS — כל התיקים. מקום אחד. אוטומטי.
+    </div>
+  </div>
+  <div class="foot"><div></div><div class="fchip">4/4</div></div>
+</div>
+
+</body>
+</html>
