@@ -26,3 +26,4 @@ session_defaults.json
 .uploads/
 scratch/
 *.tmp
+~$*
