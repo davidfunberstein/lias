@@ -247,7 +247,11 @@ class BrowserManager:
                     self._log("[browser] removed stale SingletonLock / הוסר נעילת פרופיל ישנה")
         except Exception:
             pass
-        args = ["--disable-blink-features=AutomationControlled"]
+        args = ["--disable-blink-features=AutomationControlled",
+                # EN: kill the "Restore pages?" bubble after a hard kill — it
+                #     steals focus and confuses the visible-sync window.
+                "--hide-crash-restore-bubble", "--no-first-run",
+                "--no-default-browser-check"]
         kwargs: dict = dict(
             user_data_dir=str(profile),
             accept_downloads=True,

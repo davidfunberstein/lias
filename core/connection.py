@@ -258,26 +258,49 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
             if already(page):
                 sso_done = True
                 break
-            if "login.gov.il" in u:      # no session — real login form appeared
-                break
+            if "login.gov.il" in u:
+                # a "Verifying your browser" interstitial runs first (~60s) —
+                # only break out once the actual ID field is on screen
+                try:
+                    if page.locator("input#user_id, input[name='Ecom_User_ID'], "
+                                    "input[autocomplete='username'], input[type='tel']").count() > 0:
+                        break
+                except Exception:
+                    pass
+                continue
             if "/callback" in u:          # OAuth exchange in progress — keep waiting
                 continue
         if not sso_done and "login.gov.il" in (page.url or ""):
+            # ID form is up — fill credentials + email OTP
             _run_gov_autologin(page, "ECA")
+            _click_eca_system_choice(page)
         if not sso_done:
             # after auth, land on the cases page and give Angular time to render
             try:
                 page.goto(ECA_URL, wait_until="domcontentloaded", timeout=25000)
             except Exception:
                 pass
-            for _ in range(10):
+            for _ in range(15):
                 time.sleep(4)
                 if already(page):
                     sso_done = True
                     break
-        if not already(page) and _eca_shell_dead():
+                # still stuck on the SSO side after landing? re-nudge OpenCase
+                if "login.gov.il" not in (page.url or "") and \
+                   "publicsso.eca.gov.il" not in (page.url or ""):
+                    try:
+                        page.goto(ECA_URL, wait_until="domcontentloaded", timeout=20000)
+                    except Exception:
+                        pass
+        # "portal down" ONLY applies on the ECA host itself — never on the
+        # gov.il SSO pages (whose body is legitimately empty mid-verification).
+        on_eca = "publicsso.eca.gov.il" in (page.url or "")
+        if not already(page) and on_eca and _eca_shell_dead():
             _progress("⛔ אתר ההוצאה לפועל לא נטען — תקלה באתר הממשלתי עצמו. נסה מאוחר יותר.")
             raise RuntimeError("אתר ההוצאה לפועל אינו זמין כרגע (תקלה בצד הממשלתי) — נסה מאוחר יותר")
+        if not already(page) and "login.gov.il" in (page.url or ""):
+            raise RuntimeError("ההתחברות ל-gov.il לא הושלמה — ודא שהוזנה סיסמת "
+                               "האפליקציה של האימייל בהגדרות ⚙ (לקריאת קוד ה-OTP)")
         for _ in range(3):
             time.sleep(2)
             _click_eca_system_choice(page)

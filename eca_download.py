@@ -166,15 +166,24 @@ def install_eca_asset_fix(page) -> None:
     def _route(route):
         url = route.request.url
         try:
-            hdrs = {"User-Agent": _UA, "Accept": "*/*"}
+            hdrs = {"User-Agent": _UA, "Accept": "*/*",
+                    'sec-ch-ua': '"Chromium";v="126", "Google Chrome";v="126"',
+                    'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"macOS"',
+                    'Sec-Fetch-Dest': 'script', 'Sec-Fetch-Mode': 'no-cors',
+                    'Sec-Fetch-Site': 'same-origin',
+                    'Referer': 'https://publicsso.eca.gov.il/he/login'}
             r = ctx.request.get(url, headers=hdrs, timeout=20000)
             body = r.body()
-            if body[:9].lower() == b"<!doctype":  # poisoned CDN cache — bust it
+            for _ in range(3):
+                if body[:9].lower() != b"<!doctype":
+                    break
+                # poisoned CDN cache — bust it with a fresh query each time
                 r = ctx.request.get(
                     url + ("&" if "?" in url else "?") + f"cb={random.randint(1, 10**9)}",
                     headers=hdrs, timeout=20000)
                 body = r.body()
             if body[:9].lower() == b"<!doctype":
+                _log(f"⚠ נכס עדיין מורעל אחרי 3 ניסיונות: {url.split('/')[-1][:50]}")
                 route.fallback()
                 return
             ext = _EXT.search(url).group(1)
@@ -198,10 +207,17 @@ def _login_eca(page) -> bool:
         from core.connection import ensure_logged_in
         if ensure_logged_in(page, "ECA"):
             return True
+        # ensure_logged_in ran the whole chain and simply isn't authenticated
+        # (no valid session, no OTP) — its own RuntimeError is the accurate
+        # message; don't fall through to the misleading standalone probe.
+        raise RuntimeError("ההתחברות להוצאה לפועל לא הושלמה — ודא שהוזנה סיסמת "
+                           "האפליקציה של האימייל בהגדרות ⚙ (לקריאת קוד ה-OTP).")
+    except RuntimeError:
+        raise
     except Exception as e:
-        _log(f"ensure_logged_in נכשל ({e}) — עובר למסלול עצמאי")
+        _log(f"ensure_logged_in לא זמין ({e}) — עובר למסלול עצמאי")
 
-    # Standalone fallback (no LIAS engine available)
+    # Standalone fallback (only when the LIAS engine/connection isn't importable)
     page.goto(OPEN_CASES_URL, wait_until="domcontentloaded", timeout=30000)
     time.sleep(4)
     if _portal_down(page):

@@ -58,4 +58,53 @@ function i18nMissing(){
   console.log(miss.length? 'Missing EN keys: '+miss.join(', ') : '✓ all keys translated');
   return miss;
 }
+/* ── auto-translation of dynamically-rendered Hebrew ─────────────────────
+   The UI renders most strings from JS literals (Hebrew). Instead of touching
+   every render call, when lang=en we walk the DOM after each render and swap
+   known Hebrew literals via HE2EN. New strings: add them to HE2EN too.     */
+const HE2EN = {
+  'דשבורד':'Dashboard','תיקים':'Cases','סנכרון':'Sync','תמלול':'Transcription',
+  'מסמכים':'Documents','עוזר AI':'AI Assistant','בקרוב':'soon',
+  'לקוחות':'Clients','תיקים פעילים':'Active cases','סה"כ מסמכים':'Total documents',
+  'מסמכים לפי חודש':'Documents by month','פילוח לפי ערכאה':'By court',
+  'לפי תאריך הגשה בפורטל':'By portal filing date',
+  'לחץ על ערכאה לרשימת התיקים':'Click a court to list its cases',
+  'לחץ לרשימת הלקוחות':'Click to list clients',
+  'ברוך שובך, דוד':'Welcome back, David','מוכן לנהל את התיקים שלך?':'Ready to manage your cases?',
+  'סנכרון — הורדת תיקים':'Sync — download cases',
+  'חיבור לפורטלים והורדת תיקים':'Connect to portals & download cases',
+  'בחר תחילה מאיזה פורטל להוריד, ואז מה להוריד.':'First pick a portal, then what to download.',
+  'נט המשפט':'Net-HaMishpat','בית הדין הרבני':'Rabbinical Court','הוצאה לפועל':'Enforcement (ECA)',
+  'הורד מנט המשפט':'Download from Net-HaMishpat','הורד מבית הדין הרבני':'Download from Rabbinical Court',
+  'הורד מהוצאה לפועל — הצג רשימה':'Download from ECA — show list',
+  'התחברות':'Connecting','פותח פורטל ECA':'Opening ECA portal',
+  'תיק פתוח':'Open case','תיק סגור':'Closed case','בקשות':'Motions','החלטות':'Decisions',
+  'הגדרות':'Settings','שמור':'Save','סגור':'Close','בטל':'Cancel','מחק':'Delete',
+  'הורדה':'Download','העתק':'Copy','הגדל':'Maximize','רענן':'Refresh',
+  'משימות':'Tasks','עצור':'Stop','עצור הכל':'Stop all','אין משימות פעילות':'No active tasks',
+  'אין נתונים':'No data','אין נתונים עדיין — בצע סנכרון ראשון':'No data yet — run a first sync',
+  'עודכן':'Updated','לפני':'ago','ימים':'days','היום':'today','אתמול':'yesterday',
+  'הקלטות שמורות':'Saved recordings','התחל תמלול':'Start transcription','המשך':'Resume','השמעה':'Play',
+  'תמלולים':'Transcriptions','הושלם':'Completed','נעצר':'Stopped',
+  'ערכאה':'Court','צדדים':'Parties','עיר':'City','סטטוס':'Status',
+  'תיקים במעקב':'Watched cases','חיפוש':'Search','תוצאות':'Results',
+  'יומן פעולות':'Activity log','משוב':'Feedback','שלח':'Send',
+};
+function autoTranslate(root){
+  if(curLang()!=='en') return;
+  const w=document.createTreeWalker(root||document.body, NodeFilter.SHOW_TEXT);
+  let n;
+  while(n=w.nextNode()){
+    const t=n.textContent.trim();
+    if(t && HE2EN[t]) n.textContent = n.textContent.replace(t, HE2EN[t]);
+  }
+}
+/* re-translate after every render — hook into DOM mutations, throttled */
+let _i18nTick=null;
+new MutationObserver(()=>{
+  if(curLang()!=='en' || _i18nTick) return;
+  _i18nTick=setTimeout(()=>{ _i18nTick=null; autoTranslate(); }, 150);
+}).observe(document.documentElement, {childList:true, subtree:true});
+const _applyLangOrig = applyLang;
+applyLang = function(){ _applyLangOrig(); autoTranslate(); };
 document.addEventListener('DOMContentLoaded', applyLang);

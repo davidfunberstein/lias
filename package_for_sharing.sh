@@ -24,6 +24,7 @@ OUT="/tmp/${NAME}.zip"
 EXCLUDES=(
   -x "*/browser_profile/*" -x "browser_profile/*"
   -x "*/browser_profile_bdr/*" -x "browser_profile_bdr/*"
+  -x "*/browser_profile_eca/*" -x "browser_profile_eca/*"
   -x "*/.git/*" -x "*/__pycache__/*" -x "*.pyc"
   -x "credentials.json" -x "token.json" -x "email_config.json"
   -x "*/logs/*" -x "*.log"
