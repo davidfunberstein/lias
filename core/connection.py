@@ -252,9 +252,14 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
         _progress("ממתין לזרימת ההתחברות האוטומטית של הוצל\"פ…")
         sso_done = False
         deadline = time.time() + 240
+        _last_dbg = ""
         while time.time() < deadline:
             time.sleep(4)
             u = page.url or ""
+            _dbg = u.split("?")[0]
+            if _dbg != _last_dbg:
+                print(f"{_ts()} [Auth][eca-wait] url={u[:90]}")
+                _last_dbg = _dbg
             if already(page):
                 sso_done = True
                 break

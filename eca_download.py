@@ -151,6 +151,8 @@ def install_eca_asset_fix(page) -> None:
     on a poisoned response) and fulfill with the correct MIME type."""
     import random
     import re as _re
+    import ssl as _ssl
+    import urllib.request as _ur
     ctx = page.context
     if getattr(ctx, "_eca_asset_fix", False):
         return
@@ -162,32 +164,35 @@ def install_eca_asset_fix(page) -> None:
              "woff2": "font/woff2", "ico": "image/x-icon"}
     _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+    _sslctx = _ssl.create_default_context()
+
+    def _fetch(url: str) -> tuple[int, bytes]:
+        """Plain urllib fetch — MUST NOT call any Playwright API here. The route
+        handler runs on Playwright's own event loop; re-entering Playwright
+        (ctx.request.get) from inside it deadlocks the BrowserManager thread
+        and the page hangs forever on 'אנא המתן'. urllib is inert to that loop."""
+        req = _ur.Request(url, headers={
+            "User-Agent": _UA, "Accept": "*/*",
+            "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8",
+            "Referer": "https://publicsso.eca.gov.il/he/login"})
+        with _ur.urlopen(req, timeout=20, context=_sslctx) as resp:
+            return resp.status, resp.read()
 
     def _route(route):
         url = route.request.url
         try:
-            hdrs = {"User-Agent": _UA, "Accept": "*/*",
-                    'sec-ch-ua': '"Chromium";v="126", "Google Chrome";v="126"',
-                    'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"macOS"',
-                    'Sec-Fetch-Dest': 'script', 'Sec-Fetch-Mode': 'no-cors',
-                    'Sec-Fetch-Site': 'same-origin',
-                    'Referer': 'https://publicsso.eca.gov.il/he/login'}
-            r = ctx.request.get(url, headers=hdrs, timeout=20000)
-            body = r.body()
+            status, body = _fetch(url)
             for _ in range(3):
                 if body[:9].lower() != b"<!doctype":
                     break
-                # poisoned CDN cache — bust it with a fresh query each time
-                r = ctx.request.get(
-                    url + ("&" if "?" in url else "?") + f"cb={random.randint(1, 10**9)}",
-                    headers=hdrs, timeout=20000)
-                body = r.body()
+                # poisoned CDN edge cache — bust it with a fresh query each time
+                status, body = _fetch(
+                    url + ("&" if "?" in url else "?") + f"cb={random.randint(1, 10**9)}")
             if body[:9].lower() == b"<!doctype":
-                _log(f"⚠ נכס עדיין מורעל אחרי 3 ניסיונות: {url.split('/')[-1][:50]}")
                 route.fallback()
                 return
             ext = _EXT.search(url).group(1)
-            route.fulfill(status=r.status, body=body,
+            route.fulfill(status=status, body=body,
                           content_type=_MIME.get(ext, "application/octet-stream"))
         except Exception:
             try:
