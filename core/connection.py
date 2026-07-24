@@ -210,13 +210,19 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
             pass
 
     _progress(f"פותח פורטל {portal}")
+    # ECA: go STRAIGHT to /he/login — do NOT open /home/OpenCase first. Loading
+    # OpenCase while unauthenticated boots the Angular SPA into a stuck state;
+    # a later goto(/he/login) is then treated as an in-app route change that
+    # never re-triggers the silent gov.il SSO (the page sits on /he/login
+    # forever). Landing on /he/login first makes the redirect fire on attempt 1.
+    first_url = "https://publicsso.eca.gov.il/he/login" if is_eca else url
     for attempt in range(2):
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=25000)
+            page.goto(first_url, wait_until="domcontentloaded", timeout=25000)
             break
         except Exception as e:
             if attempt:
-                raise RuntimeError(f"לא הצלחתי לפתוח {url}: {e}")
+                raise RuntimeError(f"לא הצלחתי לפתוח {first_url}: {e}")
             time.sleep(2)
     time.sleep(1)
 
@@ -233,16 +239,9 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
                     " && (document.body?.innerText||'').trim().length < 10")
             except Exception:
                 return False
-        # Go through the ECA /login page first — it triggers the gov.il SSO
-        # redirect properly. Navigating straight to OpenCase before auth just
-        # renders an empty Angular shell (the "0 cases" symptom).
-        if "login.gov.il" not in (page.url or ""):
-            try:
-                page.goto("https://publicsso.eca.gov.il/he/login",
-                          wait_until="domcontentloaded", timeout=25000)
-                time.sleep(2)
-            except Exception:
-                pass
+        # We already landed on /he/login above (first_url). Do NOT navigate
+        # there again — a second goto interrupts the silent-SSO redirect that
+        # the first navigation kicked off, leaving the page wedged on /he/login.
         # ECA redirects to login.gov.il; a system-choice screen
         # (בד"ר נט / הוצאה לפועל) may appear before or after the login.
         _click_eca_system_choice(page)
@@ -253,6 +252,8 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
         sso_done = False
         deadline = time.time() + 240
         _last_dbg = ""
+        _same_url_since = time.time()
+        _nudges = 0
         while time.time() < deadline:
             time.sleep(4)
             u = page.url or ""
@@ -260,6 +261,7 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
             if _dbg != _last_dbg:
                 print(f"{_ts()} [Auth][eca-wait] url={u[:90]}")
                 _last_dbg = _dbg
+                _same_url_since = time.time()     # progressed — reset the stall timer
             if already(page):
                 sso_done = True
                 break
@@ -274,7 +276,21 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
                     pass
                 continue
             if "/callback" in u:          # OAuth exchange in progress — keep waiting
+                _same_url_since = time.time()
                 continue
+            # Stuck on publicsso /he/login WITHOUT progressing for a long while —
+            # the silent SSO wedged. A plain reload re-triggers it. Give the
+            # natural redirect ~45s first (it normally fires within ~20-30s) so
+            # we don't interrupt it, and reload at most twice.
+            if ("publicsso.eca.gov.il" in u and "/home/OpenCase" not in u
+                    and time.time() - _same_url_since > 45 and _nudges < 2):
+                _nudges += 1
+                _progress(f"מאיץ את ההתחברות (טעינה מחדש {_nudges})…")
+                try:
+                    page.reload(wait_until="domcontentloaded", timeout=25000)
+                except Exception:
+                    pass
+                _same_url_since = time.time()
         if not sso_done and "login.gov.il" in (page.url or ""):
             # ID form is up — fill credentials + email OTP
             _run_gov_autologin(page, "ECA")

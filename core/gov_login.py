@@ -873,7 +873,9 @@ def auto_login_flow(
 
     if email_reader is not None:
         try:
-            otp_code = email_reader.wait_for_otp(baseline=email_baseline)
+            # gov.il OTP email can take a while to arrive — wait up to 120s.
+            otp_code = email_reader.wait_for_otp(timeout_seconds=120,
+                                                 baseline=email_baseline)
         except Exception as exc:
             msg = f"[GovLogin] EmailOTPReader error: {exc}"
             print(msg)

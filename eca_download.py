@@ -165,6 +165,11 @@ def install_eca_asset_fix(page) -> None:
     _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
     _sslctx = _ssl.create_default_context()
+    # Per-URL cache of served bodies. The live Angular app re-requests assets
+    # (lazy chunks, re-navigation); without a cache every hit does a blocking
+    # urllib fetch on Playwright's event-loop thread, which starves the browser
+    # until it crashes and relaunches (blank window). Cache = one fetch each.
+    _cache: dict = {}
 
     def _fetch(url: str) -> tuple[int, bytes]:
         """Plain urllib fetch — MUST NOT call any Playwright API here. The route
@@ -175,19 +180,64 @@ def install_eca_asset_fix(page) -> None:
             "User-Agent": _UA, "Accept": "*/*",
             "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8",
             "Referer": "https://publicsso.eca.gov.il/he/login"})
-        with _ur.urlopen(req, timeout=20, context=_sslctx) as resp:
+        with _ur.urlopen(req, timeout=15, context=_sslctx) as resp:
             return resp.status, resp.read()
+
+    def _prewarm() -> None:
+        """Fetch the index + every asset it references INTO the cache before the
+        first navigation. Runs on the caller's thread (not Playwright's event
+        loop), so afterwards every route hit is an instant cache serve — the
+        page boots fast and the event loop is never blocked (no crash)."""
+        try:
+            base = "https://publicsso.eca.gov.il/he/"
+            status, idx = _fetch(base + "login")
+            for _ in range(3):
+                if idx[:9].lower() != b"<!doctype":
+                    break  # index itself must be HTML; if not, edge is confused
+                if b"<app-root" in idx or b"chunk-" in idx or b"main-" in idx:
+                    break
+                status, idx = _fetch(base + f"login?cb={random.randint(1, 10**9)}")
+            html = idx.decode("utf-8", "ignore")
+            assets = set(_re.findall(r'(?:src|href)="([^"]+\.(?:js|css))"', html))
+            for a in assets:
+                full = a if a.startswith("http") else base + a.lstrip("/")
+                if "publicsso.eca.gov.il" not in full:
+                    continue
+                key = full.split("?")[0]
+                if key in _cache:
+                    continue
+                try:
+                    st, body = _fetch(full)
+                    for _ in range(2):
+                        if body[:9].lower() != b"<!doctype":
+                            break
+                        st, body = _fetch(full + ("&" if "?" in full else "?") +
+                                          f"cb={random.randint(1, 10**9)}")
+                    if body[:9].lower() != b"<!doctype":
+                        _cache[key] = (st, body)
+                except Exception:
+                    continue
+            _log(f"✓ טעינה מוקדמת של {len(_cache)} קבצי אתר הוצל\"פ (מונע קריסה)")
+        except Exception as _e:
+            _log(f"⚠ טעינה מוקדמת נכשלה ({str(_e)[:60]}) — ממשיך בכל זאת")
 
     def _route(route):
         url = route.request.url
+        key = url.split("?")[0]
         try:
-            status, body = _fetch(url)
-            for _ in range(3):
+            cached = _cache.get(key)
+            if cached is not None:
+                status, body = cached
+            else:
+                status, body = _fetch(url)
+                # at most 2 cache-busting retries if the edge served the shell
+                for _ in range(2):
+                    if body[:9].lower() != b"<!doctype":
+                        break
+                    status, body = _fetch(
+                        url + ("&" if "?" in url else "?") + f"cb={random.randint(1, 10**9)}")
                 if body[:9].lower() != b"<!doctype":
-                    break
-                # poisoned CDN edge cache — bust it with a fresh query each time
-                status, body = _fetch(
-                    url + ("&" if "?" in url else "?") + f"cb={random.randint(1, 10**9)}")
+                    _cache[key] = (status, body)   # only cache good bodies
             if body[:9].lower() == b"<!doctype":
                 route.fallback()
                 return
@@ -202,6 +252,7 @@ def install_eca_asset_fix(page) -> None:
 
     ctx.route(lambda u: "publicsso.eca.gov.il" in u and _EXT.search(u), _route)
     _log("✓ הותקן עוקף CDN לנכסי אתר ההוצאה לפועל")
+    _prewarm()
 
 
 def _login_eca(page) -> bool:
