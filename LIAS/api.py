@@ -395,6 +395,17 @@ def act_eca_list():
     return {"job_id": jobs.submit("eca_list", {})}
 
 
+@app.get("/api/eca/cases")
+def get_eca_cases():
+    """Latest ECA case list — the UI polls this when the eca_list job completes
+    so the picker appears even if the live SSE broadcast was missed."""
+    try:
+        from LIAS.collector_bridge import get_last_eca_cases
+        return {"cases": get_last_eca_cases()}
+    except Exception:
+        return {"cases": []}
+
+
 @app.post("/api/actions/eca_sync")
 def act_eca_sync():
     """הורדת כל תיקי ההוצאה לפועל לפי לקוח."""

@@ -293,8 +293,21 @@ def eca_list(payload: dict, ctx: JobContext) -> str:
         cases = _run_portal(ctx, "eca_list", _run, timeout=600)
     finally:
         ctx.browser = _saved
+    # Persist so the UI can fetch even if it missed the live broadcast (the
+    # login+OTP can take minutes, during which an SSE reconnect drops events).
+    global _LAST_ECA_CASES
+    _LAST_ECA_CASES = cases
     jobs.broadcast({"type": "eca_cases", "cases": cases})
     return f"נמצאו {len(cases)} תיקי הוצל\"פ"
+
+
+# last ECA case list — served via /api/eca/cases so the picker survives an
+# SSE reconnect or a sync-view re-render during the long login.
+_LAST_ECA_CASES: list = []
+
+
+def get_last_eca_cases() -> list:
+    return _LAST_ECA_CASES
 
 
 @handler("eca_sync")

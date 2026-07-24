@@ -159,6 +159,13 @@ function connectEngineSSE(){
         logEvent(`${JOB_LABELS[e.kind]||e.kind||'משימה'} — ${e.state}`);
         finishJobBar(e.state==='COMPLETED', e.error||'');
         toast(`${JOB_LABELS[e.kind]||e.kind||'משימה'} — ${e.state==='COMPLETED'?'הושלמה ✓':'שגיאה'}`, e.state==='ERROR');
+        // ECA list done — fetch the cases directly (don't rely on the one-shot
+        // 'eca_cases' broadcast, which can be missed during the long login).
+        if(e.kind==='eca_list' && e.state==='COMPLETED'){
+          fetch('/api/proxy/eca/cases').then(r=>r.json())
+            .then(d=>{ if(d.cases) showEcaCases(d.cases); })
+            .catch(()=>{});
+        }
         // Login failure → offer a one-click retry (refresh + try again)
         if(e.state==='ERROR' && /התחברות|login|gov\.il|נכשל|OTP|אימות/i.test((e.error||'')+(e.message||''))
            && ['eca_sync','eca_list','bdr_batch','net_smart_download','net_download_all','net_list_cases','open_portal'].includes(e.kind)){
@@ -555,6 +562,13 @@ function pickPlatform(p){
       <div class="sync-opt-hint">ההיקף נקבע ב<a onclick="openSettings()" style="text-decoration:underline;cursor:pointer">הגדרות ⚙</a>${relNote?' · כולל תיקים קשורים':''}.
         ${scope==='selected'?'לאחר ההתחברות תוצג רשימת התיקים מהאתר לבחירה.':''}</div>
     </div>`;
+  // Returning to the ECA tab after a completed list — restore the picker from
+  // the server so the user doesn't have to reconnect just to see the cases.
+  if(p==='ECA' && scope==='selected'){
+    fetch('/api/proxy/eca/cases').then(r=>r.json())
+      .then(d=>{ if(d.cases && d.cases.length) showEcaCases(d.cases); })
+      .catch(()=>{});
+  }
 }
 function runNet(){
   const s = window._settings || {};
