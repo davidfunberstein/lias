@@ -306,18 +306,33 @@ def _ensure_logged_in_impl(page: Page, portal: str) -> bool:
             if "/callback" in u:          # OAuth exchange in progress — keep waiting
                 _same_url_since = time.time()
                 continue
-            # Stuck on publicsso /he/login WITHOUT progressing for a long while —
-            # the silent SSO wedged. A plain reload re-triggers it. Give the
-            # natural redirect ~45s first (it normally fires within ~20-30s) so
-            # we don't interrupt it, and reload at most twice.
+            # Stuck on publicsso /he/login WITHOUT progressing for a long while.
+            # Two failure modes:
+            #  1. silent SSO just slow  → a plain reload re-triggers it.
+            #  2. EXPIRED session: /callback bounced back to /he/login and the
+            #     stale cookie stops a clean redirect to gov.il → clear the ECA
+            #     cookies so /he/login has no session and MUST go to gov.il login.
+            # Give the natural redirect ~40s first (normally fires within ~30s).
             if ("publicsso.eca.gov.il" in u and "/home/OpenCase" not in u
-                    and time.time() - _same_url_since > 45 and _nudges < 2):
+                    and time.time() - _same_url_since > 40 and _nudges < 3):
                 _nudges += 1
-                _progress(f"מאיץ את ההתחברות (טעינה מחדש {_nudges})…")
-                try:
-                    page.reload(wait_until="domcontentloaded", timeout=25000)
-                except Exception:
-                    pass
+                if _nudges == 1:
+                    _progress("מאיץ את ההתחברות (טעינה מחדש)…")
+                    try:
+                        page.reload(wait_until="domcontentloaded", timeout=25000)
+                    except Exception:
+                        pass
+                else:
+                    _progress("הפעלה מחדש של ההתחברות (ניקוי סשן ישן)…")
+                    try:
+                        page.context.clear_cookies()
+                    except Exception:
+                        pass
+                    try:
+                        page.goto("https://publicsso.eca.gov.il/he/login",
+                                  wait_until="domcontentloaded", timeout=25000)
+                    except Exception:
+                        pass
                 _same_url_since = time.time()
         if not sso_done and "login.gov.il" in (page.url or ""):
             # ID form is up — fill credentials + email OTP
