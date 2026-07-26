@@ -255,6 +255,18 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_govil_status())
         elif path == "/api/email/status":
             self._json(_email_status())
+        elif path == "/api/totp/status":
+            try:
+                from core.totp import totp_configured
+                self._json({"configured": totp_configured()})
+            except Exception:
+                self._json({"configured": False})
+        elif path == "/api/login_audit":
+            try:
+                from core.login_audit import read_log
+                self._json({"entries": read_log(200)})
+            except Exception:
+                self._json({"entries": []})
         elif path == "/api/notes":
             self._json(_read_notes(NOTES_PATH))
         elif path == "/api/settings":
@@ -477,6 +489,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_govil_save(payload))
         elif path == "/api/email/save":
             self._json(_email_save(payload))
+        elif path == "/api/totp/save":
+            # payload: {secret: base32 Google Authenticator secret} — stored in
+            # the OS keychain (never on disk); empty clears it.
+            try:
+                from core.totp import set_totp_secret, totp_configured
+                ok = set_totp_secret(payload.get("secret", ""))
+                self._json({"ok": ok, "configured": totp_configured()})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
         elif path == "/api/transcription_delete":
             # payload: {name: file to delete (md or audio)} — moves to .trash
             try:

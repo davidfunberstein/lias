@@ -24,6 +24,11 @@ async function openSettings(){
     if($('g-eca-scope')) $('g-eca-scope').value = st.eca_scope || 'selected';
     if($('g-browser-visible')) $('g-browser-visible').checked = st.browser_visible !== false;
     if(st.otp_method && $('g-otp')) $('g-otp').value = st.otp_method;
+    if($('g-otp-source')) $('g-otp-source').value = st.otp_source || 'email';
+    const ts=$('totp-status');
+    if(ts) ts.innerHTML = st.totp_configured
+      ? '<span style="color:var(--accent-strong)">✓ סוד TOTP מוגדר</span>'
+      : '<span class="sub">לא הוגדר — הזן סוד מ-Google Authenticator כדי להשתמש</span>';
   }catch(e){}
   // email account status
   try{
@@ -35,6 +40,7 @@ async function openSettings(){
     if(em.address && $('g-email')) $('g-email').value = em.address;
   }catch(e){}
   toggleEmailBox();
+  if(typeof loadLoginAudit==='function') loadLoginAudit();
   if($('g-lang')) $('g-lang').value = (typeof curLang==='function'?curLang():'he');
   if($('g-feedback')) $('g-feedback').checked = localStorage.getItem('lias_feedback')!=='0';
 }
@@ -89,6 +95,52 @@ async function saveOtpMethod(v){
     toast(r.ok? (v==='sms'?'קוד אימות יגיע לטלפון — הזנה ידנית ✓':'קוד אימות ייקרא מהמייל אוטומטית ✓')
               : 'המנוע כבוי — הפעל אותו כדי לשמור', !r.ok);
   }catch(e){ toast('המנוע כבוי — הפעל אותו כדי לשמור', true); }
+}
+async function saveOtpSource(v){
+  try{
+    const r = await fetch('/api/settings',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({otp_source:v})});
+    toast(r.ok? (v==='totp'?'מקור הקוד: Google Authenticator ✓':'מקור הקוד: מייל ✓')
+              : 'שגיאה בשמירה', !r.ok);
+  }catch(e){ toast('שגיאה בשמירה', true); }
+}
+async function saveTotp(){
+  const secret=($('g-totp-secret')?.value||'').trim();
+  try{
+    const r=await fetch('/api/totp/save',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({secret})});
+    const d=await r.json();
+    const st=$('totp-status');
+    if(d.ok && d.configured){
+      if(st){ st.style.color='var(--accent-strong)'; st.textContent='✓ סוד TOTP נשמר — אפשר לבחור "Google Authenticator" כמקור הקוד'; }
+      if($('g-totp-secret')) $('g-totp-secret').value='';
+      toast('סוד TOTP נשמר ✓');
+    } else if(d.ok && !secret){
+      if(st){ st.style.color='var(--ink-soft)'; st.textContent='הסוד נמחק'; }
+      toast('סוד TOTP נמחק');
+    } else {
+      if(st){ st.style.color='var(--danger)'; st.textContent='✗ סוד לא תקין (base32) — בדוק והדבק שוב'; }
+      toast('סוד TOTP לא תקין', true);
+    }
+  }catch(e){ toast('שגיאה בשמירת TOTP', true); }
+}
+async function loadLoginAudit(){
+  const el=$('login-audit-list'); if(!el) return;
+  el.innerHTML='<div class="sub">טוען…</div>';
+  try{
+    const d=await (await fetch('/api/login_audit')).json();
+    const rows=d.entries||[];
+    if(!rows.length){ el.innerHTML='<div class="sub">אין רשומות עדיין</div>'; return; }
+    const ICON={success:'✓',failed:'✗',blocked:'⛔',start:'→',otp_sent:'✉'};
+    const COLOR={success:'var(--accent-strong)',failed:'var(--danger)',blocked:'#e6a800'};
+    el.innerHTML=rows.map(r=>`<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--line)">
+      <span style="color:${COLOR[r.status]||'inherit'};font-weight:700">${ICON[r.status]||'·'}</span>
+      <span style="width:120px;opacity:.7">${r.ts||''}</span>
+      <b style="width:44px">${r.portal||''}</b>
+      <span style="width:74px;opacity:.8">${r.method||''}</span>
+      <span style="flex:1;opacity:.7">${r.status||''}${r.detail?' · '+r.detail:''}</span>
+    </div>`).join('');
+  }catch(e){ el.innerHTML='<div class="sub" style="color:var(--danger)">שגיאה בטעינה</div>'; }
 }
 async function saveShareEmail(v){
   v=(v||'').trim();

@@ -27,3 +27,4 @@ session_defaults.json
 scratch/
 *.tmp
 ~$*
+login_audit.log

@@ -871,7 +871,22 @@ def auto_login_flow(
             pass
         return _ask_otp_terminal()
 
-    if email_reader is not None:
+    # Google Authenticator (TOTP): if the user configured a TOTP secret and
+    # chose it as the OTP source, generate the code locally — instant, no email
+    # delivery lag. Falls through to email/manual if it isn't set up.
+    otp_code = ""
+    try:
+        from core.download import SESSION_SETTINGS as _ss
+        from core.totp import totp_configured, totp_now, get_totp_secret
+        if _ss.get("otp_source") == "totp" and totp_configured():
+            otp_code = totp_now(get_totp_secret())
+            print(f"{_ts()} [Auth] קוד מאפליקציית האימות (Google Authenticator) הופק")
+            if logger:
+                logger.info("[GovLogin] Using Google Authenticator (TOTP) code")
+    except Exception as _te:
+        print(f"{_ts()} [Auth] TOTP לא זמין ({_te}) — עובר ל-OTP במייל")
+
+    if not otp_code and email_reader is not None:
         try:
             # gov.il OTP email can take a while to arrive — wait up to 120s.
             otp_code = email_reader.wait_for_otp(timeout_seconds=120,
@@ -882,7 +897,7 @@ def auto_login_flow(
             if logger:
                 logger.warn(msg)
             otp_code = _ask_otp()
-    else:
+    elif not otp_code:
         otp_code = _ask_otp()
 
     if not otp_code:

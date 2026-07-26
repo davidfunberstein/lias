@@ -121,6 +121,37 @@
       </div>
     </details>
   </div>
+  <div id="totp-box" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px">
+    <b style="font-size:13.5px">🔐 Google Authenticator (קוד TOTP) — חלופה מהירה ל-OTP במייל</b>
+    <div id="totp-status" class="sub" style="margin:4px 0;font-weight:700"></div>
+    <label>מקור קוד האימות</label>
+    <select id="g-otp-source" onchange="saveOtpSource(this.value)" style="width:100%">
+      <option value="email">מייל (OTP נקרא אוטומטית מהמייל)</option>
+      <option value="totp">Google Authenticator (קוד מהאפליקציה)</option>
+    </select>
+    <label style="margin-top:8px">סוד ה-TOTP (Secret key — base32 מ-Google Authenticator)</label>
+    <input id="g-totp-secret" type="password" placeholder="למשל JBSW Y3DP EHPK 3PXP" autocomplete="off">
+    <button class="btn-accent" style="width:100%;margin-top:8px" onclick="saveTotp()">💾 שמור סוד TOTP</button>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-size:12.5px;color:var(--accent-strong)">מה זה ומאיפה משיגים את הסוד? (הוראות)</summary>
+      <div class="note" style="line-height:1.7">
+        אם ההזדהות שלך ב-gov.il מוגדרת עם <b>אפליקציית אימות</b> (Google Authenticator),
+        המערכת יכולה לחשב את הקוד בן 6 הספרות לבד — מיידי, בלי להמתין למייל.<br>
+        1. כשמגדירים אימות באפליקציה, מוצג <b>מפתח סודי</b> (Secret key) — מחרוזת אותיות/ספרות.<br>
+        2. הדבק אותו כאן פעם אחת. (נשמר ב-Keychain בלבד, לא בקבצים.)<br>
+        3. בחר "Google Authenticator" למעלה כמקור הקוד.<br>
+        הקוד מתחלף כל 30 שניות — המערכת מפיקה את הנוכחי אוטומטית בכל התחברות.
+      </div>
+    </details>
+  </div>
+  <div id="login-audit-box" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <b style="font-size:13.5px">🛡️ יומן התחברויות (מי מתחבר, מתי, ומה התוצאה)</b>
+      <button class="btn" style="font-size:11px;padding:4px 10px" onclick="loadLoginAudit()">רענן</button>
+    </div>
+    <div class="note">כל ניסיון התחברות נרשם. שתי התחברויות לאותו פורטל לא ירוצו במקביל (מונע OTP כפול).</div>
+    <div id="login-audit-list" style="max-height:220px;overflow-y:auto;margin-top:6px;font-size:12px"></div>
+  </div>
   <div class="note" id="g-method-note">בשיטה המהירה ההתחברות רצה לבד; במצב SMS יופיע חלון להזנת הקוד מהטלפון.</div>
   <div id="manual-auth-note" style="display:none;margin-top:10px;padding:10px 14px;background:rgba(255,200,50,.18);border:2px solid #e6a800;border-radius:10px;font-size:13px;line-height:1.6">
     <b style="font-size:14px">⚠️ אימות ידני</b><br>

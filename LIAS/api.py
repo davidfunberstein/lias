@@ -618,6 +618,8 @@ def get_settings():
         "storage_mode":            d.get("storage_mode", "local"),
         "login_method":            d.get("login_method", "standard"),
         "otp_method":              d.get("otp_method", "email"),
+        "otp_source":              d.get("otp_source", "email"),   # email | totp
+        "totp_configured":         _totp_exists(),
         "user_mode":               d.get("user_mode", "private"),
         "share_email":             d.get("share_email", ""),
         # all = every case | related = case + related cases | single = case only
@@ -643,6 +645,14 @@ def _govil_creds_exist() -> bool:
         return False
 
 
+def _totp_exists() -> bool:
+    try:
+        from core.totp import totp_configured
+        return totp_configured()
+    except Exception:
+        return False
+
+
 class SettingsUpdate(BaseModel):
     court_docs_dir: str = ""
     check_viewers: Optional[bool] = None
@@ -651,6 +661,7 @@ class SettingsUpdate(BaseModel):
     storage_mode: Optional[str] = None
     login_method: Optional[str] = None
     otp_method: Optional[str] = None    # "email" auto / "sms" manual to phone
+    otp_source: Optional[str] = None    # "email" | "totp" (Google Authenticator)
     user_mode: Optional[str] = None
     share_email: Optional[str] = None   # Drive read-only share / שיתוף צפייה בדרייב
     case_scope: Optional[str] = None    # all | related | single
@@ -683,8 +694,8 @@ def save_settings(req: SettingsUpdate):
         del d["court_docs_dir"]
     _BOOL_FIELDS = {"check_viewers", "download_related_cases", "net_related",
                     "browser_visible"}
-    _STR_FIELDS  = {"mode", "storage_mode", "login_method", "otp_method", "user_mode",
-                    "share_email", "case_scope", "years_back",
+    _STR_FIELDS  = {"mode", "storage_mode", "login_method", "otp_method", "otp_source",
+                    "user_mode", "share_email", "case_scope", "years_back",
                     "net_scope", "bdr_scope", "eca_scope"}
     for f in _BOOL_FIELDS:
         v = getattr(req, f)

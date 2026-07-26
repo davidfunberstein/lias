@@ -175,7 +175,35 @@ def recover_browser_session(
 # Shared login helper
 # ---------------------------------------------------------------------------
 
+def _login_method_name(portal: str) -> str:
+    """Human label of the 2FA method that will be used, for the audit log."""
+    try:
+        from core.download import SESSION_SETTINGS
+        if SESSION_SETTINGS.get("login_method") == "passkey":
+            return "passkey"
+        from core.totp import totp_configured
+        if SESSION_SETTINGS.get("otp_source") == "totp" and totp_configured():
+            return "totp"
+    except Exception:
+        pass
+    return "email-otp"
+
+
 def ensure_logged_in(page: Page, portal: str) -> bool:
+    """Audited + serialized entry point. Records every login attempt to the
+    audit log and holds a per-portal lock so two logins to the SAME portal
+    never run at once (which caused duplicate OTP emails / rate-limits)."""
+    from core import login_audit
+    with login_audit.portal_login(portal, method=_login_method_name(portal)) as _sess:
+        ok = _ensure_logged_in_impl(page, portal)
+        if ok:
+            _sess.success("מחובר")
+        else:
+            _sess.fail("ההתחברות לא הושלמה")
+        return ok
+
+
+def _ensure_logged_in_impl(page: Page, portal: str) -> bool:
     """
     Unified entry point: navigate to the portal (if needed) and complete the
     full login chain. Idempotent — returns immediately if already logged in.
