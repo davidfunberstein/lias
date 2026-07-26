@@ -663,17 +663,16 @@ def _expand_all_rows(page) -> None:
 
 
 def _harvest_parties(page) -> list[dict]:
-    """Open the 'גורמים בתיק' tab and return EVERY party [{role,name,id}] — both
-    sides (זוכה + חייב + באי־כוח). Pure: navigates + reads, writes nothing.
+    """Open the 'גורמים בתיק' tab and return EVERY party [{role,name,id,phone}] —
+    both sides (זוכה + חייב + באי־כוח). Pure: navigates + reads, writes nothing.
     Tries several selectors so a markup tweak doesn't silently return nothing."""
     parties: list[dict] = []
-    # Click into the parties tab (id, then Hebrew-text fallbacks).
     clicked = False
-    for sel in ("#CaseParties",
-                'div[role="tab"]:has-text("גורמים")',
+    for sel in ("a#CaseParties",
+                "#CaseParties",
+                'a[role="tab"]:has-text("גורמים")',
                 'a:has-text("גורמים בתיק")',
-                'button:has-text("גורמים בתיק")',
-                '*:has-text("גורמים בתיק") >> visible=true'):
+                'span.bold:has-text("גורמים בתיק")'):
         try:
             tab = page.locator(sel).first
             if tab.count() > 0 and tab.is_visible(timeout=1500):
@@ -687,36 +686,56 @@ def _harvest_parties(page) -> list[dict]:
         _log("  ⚠ לא נמצא טאב 'גורמים בתיק' — מדלג על איסוף צדדים")
         return parties
     try:
-        headers = page.locator("#table-groups-expansion mat-expansion-panel-header").all()
-        if not headers:
-            headers = page.locator("mat-expansion-panel-header").all()
-        for h in headers:
+        panels = page.locator("#table-groups-expansion mat-expansion-panel").all()
+        if not panels:
+            panels = page.locator("mat-expansion-panel").all()
+        for panel in panels:
+            header = panel.locator("mat-expansion-panel-header").first
             try:
-                role = h.locator("span.bold").first.inner_text(timeout=1000).strip()
+                role = header.locator("span.bold").first.inner_text(timeout=1000).strip()
             except Exception:
                 try:
-                    role = h.inner_text(timeout=1000).strip().split("\n")[0]
+                    role = header.inner_text(timeout=1000).strip().split("\n")[0]
                 except Exception:
                     role = ""
             try:
-                if h.get_attribute("aria-expanded") != "true":
-                    h.click()
+                if header.get_attribute("aria-expanded") != "true":
+                    header.click()
                     time.sleep(1.0)
             except Exception:
                 pass
-            for grp in page.locator("app-case-party-general").all():
-                try:
-                    labels = [x.strip() for x in grp.inner_text(timeout=1500).split("\n") if x.strip()]
-                    rec = {"role": role}
-                    for i in range(0, len(labels) - 1):
-                        if labels[i] == "שם":
-                            rec["name"] = labels[i + 1]
-                        elif labels[i] == "זיהוי":
-                            rec["id"] = labels[i + 1]
-                    if rec.get("name") and rec not in parties:
-                        parties.append(rec)
-                except Exception:
-                    continue
+            # Strategy 1: read from table rows (mat-column-* cells)
+            rows = panel.locator("tr.mat-mdc-row, tr.mat-row").all()
+            for row in rows:
+                rec = {"role": role}
+                for col, key in [("name", "name"),
+                                 ("authenticationNumber", "id"),
+                                 ("phoneNumber", "phone")]:
+                    try:
+                        cell = row.locator(f"td.mat-column-{col}")
+                        if cell.count() > 0:
+                            val = cell.inner_text(timeout=1000).strip()
+                            if val:
+                                rec[key] = val
+                    except Exception:
+                        pass
+                if rec.get("name") and rec not in parties:
+                    parties.append(rec)
+            # Strategy 2 (fallback): app-case-party-general label pairs
+            if not rows:
+                for grp in panel.locator("app-case-party-general").all():
+                    try:
+                        labels = [x.strip() for x in grp.inner_text(timeout=1500).split("\n") if x.strip()]
+                        rec = {"role": role}
+                        for i in range(0, len(labels) - 1):
+                            if labels[i] == "שם":
+                                rec["name"] = labels[i + 1]
+                            elif labels[i] == "זיהוי":
+                                rec["id"] = labels[i + 1]
+                        if rec.get("name") and rec not in parties:
+                            parties.append(rec)
+                    except Exception:
+                        continue
     except Exception as e:
         _log(f"  ⚠ גורמים בתיק: {e}")
     return parties
