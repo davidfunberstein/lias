@@ -840,6 +840,57 @@ def net_auto_update(payload: dict, ctx: JobContext) -> str:
 # BDR batch — all cases / הורדת כל תיקי בתי הדין הרבניים
 # ---------------------------------------------------------------------------
 
+_LAST_BDR_CASES: list = []
+
+
+def get_last_bdr_cases() -> list:
+    return _LAST_BDR_CASES
+
+
+@handler("bdr_list")
+def bdr_list(payload: dict, ctx: JobContext) -> str:
+    """EN: connect to BDR and list its case groups (with both parties) so the UI
+        can offer the SAME checkbox picker as NET/ECA — no client-name prompt.
+    HE: התחברות לבד"ר והצגת רשימת התיקים (עם שני הצדדים) לבחירה — בלי לשאול
+        שם לקוח. זהה לחלוטין לנט ולהוצל"פ."""
+    bdr = ctx.bdr_browser or ctx.browser
+    if bdr is None:
+        raise RuntimeError("no browser attached / אין דפדפן מחובר")
+    ctx.progress(0.1, "מתחבר לבית הדין הרבני…")
+
+    def _run(page):
+        from core.connection import ensure_logged_in
+        from core.bdr_batch import _JS_EXTRACT_GROUP_ROWS, _parse_group_row
+        import time as _t
+        ensure_logged_in(page, "BDR")
+        _t.sleep(2)
+        raw = page.evaluate(_JS_EXTRACT_GROUP_ROWS) or []
+        out = []
+        for info in raw:
+            c = _parse_group_row(info)
+            if not (c.case_number or c.parties):
+                continue
+            out.append({"number": c.case_number or (c.parties[0] if c.parties else ""),
+                        "type": c.procedure,
+                        "parties": [{"role": "", "name": p} for p in c.parties],
+                        "party": " × ".join(c.parties),
+                        "court": "בית הדין הרבני",
+                        "status": ""})
+        return out
+
+    _saved = ctx.browser
+    ctx.browser = bdr
+    try:
+        cases = _run_portal(ctx, "bdr_list", _run, timeout=900)
+    finally:
+        ctx.browser = _saved
+    global _LAST_BDR_CASES
+    _LAST_BDR_CASES = _merge_case_lists(_LAST_BDR_CASES, cases)
+    jobs.broadcast({"type": "bdr_cases", "cases": _LAST_BDR_CASES})
+    _finish_portal(ctx, bdr, "BDR", "בית הדין הרבני")
+    return f"נמצאו {len(cases)} תיקי בד\"ר"
+
+
 @handler("bdr_batch")
 def bdr_batch(payload: dict, ctx: JobContext) -> str:
     """Run BdrBatchRunner then re-import all CSVs.
@@ -857,10 +908,16 @@ def bdr_batch(payload: dict, ctx: JobContext) -> str:
         except Exception as e:
             print(f"[bdr_batch] login step: {e}")
         from core.download import SESSION_SETTINGS
+        # user_mode follows the SETTING (עו״ד מייצג / גורם פרטי) — not a
+        # hardcoded 'lawyer'. In private mode the gov.il login uses the
+        # credentials configured in Settings, exactly like NET/ECA.
         run_settings = {**SESSION_SETTINGS,
                         "force_rerun": payload.get("force_rerun", False),
                         "client_filter": payload.get("client_filter", ""),
-                        "user_mode": payload.get("user_mode", "lawyer")}
+                        "cases": payload.get("cases") or [],
+                        "user_mode": (payload.get("user_mode")
+                                      or SESSION_SETTINGS.get("user_mode")
+                                      or "private")}
         batch = BdrBatchRunner(page, logger=None)
         batch.run(run_settings, config.COURT_DOCS_DIR)
         return "bdr batch done"

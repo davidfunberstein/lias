@@ -27,12 +27,19 @@
     <label>אימייל</label><input id="l-email" type="email" required placeholder="you@example.com">
     <label>שם משתמש</label><input id="l-user" required autocomplete="username">
     <label>סיסמה</label><input id="l-pass" type="password" required autocomplete="current-password">
+    <div id="l-totp-row" style="display:none">
+      <label>🔐 קוד מ-Google Authenticator</label>
+      <input id="l-totp" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+             placeholder="6 ספרות" autocomplete="one-time-code">
+    </div>
     <label class="rem" style="display:flex"><input type="checkbox" id="l-rem" checked style="width:auto"> זכור אותי במחשב הזה</label>
     <button class="btn-accent" type="submit">כניסה</button>
+    <div id="l-err" style="display:none;margin-top:8px;color:var(--danger);font-size:13px;font-weight:700"></div>
     <div class="note"><b>שים לב:</b> אלה פרטי הכניסה למערכת LIAS בלבד —<br>
       <b>לא</b> הסיסמה של gov.il (היא נשמרת בנפרד ב-Keychain).<br>
       הבחירה עו״ד/טו״ר/פרטי משמשת גם לכניסה לפורטל הרבני (BDR).<br>
-      דמו: נשמר מקומית בלבד; אימות מלא — שלב 1 באפיון §2.</div>
+      כשמוגדר Google Authenticator (הגדרות ⚙) — תידרש גם הזנת קוד, וכל
+      כניסה נרשמת ביומן ההתחברויות.</div>
   </form>
 </div>
 
@@ -111,13 +118,25 @@
     <button class="btn-accent" style="width:100%;margin-top:8px" onclick="saveEmail()">💾 שמור חשבון מייל</button>
     <details style="margin-top:8px">
       <summary style="cursor:pointer;font-size:12.5px;color:var(--accent-strong)">איך משיגים סיסמת אפליקציה של Gmail? (הוראות)</summary>
-      <div class="note" style="line-height:1.7">
-        1. היכנס לחשבון Google → <b>ניהול החשבון</b> → אבטחה.<br>
-        2. הפעל <b>אימות דו-שלבי</b> (2-Step Verification) אם עדיין לא מופעל.<br>
-        3. חפש <b>"סיסמאות אפליקציות" (App passwords)</b> — או היכנס ל-myaccount.google.com/apppasswords<br>
-        4. צור סיסמה חדשה (בחר "Mail"/"Other"), Google ייתן <b>16 תווים</b>.<br>
-        5. הדבק אותם כאן. (הסיסמה נשמרת ב-Keychain בלבד, לא בקבצים.)<br>
-        <b>Outlook/Yahoo/וואלה</b> — נתמכים גם; השתמש בסיסמת אפליקציה של אותו ספק.
+      <div class="note" style="line-height:1.8">
+        1. היכנס לחשבון Google → <b>ניהול החשבון</b> → <b>אבטחה</b>.<br>
+        2. הפעל <b>אימות דו-שלבי</b> (2-Step Verification) — בלעדיו Google לא
+           מציג סיסמאות אפליקציות.<br>
+        3. פתח <b>myaccount.google.com/apppasswords</b>
+           (או חפש "סיסמאות אפליקציות" / "App passwords").<br>
+        4. <b style="color:var(--accent-strong)">בשדה שם האפליקציה ("App name") הקלד בדיוק:
+           <code style="background:rgba(47,125,246,.14);padding:1px 6px;border-radius:4px">LIAS</code></b><br>
+           <span style="opacity:.85">זה רק תיאור שיעזור לך לזהות את הסיסמה ברשימה של Google —
+           אפשר כל שם, אבל <b>LIAS</b> מומלץ כדי שתדע למה היא נוצרה. אין קשר
+           בין השם הזה לאפליקציה עצמה, ואין צורך ב-Google Cloud / API כלשהו.</span><br>
+        5. לחץ <b>Create</b> — Google יציג סיסמה של <b>16 אותיות</b>
+           (למשל <code>abcd efgh ijkl mnop</code>).<br>
+        6. הדבק אותה בשדה למעלה ולחץ 💾 שמור. אפשר עם או בלי רווחים.<br>
+        <b>שים לב:</b> הסיסמה מוצגת פעם אחת בלבד — אם איבדת אותה, צור חדשה
+        (ומחק את הישנה מהרשימה).<br>
+        הסיסמה נשמרת ב-Keychain של המחשב בלבד — לא בקבצים ולא ב-DB.<br>
+        <b>Outlook/Yahoo/וואלה</b> — נתמכים גם; צור סיסמת אפליקציה של אותו ספק
+        באותה דרך.
       </div>
     </details>
   </div>
@@ -134,13 +153,21 @@
     <button class="btn-accent" style="width:100%;margin-top:8px" onclick="saveTotp()">💾 שמור סוד TOTP</button>
     <details style="margin-top:8px">
       <summary style="cursor:pointer;font-size:12.5px;color:var(--accent-strong)">מה זה ומאיפה משיגים את הסוד? (הוראות)</summary>
-      <div class="note" style="line-height:1.7">
-        אם ההזדהות שלך ב-gov.il מוגדרת עם <b>אפליקציית אימות</b> (Google Authenticator),
-        המערכת יכולה לחשב את הקוד בן 6 הספרות לבד — מיידי, בלי להמתין למייל.<br>
-        1. כשמגדירים אימות באפליקציה, מוצג <b>מפתח סודי</b> (Secret key) — מחרוזת אותיות/ספרות.<br>
-        2. הדבק אותו כאן פעם אחת. (נשמר ב-Keychain בלבד, לא בקבצים.)<br>
-        3. בחר "Google Authenticator" למעלה כמקור הקוד.<br>
-        הקוד מתחלף כל 30 שניות — המערכת מפיקה את הנוכחי אוטומטית בכל התחברות.
+      <div class="note" style="line-height:1.8">
+        <b>למה זה משמש:</b> (א) כניסה למערכת LIAS עצמה — כשמוגדר סוד, מסך
+        הכניסה ידרוש קוד בן 6 ספרות, וכל כניסה תירשם ביומן ההתחברויות;
+        (ב) אם ההזדהות שלך ב-gov.il מוגדרת עם אפליקציית אימות — בחר למעלה
+        "Google Authenticator" והמערכת תחשב את הקוד לבד במקום להמתין למייל.<br>
+        <b>איך מייצרים סוד:</b><br>
+        1. פתח את אפליקציית <b>Google Authenticator</b> בטלפון → <b>+</b> →
+           <b>הזנת מפתח התקנה</b> (Enter a setup key).<br>
+        2. <b style="color:var(--accent-strong)">שם החשבון: הקלד
+           <code style="background:rgba(47,125,246,.14);padding:1px 6px;border-radius:4px">LIAS</code></b>
+           — כך תזהה אותו ברשימה.<br>
+        3. במפתח (Key) הקלד מחרוזת base32 משלך (אותיות A–Z וספרות 2–7,
+           16–32 תווים) — או הדבק כאן סוד קיים שקיבלת מ-gov.il.<br>
+        4. הדבק את אותו סוד בשדה למעלה ולחץ 💾 שמור. (נשמר ב-Keychain בלבד.)<br>
+        הקוד מתחלף כל 30 שניות; המערכת מקבלת גם קוד מהחלון הקודם (סטיית שעון).
       </div>
     </details>
   </div>

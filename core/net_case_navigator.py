@@ -143,26 +143,47 @@ def navigate_to_case_by_number(
         print(f"{_ts()} [CaseNav]   Processed MMYY     : '{month_year_raw}' (after strip dash)")
         print(f"{'='*60}\n")
 
-        # Navigate to the secured portal's "my cases" page where the
-        # case locator header fields are always visible.
-        # PersonalAreaPage hides them in a dropdown; case detail pages
-        # have them in DOM but not interactive. The my-cases page works.
+        # FAST PATH — the case-locator header search is present and usable on the
+        # current page (it stays in the header across the secured portal). Just
+        # type the next case number and search: a smooth case→case hop.
+        # We only fall back to the heavy path (reload portal + open "התיקים שלי",
+        # which re-lists every case) when those fields are NOT usable.
         _SECURED_HOME = "https://securesso.court.gov.il/Ngcs.Web.Secured/PersonalAreaPage.aspx"
-        _log(f"Navigating to secured portal before entering case {case_number}/{month_year_raw}...")
-        try:
-            page.goto(_SECURED_HOME, wait_until="networkidle", timeout=20000)
-        except Exception:
-            try:
-                page.goto(_SECURED_HOME, wait_until="domcontentloaded", timeout=15000)
-            except Exception:
-                time.sleep(3)
 
-        # Open "my cases" page so the case locator header becomes visible
-        try:
-            from core.net_search_cases import navigate_to_my_cases
-            navigate_to_my_cases(page)
-        except Exception as nav_exc:
-            _log(f"  Could not navigate to my-cases: {nav_exc}")
+        def _locator_fields_ready() -> bool:
+            """True when both locator inputs + the search button exist AND at
+            least one input is actually visible (interactive) on this page."""
+            try:
+                m, n, b = (_resolve_sel(_BASE_MY), _resolve_sel(_BASE_NUM),
+                           _resolve_sel(_BASE_BTN))
+                if not (page.locator(m).count() and page.locator(n).count()
+                        and page.locator(b).count()):
+                    return False
+                return bool(page.locator(n).first.is_visible(timeout=1200))
+            except Exception:
+                return False
+
+        _dismiss_popup()          # a leftover dialog can hide the header search
+        if _locator_fields_ready():
+            _log(f"מעבר חלק לתיק {case_number}/{month_year_raw} "
+                 f"(חיפוש בכותרת — בלי לטעון מחדש את רשימת התיקים)")
+        else:
+            _log(f"Navigating to secured portal before entering case "
+                 f"{case_number}/{month_year_raw}...")
+            try:
+                page.goto(_SECURED_HOME, wait_until="networkidle", timeout=20000)
+            except Exception:
+                try:
+                    page.goto(_SECURED_HOME, wait_until="domcontentloaded", timeout=15000)
+                except Exception:
+                    time.sleep(3)
+
+            # Open "my cases" page so the case locator header becomes visible
+            try:
+                from core.net_search_cases import navigate_to_my_cases
+                navigate_to_my_cases(page)
+            except Exception as nav_exc:
+                _log(f"  Could not navigate to my-cases: {nav_exc}")
 
         # Re-resolve selectors (secured portal uses 'header_' prefix)
         my_sel  = _resolve_sel(_BASE_MY)

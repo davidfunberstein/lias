@@ -276,66 +276,78 @@ def _ensure_logged_in_impl(page: Page, portal: str) -> bool:
         # With a live gov.il SSO session, /he/login silently runs the OAuth
         # dance itself (→ /he/callback?code=… → cases). That takes up to ~2
         # minutes — navigating away mid-flight ABORTS it, so first just wait.
-        _progress("ממתין לזרימת ההתחברות האוטומטית של הוצל\"פ…")
+        # ROUNDS: if a round ends still wedged on /he/login (expired session,
+        # CDN hiccup), start a CLEAN round (clear cookies + reload) instead of
+        # failing the job — this is what previously forced the user to click
+        # "download" several times before it worked.
         sso_done = False
-        deadline = time.time() + 240
-        _last_dbg = ""
-        _same_url_since = time.time()
-        _nudges = 0
-        while time.time() < deadline:
-            time.sleep(4)
-            u = page.url or ""
-            _dbg = u.split("?")[0]
-            if _dbg != _last_dbg:
-                print(f"{_ts()} [Auth][eca-wait] url={u[:90]}")
-                _last_dbg = _dbg
-                _same_url_since = time.time()     # progressed — reset the stall timer
-            if already(page):
-                sso_done = True
-                break
-            if "login.gov.il" in u:
-                # a "Verifying your browser" interstitial runs first (~60s) —
-                # only break out once the actual ID field is on screen
+        _ID_FIELD = ("input#user_id, input[name='Ecom_User_ID'], "
+                     "input[autocomplete='username'], input[type='tel']")
+
+        def _id_form_visible() -> bool:
+            try:
+                return page.locator(_ID_FIELD).count() > 0
+            except Exception:
+                return False
+
+        for _round in range(1, 4):                      # up to 3 clean rounds
+            if _round > 1:
+                _progress(f"ההתחברות נתקעה — מתחיל מחדש בסשן נקי ({_round}/3)…")
                 try:
-                    if page.locator("input#user_id, input[name='Ecom_User_ID'], "
-                                    "input[autocomplete='username'], input[type='tel']").count() > 0:
-                        break
+                    page.context.clear_cookies()
                 except Exception:
                     pass
-                continue
-            if "/callback" in u:          # OAuth exchange in progress — keep waiting
-                _same_url_since = time.time()
-                continue
-            # Stuck on publicsso /he/login WITHOUT progressing for a long while.
-            # Two failure modes:
-            #  1. silent SSO just slow  → a plain reload re-triggers it.
-            #  2. EXPIRED session: /callback bounced back to /he/login and the
-            #     stale cookie stops a clean redirect to gov.il → clear the ECA
-            #     cookies so /he/login has no session and MUST go to gov.il login.
-            # Give the natural redirect ~40s first (normally fires within ~30s).
-            if ("publicsso.eca.gov.il" in u and "/home/OpenCase" not in u
-                    and time.time() - _same_url_since > 40 and _nudges < 3):
-                _nudges += 1
-                if _nudges == 1:
-                    _progress("מאיץ את ההתחברות (טעינה מחדש)…")
-                    try:
-                        page.reload(wait_until="domcontentloaded", timeout=25000)
-                    except Exception:
-                        pass
-                else:
-                    _progress("הפעלה מחדש של ההתחברות (ניקוי סשן ישן)…")
-                    try:
-                        page.context.clear_cookies()
-                    except Exception:
-                        pass
-                    try:
-                        page.goto("https://publicsso.eca.gov.il/he/login",
-                                  wait_until="domcontentloaded", timeout=25000)
-                    except Exception:
-                        pass
-                _same_url_since = time.time()
+                try:
+                    page.goto("https://publicsso.eca.gov.il/he/login",
+                              wait_until="domcontentloaded", timeout=25000)
+                except Exception:
+                    pass
+            else:
+                _progress("ממתין לזרימת ההתחברות האוטומטית של הוצל\"פ…")
+
+            deadline = time.time() + 150                # per-round budget
+            _last_dbg = ""
+            _same_url_since = time.time()
+            _reloaded = False
+            while time.time() < deadline:
+                time.sleep(4)
+                u = page.url or ""
+                _dbg = u.split("?")[0]
+                if _dbg != _last_dbg:
+                    print(f"{_ts()} [Auth][eca-wait] url={u[:90]}")
+                    _last_dbg = _dbg
+                    _same_url_since = time.time()   # progressed — reset stall timer
+                if already(page):
+                    sso_done = True
+                    break
+                if "login.gov.il" in u:
+                    # a "Verifying your browser" interstitial runs first (~60s) —
+                    # only break out once the actual ID field is on screen
+                    if _id_form_visible():
+                        break
+                    continue
+                if "/callback" in u:        # OAuth exchange in progress — wait
+                    _same_url_since = time.time()
+                    continue
+                # Wedged on publicsso /he/login: one plain reload re-triggers the
+                # silent SSO; if that doesn't move it, end the round (→ clean round).
+                if ("publicsso.eca.gov.il" in u and "/home/OpenCase" not in u
+                        and time.time() - _same_url_since > 35):
+                    if not _reloaded:
+                        _reloaded = True
+                        _progress("מאיץ את ההתחברות (טעינה מחדש)…")
+                        try:
+                            page.reload(wait_until="domcontentloaded", timeout=25000)
+                        except Exception:
+                            pass
+                        _same_url_since = time.time()
+                    else:
+                        break               # give up on this round → clean retry
+            if sso_done or _id_form_visible():
+                break                       # authenticated, or ready to type creds
+
         if not sso_done and "login.gov.il" in (page.url or ""):
-            # ID form is up — fill credentials + email OTP
+            # ID form is up — fill credentials + OTP (email or Authenticator)
             _run_gov_autologin(page, "ECA")
             _click_eca_system_choice(page)
         if not sso_done:

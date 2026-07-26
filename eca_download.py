@@ -16,7 +16,6 @@ ECA (הוצאה לפועל) downloader
 """
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import sys
@@ -91,26 +90,6 @@ def _make_filename(process: str, date: str, doc_type: str, applicant: str) -> st
 # ---------------------------------------------------------------------------
 # Browser setup
 # ---------------------------------------------------------------------------
-
-def _launch_browser(profile_dir: Optional[Path]):
-    from playwright.sync_api import sync_playwright
-    pw = sync_playwright().start()
-    if profile_dir:
-        profile_dir.mkdir(parents=True, exist_ok=True)
-        ctx = pw.chromium.launch_persistent_context(
-            str(profile_dir),
-            headless=False,
-            args=["--start-maximized"],
-            no_viewport=True,
-            accept_downloads=True,
-        )
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-    else:
-        browser = pw.chromium.launch(headless=False, args=["--start-maximized"])
-        ctx = browser.new_context(accept_downloads=True, no_viewport=True)
-        page = ctx.new_page()
-    return pw, ctx, page
-
 
 # ---------------------------------------------------------------------------
 # Login
@@ -269,59 +248,19 @@ def install_eca_asset_fix(page) -> None:
 
 
 def _login_eca(page) -> bool:
-    """Navigate to ECA and authenticate via the unified login chain
-    (core.connection.ensure_logged_in — same mechanism as NET/BDR)."""
+    """Authenticate to ECA through the app's ONE unified login chain
+    (core.connection.ensure_logged_in — the same mechanism NET and BDR use,
+    including the audit log and the per-portal lock).
+
+    There is deliberately no second/standalone login path here: ECA is part of
+    the main application, not a separate program.
+    """
     install_eca_asset_fix(page)
-    try:
-        from core.connection import ensure_logged_in
-        if ensure_logged_in(page, "ECA"):
-            return True
-        # ensure_logged_in ran the whole chain and simply isn't authenticated
-        # (no valid session, no OTP) — its own RuntimeError is the accurate
-        # message; don't fall through to the misleading standalone probe.
-        raise RuntimeError("ההתחברות להוצאה לפועל לא הושלמה — ודא שהוזנה סיסמת "
-                           "האפליקציה של האימייל בהגדרות ⚙ (לקריאת קוד ה-OTP).")
-    except RuntimeError:
-        raise
-    except Exception as e:
-        _log(f"ensure_logged_in לא זמין ({e}) — עובר למסלול עצמאי")
-
-    # Standalone fallback (only when the LIAS engine/connection isn't importable)
-    page.goto(OPEN_CASES_URL, wait_until="domcontentloaded", timeout=30000)
-    time.sleep(4)
-    if _portal_down(page):
-        raise RuntimeError("אתר ההוצאה לפועל אינו זמין כרגע — תקלה באתר הממשלתי "
-                           "(קבצי האתר עצמם לא נטענים). נסה שוב מאוחר יותר.")
-
-    url = page.url or ""
-
-    # Already authenticated — require REAL case cards, not just the URL
-    try:
-        if "publicsso.eca.gov.il" in url and "login.gov.il" not in url and \
-           page.locator("#carousel-cases, mat-card[id^='card-case']").count() > 0:
-            _log("✓ כבר מחובר")
-            return True
-    except Exception:
-        pass
-
-    _click_system_choice(page)
-    url = page.url or ""
-
-    # On login.gov.il — try auto-login if credentials available
-    if "login.gov.il" in url:
-        try:
-            from core.gov_login import auto_login_flow
-            from core.email_otp import EmailOTPReader
-            try:
-                email_reader = EmailOTPReader()
-            except Exception:
-                email_reader = None
-            auto_login_flow(page, email_reader=email_reader)
-        except Exception as e:
-            _log(f"auto_login_flow לא זמין: {e}")
-
-    # Wait for user to complete login manually if needed
-    return _wait_for_eca_home(page, timeout=180)
+    from core.connection import ensure_logged_in
+    if ensure_logged_in(page, "ECA"):
+        return True
+    raise RuntimeError("ההתחברות להוצאה לפועל לא הושלמה — בדוק את אישורי gov.il "
+                       "ואת מקור קוד האימות בהגדרות ⚙.")
 
 
 # ---------------------------------------------------------------------------
@@ -999,70 +938,7 @@ def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None
 
 # ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="הורד מסמכים מהוצאה לפועל")
-    parser.add_argument("--output", default="./הוצאה_לפועל",
-                        help="תיקיית יעד (ברירת מחדל: ./הוצאה_לפועל)")
-    parser.add_argument("--profile", default="./browser_profile",
-                        help="נתיב לפרופיל דפדפן (ברירת מחדל: ./browser_profile)")
-    parser.add_argument("--cases", nargs="*",
-                        help="מספרי תיקים ספציפיים (אופציונלי — אחרת יורד הכול)")
-    args = parser.parse_args()
-
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    profile_dir = Path(args.profile) if args.profile else None
-
-    _log(f"מתחיל הורדת מסמכי הוצאה לפועל → {output_dir.resolve()}")
-
-    pw, ctx, page = _launch_browser(profile_dir)
-
-    try:
-        if not _login_eca(page):
-            _log("✗ ההתחברות נכשלה — בדוק את הדפדפן ונסה שוב")
-            sys.exit(1)
-
-        # Make sure we're on the open cases page
-        if "/home/OpenCase" not in (page.url or ""):
-            page.goto(OPEN_CASES_URL, wait_until="domcontentloaded", timeout=30000)
-            time.sleep(3)
-
-        cases = _extract_cases(page)
-        if not cases:
-            _log("✗ לא נמצאו תיקים")
-            sys.exit(1)
-
-        # Filter by specific cases if requested
-        if args.cases:
-            requested = set(args.cases)
-            cases = [c for c in cases if c["number"] in requested]
-            _log(f"מסנן לתיקים: {[c['number'] for c in cases]}")
-
-        _log(f"\nמעבד {len(cases)} תיקים…\n")
-
-        for case in cases:
-            try:
-                _process_case(page, case, output_dir, by_client=True)
-            except Exception as e:
-                _log(f"✗ שגיאה בתיק {case['number']}: {e}")
-            time.sleep(1)
-
-        _log(f"\n{'='*60}")
-        _log(f"✓ הסתיים! מסמכים נשמרו ב: {output_dir.resolve()}")
-
-    finally:
-        input("\nלחץ Enter לסגירת הדפדפן…")
-        try:
-            ctx.close()
-        except Exception:
-            pass
-        try:
-            pw.stop()
-        except Exception:
-            pass
-
-
-if __name__ == "__main__":
-    main()
+# NOTE: no __main__ / CLI entry point on purpose.
+# ECA is an integrated part of the LIAS application — it runs through
+# LIAS/collector_bridge.py (jobs: eca_list / eca_sync) on the app's shared
+# BrowserManager. Run the app:  python3 app.py

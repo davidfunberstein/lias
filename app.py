@@ -257,10 +257,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_email_status())
         elif path == "/api/totp/status":
             try:
-                from core.totp import totp_configured
-                self._json({"configured": totp_configured()})
+                from core.totp import totp_configured, provisioning_uri
+                self._json({"configured": totp_configured(),
+                            "otpauth": provisioning_uri()})
             except Exception:
-                self._json({"configured": False})
+                self._json({"configured": False, "otpauth": ""})
         elif path == "/api/login_audit":
             try:
                 from core.login_audit import read_log
@@ -277,6 +278,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(code, body, "application/json; charset=utf-8")
         elif path == "/api/proxy/eca/cases":
             code, body, _ct = engine_inproc.request("GET", "/api/eca/cases")
+            self._send(code, body, "application/json; charset=utf-8")
+        elif path == "/api/proxy/bdr/cases":
+            code, body, _ct = engine_inproc.request("GET", "/api/bdr/cases")
             self._send(code, body, "application/json; charset=utf-8")
         elif path.startswith("/api/doc_pdf/") or path in (
                 "/api/browser/screenshot", "/api/browser/status", "/api/log",
@@ -489,6 +493,36 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_govil_save(payload))
         elif path == "/api/email/save":
             self._json(_email_save(payload))
+        elif path == "/api/app_login":
+            # App-level login gate. When a TOTP secret is configured, a valid
+            # Google Authenticator code is REQUIRED. Every attempt (success or
+            # failure) is written to the login audit log — this is the
+            # "control over everyone who connects" the user asked for.
+            try:
+                from core.totp import totp_configured, verify_totp
+                from core.login_audit import record
+                name = (payload.get("name") or "").strip()
+                role = (payload.get("role") or "").strip()
+                code = (payload.get("totp") or "").strip()
+                who = f"{name or 'ללא שם'} ({role or '—'})"
+                if totp_configured():
+                    if not code:
+                        record("APP", "totp", "failed", "לא הוזן קוד מאפליקציית האימות", who)
+                        self._json({"ok": False, "need_totp": True,
+                                    "error": "נדרש קוד מ-Google Authenticator"}, 401)
+                        return
+                    if not verify_totp(code):
+                        record("APP", "totp", "failed", "קוד אימות שגוי", who)
+                        self._json({"ok": False, "need_totp": True,
+                                    "error": "קוד שגוי — נסה שוב"}, 401)
+                        return
+                    record("APP", "totp", "success", "כניסה למערכת", who)
+                else:
+                    record("APP", "local", "success", "כניסה למערכת (ללא TOTP)", who)
+                self._json({"ok": True})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
         elif path == "/api/totp/save":
             # payload: {secret: base32 Google Authenticator secret} — stored in
             # the OS keychain (never on disk); empty clears it.

@@ -173,6 +173,7 @@ function connectEngineSSE(){
     if(e.type==='drive_error'){ logEvent('⚠ '+(e.message||'')); toast(e.message||'שגיאת Drive', true); }
     if(e.type==='net_cases'){ showNetCases(e.cases||[]); }
     if(e.type==='eca_cases'){ showEcaCases(e.cases||[]); }
+    if(e.type==='bdr_cases'){ showBdrCases(e.cases||[]); }
     if(e.type==='download_stats'){
       const portal=e.portal||'NET';
       _dlByPortal[portal]=e; _saveDl();
@@ -211,9 +212,14 @@ function connectEngineSSE(){
             .then(d=>{ if(d.cases) showEcaCases(d.cases); })
             .catch(()=>{});
         }
+        if(e.kind==='bdr_list' && e.state==='COMPLETED'){
+          fetch('/api/proxy/bdr/cases').then(r=>r.json())
+            .then(d=>{ if(d.cases) showBdrCases(d.cases); })
+            .catch(()=>{});
+        }
         // Login failure → offer a one-click retry (refresh + try again)
         if(e.state==='ERROR' && /התחברות|login|gov\.il|נכשל|OTP|אימות/i.test((e.error||'')+(e.message||''))
-           && ['eca_sync','eca_list','bdr_batch','net_smart_download','net_download_all','net_list_cases','open_portal'].includes(e.kind)){
+           && ['eca_sync','eca_list','bdr_batch','bdr_list','net_smart_download','net_download_all','net_list_cases','open_portal'].includes(e.kind)){
           showLoginRetry(e.kind, e.error||e.message||'ההתחברות נכשלה');
         }
         refresh(true);
@@ -424,20 +430,28 @@ document.addEventListener('DOMContentLoaded', ensureFeedback);
 
 /* ─── real automation browser — show/hide ─── */
 let _realBrowserVisible=false;
-function runBdrByClient(){
-  const flt = prompt('שם הלקוח להורדת תיקיו מבית הדין הרבני:');
-  if(flt === null) return;
-  if(!flt.trim()){ toast('לא הוזן שם', true); return; }
-  runBdrBatch(flt.trim());
+/* BDR: connect → list cases (with both parties) → pick → download.
+   IDENTICAL flow to NET and ECA — no client-name prompt, nothing configurable
+   on this screen (scope + user-mode come from Settings ⚙). */
+function bdrConnectAndList(){
+  toast('מתחבר לבית הדין הרבני ושולף תיקים…');
+  logEvent('→ התחברות והצגת תיקי בד"ר');
+  const picker=$('sync-case-picker');
+  if(picker){ picker.style.display='block';
+    picker.innerHTML='<div style="padding:10px;color:rgba(255,255,255,.7)">מתחבר לבית הדין הרבני… (ייתכן שיידרש קוד אימות)</div>'; }
+  act('bdr_list','חיבור והצגת תיקי בד"ר');
 }
-function runBdrBatch(client_filter){
+function runBdrBatch(client_filter, cases){
   client_filter = client_filter || '';
-  toast(client_filter ? `מוריד תיקי בד"ר של "${client_filter}"…` : 'מתחבר לבית הדין הרבני ומוריד את כל התיקים…');
-  logEvent('→ הורדת תיקי BDR' + (client_filter? ' — '+client_filter : ' (הכל)'));
+  const n = (cases||[]).length;
+  toast(n ? `מוריד ${n} תיקי בד"ר…`
+          : (client_filter ? `מוריד תיקי בד"ר של "${client_filter}"…`
+                           : 'מתחבר לבית הדין הרבני ומוריד את כל התיקים…'));
+  logEvent('→ הורדת תיקי BDR' + (n? ` (${n} נבחרו)` : (client_filter? ' — '+client_filter : ' (הכל)')));
   fetch('/api/proxy/actions/bdr_batch', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({user_mode:'lawyer', client_filter})
+    body: JSON.stringify({client_filter, cases: cases||[]})
   }).then(r=>{
     if(r.ok) toast('הורדת BDR הופעלה ✓');
     else toast('שגיאה בהפעלת BDR', true);
@@ -446,6 +460,10 @@ function runBdrBatch(client_filter){
 /* ECA: connect → list cases (with parties) → pick with checkboxes → download */
 let _ecaCases = [];
 try{ const _s=localStorage.getItem('ecaCasesAll'); if(_s) _ecaCases=JSON.parse(_s)||[]; }catch(_){}
+/* cases already sent to download — shown as ✓ הורד with the box cleared */
+let _ecaHandled = new Set();
+try{ const _h=localStorage.getItem('ecaHandled'); if(_h) _ecaHandled=new Set(JSON.parse(_h)||[]); }catch(_){}
+function _saveEcaHandled(){ try{ localStorage.setItem('ecaHandled', JSON.stringify([..._ecaHandled])); }catch(_){}}
 function ecaConnectAndList(){
   toast('מתחבר להוצאה לפועל ושולף תיקים…');
   logEvent('→ התחברות והצגת תיקי הוצל"פ');
@@ -455,13 +473,21 @@ function ecaConnectAndList(){
   act('eca_list','חיבור והצגת תיקי הוצל"פ');
 }
 function _ecaPartiesLine(c){
-  // Prefer the full parties list (both sides) harvested from גורמים בתיק;
-  // fall back to role + counter-party from the card.
+  // Always show WHO the parties are and WHICH side is זוכה / חייב.
+  // Prefer the full parties list (both sides) from גורמים בתיק; otherwise use
+  // the card's role + name, labelling both sides explicitly.
   if(Array.isArray(c.parties) && c.parties.length){
-    return c.parties.map(p=>`${p.role||''}: <b>${p.name||''}</b>`).join(' &nbsp;•&nbsp; ');
+    return c.parties.map(p=>`<span style="opacity:.7">${p.role||'צד'}:</span> <b>${p.name||''}</b>`)
+                    .join(' &nbsp;•&nbsp; ');
   }
-  const me = c.role ? `${c.role}` : '';
-  return `${me}${c.party?`${me?' · ':''}הצד שכנגד: <b>${c.party}</b>`:''}`;
+  const role=(c.role||'').trim(), name=(c.party||'').trim();
+  if(!role && !name) return '<span style="opacity:.6">אין פרטי צדדים — הרץ סנכרון לעדכון</span>';
+  // On the ECA card, `role` is YOUR side in this case and `name` is the party
+  // shown on it; the opposite side is derived so both are always visible.
+  const OPP={'זוכה':'חייב','חייב':'זוכה'};
+  const other=OPP[role]||'הצד שכנגד';
+  return `<span style="opacity:.7">מעמדך:</span> <b>${role||'—'}</b>`
+       + ` &nbsp;•&nbsp; <span style="opacity:.7">${other}:</span> <b>${name||'—'}</b>`;
 }
 function showEcaCases(cases){
   // Cumulative + sorted (open on top, newest first), like NET.
@@ -478,14 +504,19 @@ function showEcaCases(cases){
       <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllEca(false)">נקה הכל</button>
     </div>
     <div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
-      ${list.map((c,i)=>`<label style="display:flex;gap:8px;align-items:center;padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;cursor:pointer">
-        <input type="checkbox" class="eca-cb" data-i="${i}" checked>
+      ${list.map((c,i)=>{
+        const done=_ecaHandled.has(c.number);
+        return `<label style="display:flex;gap:8px;align-items:center;padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;cursor:pointer${done?';opacity:.72':''}">
+        <input type="checkbox" class="eca-cb" data-i="${i}" ${done?'':'checked'}>
         <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:13px">${c.number} <span style="font-weight:400;opacity:.7">· ${c.type||''}</span>${_caseIsOpen(c)?'':' <span style="font-size:10px;opacity:.5">· סגור</span>'}</div>
-          <div style="font-size:11.5px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-            ${_ecaPartiesLine(c)}</div>
+          <div style="font-weight:700;font-size:13px">${c.number}
+            <span style="font-weight:400;opacity:.7">· ${c.type||''}</span>
+            ${_caseIsOpen(c)?'':' <span style="font-size:10px;opacity:.5">· סגור</span>'}
+            ${done?' <span style="font-size:10px;color:var(--accent-strong,#7fb3ff)">· ✓ הורד</span>':''}</div>
+          <div style="font-size:11.5px;opacity:.85;line-height:1.5">${_ecaPartiesLine(c)}</div>
         </div>
-      </label>`).join('')}
+        ${done?`<button title="פתח את התיק במערכת" onclick="event.preventDefault();event.stopPropagation();_goToCaseByNumber('${c.number}')" style="background:none;border:none;cursor:pointer;color:var(--accent-strong,#7fb3ff);font-size:13px;padding:0 4px">↗</button>`:''}
+      </label>`;}).join('')}
     </div>
     <button class="btn-accent" style="width:100%;margin-top:10px;padding:12px" onclick="runEcaSelected()">⬇ הורד את המסומנים</button>`;
 }
@@ -496,6 +527,11 @@ function runEcaSelected(){
   const all = picked.length===_ecaCases.length;
   toast(all?'מוריד את כל תיקי ההוצל"פ…':`מוריד ${picked.length} תיקי הוצל"פ…`);
   logEvent('→ הורדת הוצל"פ ('+(all?'הכל':picked.join(', '))+')');
+  // Remember what was sent to download so a later re-render shows them as
+  // handled (✓ הורד) with the checkbox CLEARED — instead of re-appearing
+  // "already selected" as if a new selection was made.
+  picked.forEach(n=>_ecaHandled.add(n));
+  _saveEcaHandled();
   fetch('/api/proxy/actions/eca_sync', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(all ? {} : {cases:picked})
@@ -627,6 +663,52 @@ function pickPlatform(p){
       .then(d=>{ if(d.cases && d.cases.length) showEcaCases(d.cases); })
       .catch(()=>{});
   }
+  if(p==='BDR' && scope==='selected'){
+    fetch('/api/proxy/bdr/cases').then(r=>r.json())
+      .then(d=>{ if(d.cases && d.cases.length) showBdrCases(d.cases); })
+      .catch(()=>{});
+  }
+}
+/* ── BDR case picker — same contract/behaviour as the ECA one ── */
+let _bdrCases = [];
+try{ const _s=localStorage.getItem('bdrCasesAll'); if(_s) _bdrCases=JSON.parse(_s)||[]; }catch(_){}
+let _bdrHandled = new Set();
+try{ const _h=localStorage.getItem('bdrHandled'); if(_h) _bdrHandled=new Set(JSON.parse(_h)||[]); }catch(_){}
+function showBdrCases(cases){
+  _bdrCases = _mergeCasesList(_bdrCases, cases||[]);
+  try{ localStorage.setItem('bdrCasesAll', JSON.stringify(_bdrCases)); }catch(_){}
+  const picker=$('sync-case-picker'); if(!picker) return;
+  if(!_bdrCases.length){ picker.style.display='none'; toast('לא נמצאו תיקי בד"ר', true); return; }
+  const list=_sortCasesForPicker(_bdrCases); _bdrCases=list;
+  picker.style.display='block';
+  picker.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,.7);margin-bottom:6px">
+      נמצאו ${list.length} תיקי בית הדין הרבני — סמן מה להוריד</div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="document.querySelectorAll('.bdr-cb').forEach(cb=>cb.checked=true)">סמן הכל</button>
+      <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="document.querySelectorAll('.bdr-cb').forEach(cb=>cb.checked=false)">נקה הכל</button>
+    </div>
+    <div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
+      ${list.map((c,i)=>{
+        const done=_bdrHandled.has(c.number);
+        return `<label style="display:flex;gap:8px;align-items:center;padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;cursor:pointer${done?';opacity:.72':''}">
+        <input type="checkbox" class="bdr-cb" data-i="${i}" ${done?'':'checked'}>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:13px">${c.number}
+            <span style="font-weight:400;opacity:.7">· ${c.type||''}</span>
+            ${done?' <span style="font-size:10px;color:var(--accent-strong,#7fb3ff)">· ✓ הורד</span>':''}</div>
+          <div style="font-size:11.5px;opacity:.85;line-height:1.5">${_ecaPartiesLine(c)}</div>
+        </div>
+      </label>`;}).join('')}
+    </div>
+    <button class="btn-accent" style="width:100%;margin-top:10px;padding:12px" onclick="runBdrSelected()">⬇ הורד את המסומנים</button>`;
+}
+function runBdrSelected(){
+  const picked=[...document.querySelectorAll('.bdr-cb:checked')].map(cb=>_bdrCases[+cb.dataset.i]);
+  if(!picked.length){ toast('לא סומן אף תיק', true); return; }
+  picked.forEach(c=>_bdrHandled.add(c.number));
+  try{ localStorage.setItem('bdrHandled', JSON.stringify([..._bdrHandled])); }catch(_){}
+  runBdrBatch('', picked.map(c=>c.number));
+  const picker=$('sync-case-picker'); if(picker) picker.style.display='none';
 }
 function runNet(){
   const s = window._settings || {};
@@ -639,8 +721,10 @@ function runNet(){
 }
 function runBdr(){
   const s = window._settings || {};
+  // Exactly like NET/ECA: 'all' downloads everything; 'selected' connects and
+  // shows the case list for checkbox selection (no client-name prompt).
   if((s.bdr_scope||'all')==='all') runBdrBatch('');
-  else runBdrByClient();
+  else bdrConnectAndList();
 }
 function checkCaseByNumber(portal){
   if(portal==='NET'){ openNetCase(true); return; }
@@ -657,7 +741,7 @@ function syncOpenNetCase(){ act('sync_current/NET','סנכרון התיק הפת
 /* Login failure → clear message + one-click retry */
 function showLoginRetry(kind, err){
   $('login-retry')?.remove();
-  const map={eca_sync:'eca_sync',eca_list:'eca_list',bdr_batch:'bdr_batch',
+  const map={eca_sync:'eca_sync',eca_list:'eca_list',bdr_batch:'bdr_batch',bdr_list:'bdr_list',
     net_smart_download:'net_list_cases',net_download_all:'net_download_all',
     net_list_cases:'net_list_cases',open_portal:'open_portal'};
   const retryKind=map[kind]||kind;

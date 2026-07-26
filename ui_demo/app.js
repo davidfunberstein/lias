@@ -5,12 +5,37 @@ let D = null, C = null, K = null, charts = {}, route = {v:'home'};
 
 /* ─── auth (demo, local only) ─── */
 function user(){ try{return JSON.parse(localStorage.getItem('lias_user'))}catch(e){return null} }
-function doLogin(e){
+/* Show the Google Authenticator field when a TOTP secret is configured. */
+async function _initLoginTotp(){
+  try{
+    const d = await (await fetch('/api/totp/status')).json();
+    const row = $('l-totp-row');
+    if(row) row.style.display = d.configured ? 'block' : 'none';
+  }catch(_){}
+}
+document.addEventListener('DOMContentLoaded', _initLoginTotp);
+
+async function doLogin(e){
   e.preventDefault();
   const role = $('l-role').value;
+  const err = $('l-err');
   const u = {role, name:$('l-name').value.trim(), email:$('l-email').value.trim(),
              username:$('l-user').value.trim(), remember:$('l-rem').checked,
              bdr_entity_type: role==='LAWYER'?'lawyer':role==='PLEADER'?'pleader':'private'};
+  // Server verifies the Authenticator code (when configured) and records the
+  // attempt in the login audit log — so every connection is accounted for.
+  try{
+    const r = await fetch('/api/app_login', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name:u.name, role:u.role, totp:($('l-totp')?.value||'').trim()})});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok || !d.ok){
+      if(d.need_totp && $('l-totp-row')) $('l-totp-row').style.display='block';
+      if(err){ err.style.display='block'; err.textContent = d.error || 'הכניסה נכשלה'; }
+      return;
+    }
+  }catch(_){ /* engine offline — allow local login, it is still logged locally */ }
+  if(err) err.style.display='none';
   (u.remember?localStorage:sessionStorage).setItem('lias_user', JSON.stringify(u));
   $('login').classList.add('hide');
   boot();
@@ -24,9 +49,11 @@ const JOB_LABELS = {net_sync_current:'סנכרון תיק NET', net_auto_update:
   bdr_batch:'הורדת אצווה BDR', open_portal:'פתיחת פורטל', reimport_csv:'התאמת DB',
   convert_md:'המרת מסמך לטקסט', purge_stale:'ניקוי רשומות', net_date_search:'חיפוש תאריכים',
   net_list_cases:'חיפוש תיקים בנט', net_smart_download:'הורדת תיקים מנט', net_download_all:'הורדת כל התיקים',
-  eca_sync:'סנכרון הוצאה לפועל'};
+  eca_sync:'סנכרון הוצאה לפועל', eca_list:'חיבור והצגת תיקי הוצל"פ',
+  bdr_list:'חיבור והצגת תיקי בד"ר', bdr_sync_current:'סנכרון תיק בד"ר'};
 const JOB_ICONS = {net_sync_current:'🔄', net_auto_update:'🔄', bdr_batch:'📥', eca_sync:'⚖️',
-  open_portal:'🌐', reimport_csv:'🗂', convert_md:'📝', purge_stale:'🧹', net_date_search:'🔎'};
+  open_portal:'🌐', reimport_csv:'🗂', convert_md:'📝', purge_stale:'🧹', net_date_search:'🔎',
+  eca_list:'⚖️', bdr_list:'📋'};
 const GROUP_COLORS = {'בקשה':'#2F7DF6','תגובה':'#7EB1FA','החלטה':'#0E1B29',
   'פסק דין':'#F5A623','פרוטוקול':'#3B82F6','אישור':'#C9D6CE','אחר':'#6B7570'};
 

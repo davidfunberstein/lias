@@ -377,9 +377,36 @@ def act_net_auto_update():
 
 
 @app.post("/api/actions/bdr_batch")
-def act_bdr_batch(force_rerun: bool = False, client_filter: str = ""):
-    return {"job_id": jobs.submit("bdr_batch", {"force_rerun": force_rerun,
-                                                "client_filter": client_filter})}
+async def act_bdr_batch(request: Request, force_rerun: bool = False,
+                        client_filter: str = ""):
+    """הורדת תיקי בד"ר — הכל, או רק התיקים שנבחרו ({"cases": [...]})."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    payload = {"force_rerun": body.get("force_rerun", force_rerun),
+               "client_filter": body.get("client_filter", client_filter),
+               "cases": body.get("cases") or []}
+    if body.get("user_mode"):
+        payload["user_mode"] = body["user_mode"]
+    return {"job_id": jobs.submit("bdr_batch", payload)}
+
+
+@app.post("/api/actions/bdr_list")
+def act_bdr_list():
+    """התחברות והצגת תיקי בד"ר לבחירה — כמו נט והוצל"פ."""
+    return {"job_id": jobs.submit("bdr_list", {})}
+
+
+@app.get("/api/bdr/cases")
+def get_bdr_cases():
+    """Latest BDR case list (same contract as /api/eca/cases)."""
+    try:
+        from LIAS.collector_bridge import get_last_bdr_cases
+        return {"cases": get_last_bdr_cases()}
+    except Exception:
+        return {"cases": []}
 
 
 @app.post("/api/actions/open_case_view")

@@ -43,6 +43,35 @@ def totp_now(secret: str, digits: int = 6, period: int = 30,
     return str(code).zfill(digits)
 
 
+def verify_totp(code: str, secret: str = "", window: int = 1) -> bool:
+    """Check a 6-digit code against the stored secret, allowing ±`window`
+    time-steps (30s each) for clock drift — the standard TOTP practice."""
+    code = (code or "").strip().replace(" ", "")
+    if not code.isdigit():
+        return False
+    secret = secret or get_totp_secret()
+    if not secret:
+        return False
+    now = time.time()
+    for step in range(-window, window + 1):
+        try:
+            if totp_now(secret, at=now + step * 30) == code:
+                return True
+        except Exception:
+            return False
+    return False
+
+
+def provisioning_uri(account: str = "LIAS", issuer: str = "LIAS") -> str:
+    """otpauth:// URI for enrolling this secret in Google Authenticator."""
+    from urllib.parse import quote
+    secret = get_totp_secret()
+    if not secret:
+        return ""
+    return (f"otpauth://totp/{quote(issuer)}:{quote(account)}"
+            f"?secret={secret}&issuer={quote(issuer)}&digits=6&period=30")
+
+
 def get_totp_secret() -> str:
     """Load the stored TOTP secret from the OS keychain (empty if none)."""
     try:
