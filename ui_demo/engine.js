@@ -1,7 +1,42 @@
 /* ─── engine control / הפעלת מנוע הסנכרון מהאתר ─── */
-let _netDownloadJobId=null, _pendingNetCases=[], _dlStats=null;
-try{ const _saved=sessionStorage.getItem('dlStats'); if(_saved) _dlStats=JSON.parse(_saved); }catch(_){}
+let _netDownloadJobId=null, _pendingNetCases=[];
+/* Per-portal download stats — each portal (NET/BDR/ECA) keeps its own live
+   stats so parallel downloads never overwrite each other in the panel
+   (previously a single _dlStats caused "shows NET while I'm on ECA"). */
+let _dlByPortal={};
+const PORTAL_LABELS={NET:'נט המשפט', BDR:'בית הדין הרבני', ECA:'הוצאה לפועל'};
+try{ const _saved=sessionStorage.getItem('dlByPortal'); if(_saved) _dlByPortal=JSON.parse(_saved)||{}; }catch(_){}
 try{ const _savedJid=sessionStorage.getItem('dlJobId'); if(_savedJid) _netDownloadJobId=+_savedJid; }catch(_){}
+function _saveDl(){ try{sessionStorage.setItem('dlByPortal',JSON.stringify(_dlByPortal));}catch(_){}}
+
+/* ── case-list helpers (sort + cumulative merge), field-tolerant across NET/ECA ── */
+function _caseId(c){ return c.CaseDisplayIdentifier || c.display_id || c.number || c.id || ''; }
+function _caseStatus(c){ return c.CaseStatusName || c.status || ''; }
+function _caseIsOpen(c){ const s=_caseStatus(c); return !s || /פתוח|פעיל|open/i.test(s); }
+/* derive a sortable date key from an explicit date field or the NNNN-MM-YY id */
+function _caseDateKey(c){
+  const d = c.date || c.OpenDate || c.open_date || '';
+  const m1 = String(d).match(/(\d{2,4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if(m1){ let y=+m1[1]; if(y<100)y+=2000; return y*10000 + (+m1[2])*100 + (+m1[3]); }
+  const id = String(_caseId(c));
+  const m2 = id.match(/(\d+)-(\d{2})-(\d{2})/);   // seq-MM-YY
+  if(m2){ return (2000+ +m2[3])*10000 + (+m2[2])*100; }
+  return 0;
+}
+/* open cases first, then newest date first */
+function _sortCasesForPicker(cases){
+  return cases.slice().sort((a,b)=>{
+    const oa=_caseIsOpen(a)?0:1, ob=_caseIsOpen(b)?0:1;
+    if(oa!==ob) return oa-ob;
+    return _caseDateKey(b)-_caseDateKey(a);
+  });
+}
+/* merge new cases into an existing list, deduped by case id (cumulative) */
+function _mergeCasesList(existing, incoming){
+  const byId={}; (existing||[]).forEach(c=>{ byId[_caseId(c)]=c; });
+  (incoming||[]).forEach(c=>{ byId[_caseId(c)]=Object.assign(byId[_caseId(c)]||{}, c); });
+  return Object.values(byId);
+}
 const SCOPE_LABELS = {all:'כל התיקים', selected:'תיקים מסוימים', related:'תיקים + קשורים'};
 
 let engineStarting=false;
@@ -139,10 +174,15 @@ function connectEngineSSE(){
     if(e.type==='net_cases'){ showNetCases(e.cases||[]); }
     if(e.type==='eca_cases'){ showEcaCases(e.cases||[]); }
     if(e.type==='download_stats'){
-      _dlStats=e; try{sessionStorage.setItem('dlStats',JSON.stringify(e));}catch(_){}
+      const portal=e.portal||'NET';
+      _dlByPortal[portal]=e; _saveDl();
       if(e.job_id && !_netDownloadJobId){ _netDownloadJobId=e.job_id; try{sessionStorage.setItem('dlJobId',e.job_id);}catch(_){} }
       _renderDlStats();
-      if(e.done>0 && e.done%3===0 && typeof refresh==='function') refresh(true);
+      if((e.docs_downloaded||e.done)>0 && (e.docs_downloaded||e.done)%3===0 && typeof refresh==='function') refresh(true);
+    }
+    if(e.type==='portal_done'){
+      logEvent(`✅ ${e.message||((e.label||'')+' — ההורדה הסתיימה')}`);
+      toast(e.message||`הורדת ${e.label||''} הסתיימה ✓`);
     }
     if(e.type==='job'){
       $('otp-box')?.remove();
@@ -151,10 +191,15 @@ function connectEngineSSE(){
         showJobBar(JOB_LABELS[e.kind]||`משימה #${e.job_id||''}`, e.progress, e.message||'');
       if(e.state==='COMPLETED'||e.state==='ERROR'){
         $('otp-box')?.remove();
-        if(e.kind==='net_smart_download'||e.kind==='net_download_all'){
-          _dlStats=null; _netDownloadJobId=null;
-          try{sessionStorage.removeItem('dlStats');sessionStorage.removeItem('dlJobId');}catch(_){}
-          const p=$('dl-stats-panel'); if(p) p.style.display='none';
+        // Clear the finished portal's live stats (per-portal, so a parallel
+        // portal's panel stays intact).
+        const KIND_PORTAL={net_smart_download:'NET',net_download_all:'NET',net_date_search:'NET',
+                           bdr_batch:'BDR',bdr_sync_current:'BDR',eca_sync:'ECA'};
+        const donePortal=KIND_PORTAL[e.kind];
+        if(donePortal){
+          delete _dlByPortal[donePortal]; _saveDl();
+          if(!Object.keys(_dlByPortal).length){ _netDownloadJobId=null; try{sessionStorage.removeItem('dlJobId');}catch(_){} }
+          _renderDlStats();
         }
         logEvent(`${JOB_LABELS[e.kind]||e.kind||'משימה'} — ${e.state}`);
         finishJobBar(e.state==='COMPLETED', e.error||'');
@@ -298,7 +343,7 @@ async function _refreshTasks(){
     const active = (jobs||[]).filter(j=>['RUNNING','PENDING'].includes(j.state));
     const recent = (jobs||[]).filter(j=>!['RUNNING','PENDING'].includes(j.state)).slice(0,5);
     window._activeJobs = active;
-    const st = _dlStats;
+    const activePortals = Object.keys(_dlByPortal);
     const CANCELLABLE = ['net_smart_download','net_download_all','bdr_batch','eca_sync'];
     const row = j=>`<div style="padding:8px 0;border-bottom:1px solid var(--line)">
       <div style="display:flex;align-items:center;gap:6px">
@@ -310,10 +355,10 @@ async function _refreshTasks(){
       <div style="font-size:11.5px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${j.message||j.error||''}</div>
     </div>`;
     el.innerHTML =
-      (st?`<div style="padding:8px 12px;margin-bottom:8px;border-radius:10px;background:var(--accent-soft,#eef4ff);font-weight:600">
-        ⬇ הורדה פעילה: <b>${st.done||0}</b>${st.total?'/'+st.total:''} מסמכים${st.cases_total?` · תיק ${st.case_idx||0}/${st.cases_total}`:''}
-        ${st.rate?` · ${st.rate}/דקה`:''} ${st.errors?` · <span style="color:var(--danger)">${st.errors} כשלו</span>`:''}
-      </div>`:'')
+      activePortals.map(p=>{const st=_dlByPortal[p];const docs=st.docs_downloaded||0;
+        return `<div style="padding:8px 12px;margin-bottom:8px;border-radius:10px;background:var(--accent-soft,#eef4ff);font-weight:600">
+        ⬇ <b>${PORTAL_LABELS[p]||p}</b>: תיק ${st.done||0}/${st.total||0} · ${docs} מסמכים${st.speed_per_min?` · ${st.speed_per_min}/דקה`:''} ${st.failed?` · <span style="color:var(--danger)">${st.failed} כשלו</span>`:''}
+      </div>`;}).join('')
       + (active.length? '<div style="font-weight:800;margin:4px 0;color:var(--accent-strong,#1d64d8)">רץ עכשיו / בהמתנה</div>'+active.map(row).join('')
                       : '<div class="empty" style="padding:16px 0">אין משימות פעילות כרגע</div>')
       + (recent.length? '<div style="font-weight:800;margin:12px 0 4px;opacity:.7">הסתיימו לאחרונה</div>'+recent.map(row).join('') : '');
@@ -400,6 +445,7 @@ function runBdrBatch(client_filter){
 }
 /* ECA: connect → list cases (with parties) → pick with checkboxes → download */
 let _ecaCases = [];
+try{ const _s=localStorage.getItem('ecaCasesAll'); if(_s) _ecaCases=JSON.parse(_s)||[]; }catch(_){}
 function ecaConnectAndList(){
   toast('מתחבר להוצאה לפועל ושולף תיקים…');
   logEvent('→ התחברות והצגת תיקי הוצל"פ');
@@ -408,24 +454,36 @@ function ecaConnectAndList(){
     picker.innerHTML='<div style="padding:10px;color:rgba(255,255,255,.7)">מתחבר לפורטל ההוצאה לפועל… (ייתכן שיידרש קוד אימות)</div>'; }
   act('eca_list','חיבור והצגת תיקי הוצל"פ');
 }
+function _ecaPartiesLine(c){
+  // Prefer the full parties list (both sides) harvested from גורמים בתיק;
+  // fall back to role + counter-party from the card.
+  if(Array.isArray(c.parties) && c.parties.length){
+    return c.parties.map(p=>`${p.role||''}: <b>${p.name||''}</b>`).join(' &nbsp;•&nbsp; ');
+  }
+  const me = c.role ? `${c.role}` : '';
+  return `${me}${c.party?`${me?' · ':''}הצד שכנגד: <b>${c.party}</b>`:''}`;
+}
 function showEcaCases(cases){
-  _ecaCases = cases||[];
+  // Cumulative + sorted (open on top, newest first), like NET.
+  _ecaCases = _mergeCasesList(_ecaCases, cases||[]);
+  try{ localStorage.setItem('ecaCasesAll', JSON.stringify(_ecaCases)); }catch(_){}
   const picker=$('sync-case-picker'); if(!picker) return;
   if(!_ecaCases.length){ picker.style.display='none'; toast('לא נמצאו תיקי הוצל"פ', true); return; }
+  const list=_sortCasesForPicker(_ecaCases); _ecaCases=list;
   picker.style.display='block';
   picker.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,.7);margin-bottom:6px">
-      נמצאו ${_ecaCases.length} תיקי הוצאה לפועל — סמן מה להוריד</div>
+      נמצאו ${list.length} תיקי הוצאה לפועל — סמן מה להוריד</div>
     <div style="display:flex;gap:6px;margin-bottom:8px">
       <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllEca(true)">סמן הכל</button>
       <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllEca(false)">נקה הכל</button>
     </div>
-    <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
-      ${_ecaCases.map((c,i)=>`<label style="display:flex;gap:8px;align-items:center;padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;cursor:pointer">
+    <div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
+      ${list.map((c,i)=>`<label style="display:flex;gap:8px;align-items:center;padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;cursor:pointer">
         <input type="checkbox" class="eca-cb" data-i="${i}" checked>
         <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:13px">${c.number} <span style="font-weight:400;opacity:.7">· ${c.type||''}</span></div>
-          <div style="font-size:11.5px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-            ${c.role||''}${c.party?` · הצד שכנגד: ${c.party}`:''}</div>
+          <div style="font-weight:700;font-size:13px">${c.number} <span style="font-weight:400;opacity:.7">· ${c.type||''}</span>${_caseIsOpen(c)?'':' <span style="font-size:10px;opacity:.5">· סגור</span>'}</div>
+          <div style="font-size:11.5px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            ${_ecaPartiesLine(c)}</div>
         </div>
       </label>`).join('')}
     </div>
@@ -538,7 +596,7 @@ function syncCard(el){
     if(_syncPlatform) pickPlatform(_syncPlatform);   // re-render with fresh settings
   }).catch(()=>{});
   if(_syncPlatform) pickPlatform(_syncPlatform);
-  if(_dlStats) _renderDlStats();
+  if(Object.keys(_dlByPortal).length) _renderDlStats();
 }
 
 function pickPlatform(p){
@@ -677,59 +735,71 @@ async function _startSmartDownload(mode, cases){
     if(picker){ picker.style.display='none'; picker.innerHTML=''; }
   }catch(e){ toast('שגיאה: '+e.message, true); }
 }
-function cancelNetDownload(){
-  const jid = _netDownloadJobId || sessionStorage.getItem('dlJobId');
+function cancelNetDownload(){ stopPortalDownload('NET'); }
+function stopPortalDownload(portal){
+  const s=_dlByPortal[portal]; const jid=(s&&s.job_id)||_netDownloadJobId;
   if(!jid){ toast('אין הורדה פעילה לבטל', true); return; }
-  act('cancel_download?job_id='+jid, 'ביטול הורדה');
+  act('cancel_download?job_id='+jid, 'ביטול הורדת '+(PORTAL_LABELS[portal]||portal));
   toast('שולח הוראת עצירה — ההורדה תיעצר אחרי התיק הנוכחי');
 }
+function stopCase(portal, caseId){
+  const s=_dlByPortal[portal]; const jid=s&&s.job_id;
+  if(!jid){ toast('אין הורדה פעילה', true); return; }
+  fetch('/api/proxy/actions/cancel_case',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({job_id:jid,case:caseId})})
+    .then(r=>{ if(r.ok) toast('עצירת תיק '+caseId+' — יידלג'); else toast('שגיאה', true); })
+    .catch(e=>toast('שגיאה: '+e.message,true));
+}
 function _renderDlStats(){
-  const s=_dlStats; if(!s) return;
+  const portals=Object.keys(_dlByPortal);
   let panel=$('dl-stats-panel');
+  if(!portals.length){ if(panel) panel.style.display='none'; return; }
   if(!panel){
     panel=document.createElement('div'); panel.id='dl-stats-panel';
     panel.style.cssText='position:fixed;top:80px;left:16px;z-index:120;width:min(380px,90vw);'
-      +'max-height:70vh;overflow-y:auto;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.35);direction:rtl';
+      +'max-height:80vh;overflow-y:auto;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.35);direction:rtl';
     document.body.appendChild(panel);
   }
   panel.style.display='block';
-  const pct = s.total? Math.round(s.done/s.total*100) : 0;
+  panel.innerHTML = portals.map(portal=>_renderPortalCard(portal, _dlByPortal[portal])).join('');
+}
+function _renderPortalCard(portal, s){
+  const pct = s.total? Math.round((s.done||0)/s.total*100) : 0;
   const elapsed = s.elapsed_sec||0;
   const mm = Math.floor(elapsed/60), ss = String(elapsed%60).padStart(2,'0');
-  const etaM = s.eta_sec? Math.floor(s.eta_sec/60) : 0;
-  const etaS = s.eta_sec? String(s.eta_sec%60).padStart(2,'0') : '00';
-  const currentLabel = s.current_name
-    ? `${s.current_case} — ${s.current_name}`
-    : s.current_case||'';
+  const currentLabel = s.current_name ? `${s.current_case} — ${s.current_name}` : (s.current_case||'');
 
   let casesHtml = '';
   const details = s.cases_detail||[];
   if(details.length){
-    const completed = new Set((s.completed_cases||[]).map(c=>c.id));
-    casesHtml = `<div style="margin-top:8px;max-height:180px;overflow-y:auto;font-size:11px;border-top:1px solid rgba(255,255,255,.1);padding-top:6px">
-      <b style="font-size:11.5px">תיקים (${s.done}/${s.total}):</b>
+    casesHtml = `<div style="margin-top:8px;max-height:200px;overflow-y:auto;font-size:11px;border-top:1px solid rgba(255,255,255,.1);padding-top:6px">
+      <b style="font-size:11.5px">תיקים (${s.done||0}/${s.total||0}):</b>
       ${details.map(c=>{
-        const isCurrent = c.id===s.current_case;
-        const isDone = completed.has(c.id);
-        const icon = isDone?'✓':isCurrent?'⏳':'·';
-        const opacity = isDone?'.5':isCurrent?'1':'.65';
-        const weight = isCurrent?'bold':'normal';
-        const clickable = isDone ? `cursor:pointer` : '';
-        const onclick = isDone ? `onclick="closeDlPanel();_goToCaseByNumber('${c.id}')"` : '';
-        return `<div style="padding:3px 0;opacity:${opacity};font-weight:${weight};border-bottom:1px solid rgba(255,255,255,.05);${clickable}" ${onclick}>
-          ${icon} <b>${c.id}</b> ${c.name||''}<br>
-          <span style="color:rgba(255,255,255,.4);font-size:10px">${c.court||''} · ${c.type||''} · ${c.interest||''} · ${c.status||''}</span>
+        const st=c.status||'pending';
+        const icon = st==='done'?'✓':st==='downloading'?'⏳':st==='failed'?'✗':st==='skipped'?'⏭':'·';
+        const opacity = st==='done'?'.6':st==='downloading'?'1':'.7';
+        const weight = st==='downloading'?'bold':'normal';
+        const clickable = st==='done' ? 'cursor:pointer' : '';
+        const onclick = st==='done' ? `onclick="closeDlPanel();_goToCaseByNumber('${c.id}')"` : '';
+        // per-case stop button only while pending/downloading
+        const stopBtn = (st==='pending'||st==='downloading')
+          ? `<button title="עצור תיק זה" onclick="event.stopPropagation();stopCase('${portal}','${c.id}')" style="background:none;border:none;cursor:pointer;color:#ef9a9a;font-size:12px;padding:0 4px">⏹</button>`
+          : '';
+        return `<div style="display:flex;align-items:center;gap:4px;padding:3px 0;opacity:${opacity};font-weight:${weight};border-bottom:1px solid rgba(255,255,255,.05)">
+          <div style="flex:1;min-width:0;${clickable}" ${onclick}>
+            ${icon} <b>${c.id}</b> ${c.name||''}
+            <span style="color:rgba(255,255,255,.4);font-size:10px">${c.type||''}${c.court?' · '+c.court:''}</span>
+          </div>${stopBtn}
         </div>`;
       }).join('')}
     </div>`;
   }
 
-  panel.innerHTML=`<div style="background:var(--card-bg,#1a2332);border:1px solid rgba(255,255,255,.2);border-radius:12px;padding:12px 16px">
+  return `<div style="background:var(--card-bg,#1a2332);border:1px solid rgba(255,255,255,.2);border-radius:12px;padding:12px 16px;margin-bottom:10px">
     <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:6px">
-      <b>הורדה פעילה</b>
+      <b>⬇ ${PORTAL_LABELS[portal]||portal}</b>
       <div style="display:flex;gap:8px;align-items:center">
-        <span>${pct}% · ${s.done}/${s.total} תיקים</span>
-        <button onclick="closeDlPanel()" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.5);font-size:14px">✕</button>
+        <span>${pct}% · ${s.done||0}/${s.total||0} תיקים</span>
       </div></div>
     <div style="height:7px;background:rgba(255,255,255,.12);border-radius:4px;overflow:hidden;margin-bottom:8px">
       <div style="height:100%;width:${pct}%;background:var(--accent);transition:width .4s"></div></div>
@@ -740,12 +810,11 @@ function _renderDlStats(){
       <span>מסמכים: ${s.docs_downloaded||0}</span>
       <span>קצב: ${s.speed_per_min||0}/דק׳</span>
       <span>זמן: ${mm}:${ss}</span>
-      ${s.eta_sec?`<span>צפי סיום: ~${etaM}:${etaS}</span>`:''}
     </div>
     ${s.output_dir?`<div style="font-size:10px;color:rgba(255,255,255,.35);margin-top:6px;word-break:break-all">📁 ${s.output_dir}</div>`:''}
     ${casesHtml}
     <button class="btn-accent" style="margin-top:10px;font-size:12px;padding:6px 14px;background:rgba(198,40,40,.8)"
-      onclick="cancelNetDownload()">⏹ עצור הורדה</button>
+      onclick="stopPortalDownload('${portal}')">⏹ עצור הורדת ${PORTAL_LABELS[portal]||portal}</button>
   </div>`;
 }
 
@@ -759,20 +828,28 @@ function _goToCaseByNumber(displayId){
 
 /* ─── NET cases checkbox picker — inline in sync card ─── */
 /* This second definition overrides the first showNetCases above. */
+let _allNetCases=[];
+try{ const _s=localStorage.getItem('netCasesAll'); if(_s) _allNetCases=JSON.parse(_s)||[]; }catch(_){}
 function showNetCases(cases){
-  _pendingNetCases = cases;
-  if(!cases.length){
+  // Cumulative: remember every case ever shown + merge newly-arrived ones,
+  // so the list stays and grows instead of resetting after each run.
+  _allNetCases = _mergeCasesList(_allNetCases, cases||[]);
+  try{ localStorage.setItem('netCasesAll', JSON.stringify(_allNetCases)); }catch(_){}
+  _pendingNetCases = _allNetCases;
+  if(!_allNetCases.length){
     toast('לא נמצאו תיקים בפורטל', true);
     return;
   }
   // Navigate to sync tab so the picker is visible
   if(route.v !== 'sync'){ go('sync'); }
   // Wait for DOM to render sync card
-  setTimeout(()=>_renderNetCasesPicker(cases), 200);
+  setTimeout(()=>_renderNetCasesPicker(_allNetCases), 200);
 }
 function _renderNetCasesPicker(cases){
   const picker = $('sync-case-picker');
   if(!picker){ setTimeout(()=>_renderNetCasesPicker(cases), 300); return; }
+  cases = _sortCasesForPicker(cases);   // open on top, newest first
+  _pendingNetCases = cases;
   const _esc = s => (s||'').replace(/"/g, '״').replace(/'/g, '׳');
   picker.style.display='block';
   picker.innerHTML=`<div style="font-size:13px;color:rgba(255,255,255,.85);margin-bottom:8px;font-weight:700">

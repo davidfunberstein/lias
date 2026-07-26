@@ -278,27 +278,47 @@ def eca_list(payload: dict, ctx: JobContext) -> str:
     def _run(page):
         import sys
         sys.path.insert(0, str(config.PROJECT_ROOT))
-        from eca_download import _login_eca, _extract_cases, OPEN_CASES_URL
+        from eca_download import (_login_eca, _extract_cases, _open_motions_tab,
+                                  _harvest_parties, OPEN_CASES_URL)
         import time as _t
         if not _login_eca(page):
             raise RuntimeError("ההתחברות להוצאה לפועל נכשלה")
         if "/home/OpenCase" not in (page.url or ""):
             page.goto(OPEN_CASES_URL, wait_until="domcontentloaded", timeout=30000)
             _t.sleep(3)
-        return _extract_cases(page)
+        cases = _extract_cases(page)
+        # Enrich each case with BOTH parties (client + counter-party) by
+        # entering the גורמים בתיק tab — so the picker shows both sides, not
+        # only the counter-party (req: "צריך את שני הצדדים").
+        for c in cases:
+            try:
+                if _open_motions_tab(page, c["number"]):
+                    c["parties"] = _harvest_parties(page)
+            except Exception:
+                pass
+        return cases
 
     _saved = ctx.browser
     ctx.browser = eca
     try:
-        cases = _run_portal(ctx, "eca_list", _run, timeout=600)
+        cases = _run_portal(ctx, "eca_list", _run, timeout=900)
     finally:
         ctx.browser = _saved
-    # Persist so the UI can fetch even if it missed the live broadcast (the
-    # login+OTP can take minutes, during which an SSE reconnect drops events).
+    # Persist CUMULATIVELY so the UI keeps every case ever listed (merge by
+    # number) and the picker survives a missed SSE broadcast / re-render.
     global _LAST_ECA_CASES
-    _LAST_ECA_CASES = cases
-    jobs.broadcast({"type": "eca_cases", "cases": cases})
+    _LAST_ECA_CASES = _merge_case_lists(_LAST_ECA_CASES, cases)
+    jobs.broadcast({"type": "eca_cases", "cases": _LAST_ECA_CASES})
+    _finish_portal(ctx, eca, "ECA", "הוצאה לפועל")
     return f"נמצאו {len(cases)} תיקי הוצל\"פ"
+
+
+def _merge_case_lists(existing: list, incoming: list) -> list:
+    """Merge case dicts by 'number', newest data winning — cumulative list."""
+    by_num = {c.get("number"): dict(c) for c in (existing or [])}
+    for c in (incoming or []):
+        by_num.setdefault(c.get("number"), {}).update(c)
+    return list(by_num.values())
 
 
 # last ECA case list — served via /api/eca/cases so the picker survives an
@@ -323,6 +343,7 @@ def eca_sync(payload: dict, ctx: JobContext) -> str:
     ctx.browser = eca
     ctx.progress(0.05, "מתחבר להוצאה לפועל…")
     _cancel_flags[ctx.job_id] = False
+    _cancel_cases[ctx.job_id] = set()
 
     def _run(page):
         import sys
@@ -330,14 +351,17 @@ def eca_sync(payload: dict, ctx: JobContext) -> str:
         from eca_download import run_eca_download
         cases = payload.get("cases") or None
         return run_eca_download(page, config.COURT_DOCS_DIR, cases_filter=cases,
-                                progress=ctx.progress,
-                                should_cancel=lambda: _cancel_flags.get(ctx.job_id))
+                                progress=ctx.progress, job_id=ctx.job_id,
+                                should_cancel=lambda case=None: _is_case_cancelled(ctx.job_id, case))
 
     try:
         result = _run_portal(ctx, "eca_sync", _run, timeout=3600)
     finally:
         ctx.browser = _saved
         _cancel_flags.pop(ctx.job_id, None)
+        _cancel_cases.pop(ctx.job_id, None)
+        # Download finished — close the ECA window and tell the user (req #6).
+        _finish_portal(ctx, eca, "ECA", "הוצאה לפועל")
     ctx.progress(0.9, "מייבא לדשבורד…")
     n = _reimport_folder(config.COURT_DOCS_DIR / "downloads")
     _drive_sync(ctx, "אחרי סנכרון הוצל\"פ")
@@ -422,6 +446,25 @@ def _run_portal(ctx: JobContext, name: str, fn, timeout: int):
     raise BrowserDead(
         f"{name}: הפורטל חסם את כל הנסיונות ({len(ladder)}). {diag} "
         f"שגיאה אחרונה: {last_exc}")
+
+
+def _finish_portal(ctx: JobContext, browser, portal: str, label: str) -> None:
+    """A portal download finished — hide/close its visible window and notify the
+    user (req #6). The browser goes back to headless so it's ready for next time
+    without leaving an idle window open."""
+    try:
+        # A visible window was shown for the sync — put it back to headless
+        # (closes the on-screen window) now that the download is done.
+        if browser is not None and not getattr(browser, "_headless", True):
+            browser.hide()
+    except Exception:
+        pass
+    try:
+        jobs.broadcast({"type": "portal_done", "portal": portal, "label": label,
+                        "job_id": ctx.job_id,
+                        "message": f"הורדת {label} הסתיימה — החלון נסגר ✓"})
+    except Exception:
+        pass
 
 
 def _probe_net() -> str:
@@ -887,11 +930,29 @@ def net_date_search(payload: dict, ctx: JobContext) -> str:
 
 # Cancel flag — checked between cases so the user can stop mid-batch.
 _cancel_flags: dict[int, bool] = {}
+# Per-case cancel — {job_id: set(case_numbers)} so the user can stop ONE case
+# without aborting the whole batch.
+_cancel_cases: dict[int, set] = {}
 
 
 def cancel_download(job_id: int) -> None:
-    """Signal a running net_smart_download / bdr_batch to stop after the current case."""
+    """Signal a running net_smart_download / bdr_batch / eca_sync to stop after
+    the current case (stop-all)."""
     _cancel_flags[job_id] = True
+
+
+def cancel_case(job_id: int, case_number: str) -> None:
+    """Signal a running download to SKIP one specific case (per-case stop)."""
+    _cancel_cases.setdefault(job_id, set()).add(str(case_number))
+
+
+def _is_case_cancelled(job_id: int, case_number=None) -> bool:
+    """should_cancel(case) helper: stop-all, or this specific case."""
+    if _cancel_flags.get(job_id):
+        return True
+    if case_number is None:
+        return False
+    return str(case_number) in _cancel_cases.get(job_id, set())
 
 
 @handler("net_list_cases")

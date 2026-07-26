@@ -33,7 +33,8 @@ BASE_URL = "https://publicsso.eca.gov.il"
 
 # live download counters (broadcast to the UI tasks balloon)
 _STATS = {"done": 0, "errors": 0, "total": 0, "case_idx": 0, "cases_total": 0,
-          "t0": 0.0}
+          "t0": 0.0, "job_id": None, "current_case": "", "current_name": "",
+          "cases_detail": [], "output_dir": ""}
 
 
 def _stats_tick(status: str) -> None:
@@ -41,16 +42,28 @@ def _stats_tick(status: str) -> None:
         _STATS["done"] += 1
     elif status == "fail":
         _STATS["errors"] += 1
+    _broadcast_eca_stats()
+
+
+def _broadcast_eca_stats() -> None:
+    """Emit the SAME normalized, portal-tagged shape NET uses so the UI can key
+    stats per portal (no more cross-portal mixups / 'undefined/N')."""
     try:
         from LIAS import jobs as _jobs
         mins = max((time.time() - _STATS["t0"]) / 60.0, 0.05)
         _jobs.broadcast({"type": "download_stats", "portal": "ECA",
-                         "done": _STATS["done"], "errors": _STATS["errors"],
-                         # ECA total isn't known upfront (discovered per case) —
-                         # report case progress as the primary metric.
-                         "case_idx": _STATS["case_idx"],
-                         "cases_total": _STATS["cases_total"],
-                         "rate": round(_STATS["done"] / mins, 1)})
+                         "job_id": _STATS.get("job_id"),
+                         "done": _STATS["case_idx"],          # cases finished
+                         "total": _STATS["cases_total"],       # cases total
+                         "failed": _STATS["errors"],
+                         "docs_downloaded": _STATS["done"],
+                         "current_case": _STATS.get("current_case", ""),
+                         "current_name": _STATS.get("current_name", ""),
+                         "remaining": max(_STATS["cases_total"] - _STATS["case_idx"], 0),
+                         "speed_per_min": round(_STATS["done"] / mins, 1),
+                         "elapsed_sec": round(time.time() - _STATS["t0"]) if _STATS["t0"] else 0,
+                         "cases_detail": _STATS.get("cases_detail", []),
+                         "output_dir": _STATS.get("output_dir", "")})
     except Exception:
         pass
 OPEN_CASES_URL = f"{BASE_URL}/he/home/OpenCase"
@@ -710,35 +723,48 @@ def _expand_all_rows(page) -> None:
         pass
 
 
-def _collect_case_parties(page, case_dir: Path) -> dict:
-    """First visit to a case: open the 'גורמים בתיק' tab and harvest each
-    party's role, name and ID into case_info.json (cached — parties rarely
-    change, so we only do this when the file is missing)."""
-    info_path = case_dir / "case_info.json"
-    if info_path.exists():
+def _harvest_parties(page) -> list[dict]:
+    """Open the 'גורמים בתיק' tab and return EVERY party [{role,name,id}] — both
+    sides (זוכה + חייב + באי־כוח). Pure: navigates + reads, writes nothing.
+    Tries several selectors so a markup tweak doesn't silently return nothing."""
+    parties: list[dict] = []
+    # Click into the parties tab (id, then Hebrew-text fallbacks).
+    clicked = False
+    for sel in ("#CaseParties",
+                'div[role="tab"]:has-text("גורמים")',
+                'a:has-text("גורמים בתיק")',
+                'button:has-text("גורמים בתיק")',
+                '*:has-text("גורמים בתיק") >> visible=true'):
         try:
-            return json.loads(info_path.read_text(encoding="utf-8"))
+            tab = page.locator(sel).first
+            if tab.count() > 0 and tab.is_visible(timeout=1500):
+                tab.click()
+                clicked = True
+                time.sleep(2)
+                break
         except Exception:
-            pass
-    import json as _json
-    parties = []
+            continue
+    if not clicked:
+        _log("  ⚠ לא נמצא טאב 'גורמים בתיק' — מדלג על איסוף צדדים")
+        return parties
     try:
-        tab = page.locator("#CaseParties").first
-        if tab.count() == 0:
-            return {}
-        tab.click()
-        time.sleep(2)
-        # expand every role group (זוכה / חייב / בא כוח…)
         headers = page.locator("#table-groups-expansion mat-expansion-panel-header").all()
+        if not headers:
+            headers = page.locator("mat-expansion-panel-header").all()
         for h in headers:
             try:
                 role = h.locator("span.bold").first.inner_text(timeout=1000).strip()
+            except Exception:
+                try:
+                    role = h.inner_text(timeout=1000).strip().split("\n")[0]
+                except Exception:
+                    role = ""
+            try:
                 if h.get_attribute("aria-expanded") != "true":
                     h.click()
-                    time.sleep(1.2)
+                    time.sleep(1.0)
             except Exception:
-                continue
-            # inside: app-case-party-general rows of מעמד/זיהוי/שם
+                pass
             for grp in page.locator("app-case-party-general").all():
                 try:
                     labels = [x.strip() for x in grp.inner_text(timeout=1500).split("\n") if x.strip()]
@@ -754,6 +780,20 @@ def _collect_case_parties(page, case_dir: Path) -> dict:
                     continue
     except Exception as e:
         _log(f"  ⚠ גורמים בתיק: {e}")
+    return parties
+
+
+def _collect_case_parties(page, case_dir: Path) -> dict:
+    """First visit to a case: harvest all parties into case_info.json (cached —
+    parties rarely change, so we only do this when the file is missing)."""
+    import json as _json
+    info_path = case_dir / "case_info.json"
+    if info_path.exists():
+        try:
+            return json.loads(info_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    parties = _harvest_parties(page)
     info = {"parties": parties}
     if parties:
         try:
@@ -766,7 +806,8 @@ def _collect_case_parties(page, case_dir: Path) -> dict:
     return info
 
 
-def _process_case(page, case: dict, output_dir: Path, by_client: bool = False) -> None:
+def _process_case(page, case: dict, output_dir: Path, by_client: bool = False,
+                  should_cancel=None) -> None:
     case_num = case["number"]
     if by_client:
         client = _sanitize(case.get("party") or "ללא שם")
@@ -799,6 +840,9 @@ def _process_case(page, case: dict, output_dir: Path, by_client: bool = False) -
     _log(f"  {len(rows_data)} שורות נמצאו")
 
     for rd in rows_data:
+        if should_cancel and should_cancel():
+            _log(f"  ⏹ עצירת תיק {case_num} באמצע (בקשת המשתמש)")
+            break
         proc = rd["process"]
         applicant = _sanitize(rd["applicant"] or "")
         date = _sanitize(rd["date"] or "")
@@ -865,12 +909,14 @@ def _write_case_manifest(case_dir: Path, case_num: str) -> None:
 # ---------------------------------------------------------------------------
 
 def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None = None,
-                     progress=None, should_cancel=None) -> str:
+                     progress=None, should_cancel=None, job_id=None) -> str:
     """Download all ECA cases into root_output_dir/downloads/{client}/הוצאה לפועל/{case}.
 
     Assumes the caller provides a Playwright page; handles ECA login itself
     (reuses gov.il auto-login). `progress(fraction, message)` — optional
     callback so the job bar / tasks balloon reflect per-case progress.
+    `should_cancel(case_num=None)` — return True to stop everything, or True for
+    a specific case_num to skip just that case (per-case stop).
     Returns a short summary string.
     """
     install_eca_asset_fix(page)
@@ -893,25 +939,62 @@ def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None
     if not cases:
         return "לא נמצאו תיקי הוצאה לפועל"
 
+    def _cancel(case_num=None) -> bool:
+        if not should_cancel:
+            return False
+        try:
+            return bool(should_cancel(case_num))
+        except TypeError:            # older callers pass a zero-arg callable
+            return bool(should_cancel())
+
     _STATS.update(done=0, errors=0, total=0, case_idx=0,
-                  cases_total=len(cases), t0=time.time())
+                  cases_total=len(cases), t0=time.time(), job_id=job_id,
+                  current_case="", current_name="",
+                  output_dir=str(downloads_dir),
+                  cases_detail=[{"id": c["number"],
+                                 "name": c.get("party", ""),
+                                 "type": c.get("type", ""),
+                                 "status": "pending"} for c in cases])
+    _by_id = {c["id"]: c for c in _STATS["cases_detail"]}
     ok = 0
+    skipped = 0
     for case in cases:
-        if should_cancel and should_cancel():
+        if _cancel():                                    # stop-all
             _log("⏹ ההורדה נעצרה על ידי המשתמש")
             return f"נעצר: {ok}/{len(cases)} תיקים ({_STATS['done']} מסמכים)"
+        cnum = case["number"]
+        if _cancel(cnum):                                # skip just this case
+            _log(f"⏭ דילוג על תיק {cnum} (בוטל על ידי המשתמש)")
+            if cnum in _by_id:
+                _by_id[cnum]["status"] = "skipped"
+            skipped += 1
+            _STATS["case_idx"] += 1
+            _broadcast_eca_stats()
+            continue
         _STATS["case_idx"] += 1
+        _STATS["current_case"] = cnum
+        _STATS["current_name"] = case.get("party", "")
+        if cnum in _by_id:
+            _by_id[cnum]["status"] = "downloading"
+        _broadcast_eca_stats()
         if progress:
             # spread cases across 0.15..0.85 of the bar
             frac = 0.15 + 0.70 * (_STATS["case_idx"] - 1) / max(len(cases), 1)
-            progress(frac, f"תיק {_STATS['case_idx']}/{len(cases)}: {case['number']}")
+            progress(frac, f"תיק {_STATS['case_idx']}/{len(cases)}: {cnum}")
         try:
-            _process_case(page, case, downloads_dir, by_client=True)
+            _process_case(page, case, downloads_dir, by_client=True,
+                          should_cancel=lambda: _cancel() or _cancel(cnum))
             ok += 1
+            if cnum in _by_id:
+                _by_id[cnum]["status"] = "done"
         except Exception as e:
-            _log(f"✗ שגיאה בתיק {case['number']}: {e}")
+            _log(f"✗ שגיאה בתיק {cnum}: {e}")
+            if cnum in _by_id:
+                _by_id[cnum]["status"] = "failed"
+        _broadcast_eca_stats()
         time.sleep(1)
-    return f"הוצל\"פ: {ok}/{len(cases)} תיקים ({_STATS['done']} מסמכים, {_STATS['errors']} כשלו)"
+    tail = f" ({skipped} דולגו)" if skipped else ""
+    return f"הוצל\"פ: {ok}/{len(cases)} תיקים ({_STATS['done']} מסמכים, {_STATS['errors']} כשלו){tail}"
 
 
 # ---------------------------------------------------------------------------

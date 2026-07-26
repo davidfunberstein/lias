@@ -407,9 +407,30 @@ def get_eca_cases():
 
 
 @app.post("/api/actions/eca_sync")
-def act_eca_sync():
-    """הורדת כל תיקי ההוצאה לפועל לפי לקוח."""
-    return {"job_id": jobs.submit("eca_sync", {})}
+async def act_eca_sync(request: Request):
+    """הורדת תיקי ההוצאה לפועל — הכל, או רק התיקים שנבחרו ({"cases": [...]})."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    return {"job_id": jobs.submit("eca_sync", body or {})}
+
+
+@app.post("/api/actions/cancel_case")
+async def act_cancel_case(request: Request):
+    """Stop the download of ONE specific case without aborting the batch."""
+    from .collector_bridge import cancel_case
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    job_id = int(body.get("job_id") or 0)
+    case = str(body.get("case") or "")
+    if job_id and case:
+        cancel_case(job_id, case)
+    return {"ok": bool(job_id and case)}
 
 
 @app.post("/api/actions/net_date_search")
