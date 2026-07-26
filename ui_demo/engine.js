@@ -441,17 +441,17 @@ function bdrConnectAndList(){
     picker.innerHTML='<div style="padding:10px;color:rgba(255,255,255,.7)">מתחבר לבית הדין הרבני… (ייתכן שיידרש קוד אימות)</div>'; }
   act('bdr_list','חיבור והצגת תיקי בד"ר');
 }
-function runBdrBatch(client_filter, cases){
+function runBdrBatch(client_filter, cases, sub_cases){
   client_filter = client_filter || '';
-  const n = (cases||[]).length;
-  toast(n ? `מוריד ${n} תיקי בד"ר…`
+  const n = (cases||[]).length, m = (sub_cases||[]).length;
+  toast(n||m ? `מוריד ${n?n+' תיקים':''}${n&&m?' · ':''}${m?m+' תת-תיקים':''}…`
           : (client_filter ? `מוריד תיקי בד"ר של "${client_filter}"…`
                            : 'מתחבר לבית הדין הרבני ומוריד את כל התיקים…'));
-  logEvent('→ הורדת תיקי BDR' + (n? ` (${n} נבחרו)` : (client_filter? ' — '+client_filter : ' (הכל)')));
+  logEvent('→ הורדת תיקי BDR' + (n||m? ` (${n} תיקים, ${m} תת-תיקים)` : (client_filter? ' — '+client_filter : ' (הכל)')));
   fetch('/api/proxy/actions/bdr_batch', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({client_filter, cases: cases||[]})
+    body: JSON.stringify({client_filter, cases: cases||[], sub_cases: sub_cases||[]})
   }).then(r=>{
     if(r.ok) toast('הורדת BDR הופעלה ✓');
     else toast('שגיאה בהפעלת BDR', true);
@@ -668,46 +668,114 @@ function pickPlatform(p){
       .then(d=>{ if(d.cases && d.cases.length) showBdrCases(d.cases); })
       .catch(()=>{});
   }
+  if(p==='NET' && scope==='selected'){
+    // Show the cached NET list immediately; a new search only ADDS to it.
+    fetch('/api/proxy/net/cases').then(r=>r.json())
+      .then(d=>{ if(d.cases && d.cases.length) showNetCases(d.cases); })
+      .catch(()=>{ if(_allNetCases.length) showNetCases([]); });
+  }
 }
 /* ── BDR case picker — same contract/behaviour as the ECA one ── */
 let _bdrCases = [];
 try{ const _s=localStorage.getItem('bdrCasesAll'); if(_s) _bdrCases=JSON.parse(_s)||[]; }catch(_){}
 let _bdrHandled = new Set();
 try{ const _h=localStorage.getItem('bdrHandled'); if(_h) _bdrHandled=new Set(JSON.parse(_h)||[]); }catch(_){}
+/* status chip — open (green) / closed + date (grey) */
+function _statusChip(status, closeDate, openDate){
+  const closed = status==='סגור' || !!(closeDate||'').trim();
+  if(closed){
+    const d=(closeDate||'').trim();
+    return `<span style="font-size:10.5px;padding:1px 7px;border-radius:999px;
+      background:rgba(150,150,150,.22);color:#c9c9c9;white-space:nowrap">
+      ✔ נסגר${d?' · '+d:''}</span>`;
+  }
+  const d=(openDate||'').trim();
+  return `<span style="font-size:10.5px;padding:1px 7px;border-radius:999px;
+    background:rgba(52,199,89,.20);color:#5ede83;white-space:nowrap">
+    ● פתוח${d?' · מ-'+d:''}</span>`;
+}
 function showBdrCases(cases){
   _bdrCases = _mergeCasesList(_bdrCases, cases||[]);
   try{ localStorage.setItem('bdrCasesAll', JSON.stringify(_bdrCases)); }catch(_){}
   const picker=$('sync-case-picker'); if(!picker) return;
   if(!_bdrCases.length){ picker.style.display='none'; toast('לא נמצאו תיקי בד"ר', true); return; }
   const list=_sortCasesForPicker(_bdrCases); _bdrCases=list;
+  const totalSubs=list.reduce((n,c)=>n+((c.sub_cases||[]).length||0),0);
   picker.style.display='block';
   picker.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,.7);margin-bottom:6px">
-      נמצאו ${list.length} תיקי בית הדין הרבני — סמן מה להוריד</div>
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="document.querySelectorAll('.bdr-cb').forEach(cb=>cb.checked=true)">סמן הכל</button>
-      <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="document.querySelectorAll('.bdr-cb').forEach(cb=>cb.checked=false)">נקה הכל</button>
+      נמצאו ${list.length} תיקים${totalSubs?` · ${totalSubs} תת-תיקים`:''} — סמן תיק שלם או תת-תיק מסוים</div>
+    <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+      <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_bdrSelectAll(true)">סמן הכל</button>
+      <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_bdrSelectAll(false)">נקה הכל</button>
+      <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_bdrSelectOpen()">רק תיקים פתוחים</button>
     </div>
-    <div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
+    <div style="max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">
       ${list.map((c,i)=>{
         const done=_bdrHandled.has(c.number);
-        return `<label style="display:flex;gap:8px;align-items:center;padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;cursor:pointer${done?';opacity:.72':''}">
-        <input type="checkbox" class="bdr-cb" data-i="${i}" ${done?'':'checked'}>
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:13px">${c.number}
-            <span style="font-weight:400;opacity:.7">· ${c.type||''}</span>
-            ${done?' <span style="font-size:10px;color:var(--accent-strong,#7fb3ff)">· ✓ הורד</span>':''}</div>
-          <div style="font-size:11.5px;opacity:.85;line-height:1.5">${_ecaPartiesLine(c)}</div>
-        </div>
-      </label>`;}).join('')}
+        const subs=c.sub_cases||[];
+        return `<div style="border:1px solid rgba(255,255,255,.14);border-radius:9px;padding:7px 10px${done?';opacity:.75':''}">
+        <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" class="bdr-cb" data-i="${i}" data-whole="1" ${done?'':'checked'}
+                 onchange="_bdrToggleWhole(${i}, this.checked)">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:13px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <span>תיק ${c.number}</span>
+              <span style="font-weight:400;opacity:.7">· ${c.type||''}</span>
+              ${_statusChip(c.status, c.close_date, c.open_date)}
+              ${subs.length?`<span style="font-size:10px;opacity:.6">(${subs.length} תת-תיקים — תיק שלם)</span>`:''}
+              ${done?'<span style="font-size:10px;color:var(--accent-strong,#7fb3ff)">✓ הורד</span>':''}
+            </div>
+            <div style="font-size:11.5px;opacity:.85;line-height:1.5">
+              <span style="opacity:.7">בין:</span> <b>${c.party||'—'}</b>
+              ${c.court?` &nbsp;•&nbsp; <span style="opacity:.7">ערכאה:</span> <b>${c.court}</b>`:''}
+            </div>
+          </div>
+        </label>
+        ${subs.length?`<div style="margin-inline-start:24px;margin-top:5px;display:flex;flex-direction:column;gap:3px">
+          ${subs.map((s,j)=>`<label style="display:flex;gap:7px;align-items:center;cursor:pointer;font-size:11.5px">
+            <input type="checkbox" class="bdr-sub-cb" data-i="${i}" data-j="${j}" ${done?'':'checked'}>
+            <span style="flex:1;min-width:0">
+              <b>${s.sub_id}</b> <span style="opacity:.75">${s.procedure||''}</span>
+              ${s.court?`<span style="opacity:.6"> · ${s.court}</span>`:''}
+            </span>
+            ${_statusChip(s.status, s.close_date, s.open_date)}
+          </label>`).join('')}
+        </div>`:''}
+      </div>`;}).join('')}
     </div>
     <button class="btn-accent" style="width:100%;margin-top:10px;padding:12px" onclick="runBdrSelected()">⬇ הורד את המסומנים</button>`;
 }
+function _bdrSelectAll(v){
+  document.querySelectorAll('.bdr-cb,.bdr-sub-cb').forEach(cb=>cb.checked=v);
+}
+function _bdrSelectOpen(){
+  document.querySelectorAll('.bdr-cb').forEach(cb=>{
+    const c=_bdrCases[+cb.dataset.i]; cb.checked = (c && c.status!=='סגור');
+  });
+  document.querySelectorAll('.bdr-sub-cb').forEach(cb=>{
+    const c=_bdrCases[+cb.dataset.i]; const s=(c&&c.sub_cases||[])[+cb.dataset.j];
+    cb.checked = !!(s && s.status!=='סגור');
+  });
+}
+/* checking a whole case checks all of its sub-cases */
+function _bdrToggleWhole(i, checked){
+  document.querySelectorAll(`.bdr-sub-cb[data-i="${i}"]`).forEach(cb=>cb.checked=checked);
+}
 function runBdrSelected(){
-  const picked=[...document.querySelectorAll('.bdr-cb:checked')].map(cb=>_bdrCases[+cb.dataset.i]);
-  if(!picked.length){ toast('לא סומן אף תיק', true); return; }
-  picked.forEach(c=>_bdrHandled.add(c.number));
+  // A case is requested either whole (parent ticked) or per sub-case.
+  const picked=new Set();
+  document.querySelectorAll('.bdr-cb:checked').forEach(cb=>{
+    const c=_bdrCases[+cb.dataset.i]; if(c) picked.add(c.number);
+  });
+  const subs=[];
+  document.querySelectorAll('.bdr-sub-cb:checked').forEach(cb=>{
+    const c=_bdrCases[+cb.dataset.i]; const s=(c&&c.sub_cases||[])[+cb.dataset.j];
+    if(s) subs.push(s.sub_id);
+  });
+  if(!picked.size && !subs.length){ toast('לא סומן אף תיק', true); return; }
+  picked.forEach(n=>_bdrHandled.add(n));
   try{ localStorage.setItem('bdrHandled', JSON.stringify([..._bdrHandled])); }catch(_){}
-  runBdrBatch('', picked.map(c=>c.number));
+  runBdrBatch('', [...picked], subs);
   const picker=$('sync-case-picker'); if(picker) picker.style.display='none';
 }
 function runNet(){

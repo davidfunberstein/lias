@@ -17,6 +17,10 @@
   <form class="login" onsubmit="doLogin(event)">
     <div class="logo"><div class="logo-badge">⚖</div> LIAS</div>
     <p class="sub">מי מתחבר למערכת?</p>
+    <div id="g-signin-wrap" style="display:none;margin-bottom:10px">
+      <div id="g-signin"></div>
+      <div style="text-align:center;font-size:12px;opacity:.6;margin:8px 0">— או כניסה מקומית —</div>
+    </div>
     <label>סוג משתמש</label>
     <select id="l-role">
       <option value="LAWYER">💼 עורך דין</option>
@@ -168,6 +172,33 @@
            16–32 תווים) — או הדבק כאן סוד קיים שקיבלת מ-gov.il.<br>
         4. הדבק את אותו סוד בשדה למעלה ולחץ 💾 שמור. (נשמר ב-Keychain בלבד.)<br>
         הקוד מתחלף כל 30 שניות; המערכת מקבלת גם קוד מהחלון הקודם (סטיית שעון).
+      </div>
+    </details>
+  </div>
+  <div id="google-box" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px">
+    <b style="font-size:13.5px">🔵 כניסה למערכת עם חשבון Google</b>
+    <div id="google-status" class="sub" style="margin:4px 0;font-weight:700"></div>
+    <label>Client ID (מ-Google Cloud Console)</label>
+    <input id="g-google-client" type="text" placeholder="....apps.googleusercontent.com" autocomplete="off">
+    <label style="margin-top:8px">מיילים מורשים להתחבר (מופרדים בפסיק — ריק = כל חשבון)</label>
+    <input id="g-google-allowed" type="text" placeholder="you@gmail.com, partner@gmail.com" autocomplete="off">
+    <button class="btn-accent" style="width:100%;margin-top:8px" onclick="saveGoogleLogin()">💾 שמור הגדרות Google</button>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-size:12.5px;color:var(--accent-strong)">איך משיגים Client ID? (הוראות מדויקות)</summary>
+      <div class="note" style="line-height:1.8">
+        1. פתח <b>console.cloud.google.com</b> → צור פרויקט (או בחר קיים).<br>
+        2. תפריט → <b>APIs &amp; Services</b> → <b>Credentials</b>.<br>
+        3. <b>Create credentials</b> → <b>OAuth client ID</b>.<br>
+        4. אם מבקשים "Configure consent screen": בחר <b>External</b>,
+           <b style="color:var(--accent-strong)">App name: <code style="background:rgba(47,125,246,.14);padding:1px 6px;border-radius:4px">LIAS</code></b>,
+           והזן את המייל שלך כ-User support email וכ-Developer contact. שמור.<br>
+        5. חזור ל-OAuth client ID → <b>Application type: Web application</b> →
+           <b>Name: LIAS</b>.<br>
+        6. תחת <b>Authorized JavaScript origins</b> הוסף בדיוק:
+           <code style="background:rgba(47,125,246,.14);padding:1px 6px;border-radius:4px">http://localhost:8500</code><br>
+        7. <b>Create</b> → העתק את ה-<b>Client ID</b> (מסתיים ב-
+           <code>.apps.googleusercontent.com</code>) והדבק כאן.<br>
+        <b>הערה:</b> את ה-Client secret אין צורך — האימות נעשה מול Google בצד השרת.
       </div>
     </details>
   </div>

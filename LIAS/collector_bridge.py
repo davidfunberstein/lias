@@ -313,12 +313,30 @@ def eca_list(payload: dict, ctx: JobContext) -> str:
     return f"נמצאו {len(cases)} תיקי הוצל\"פ"
 
 
+def _case_key(c: dict) -> str:
+    """Identity of a case across portals: ECA/BDR use 'number', NET uses
+    'display_id' (falling back to case_number-mmyy)."""
+    return str(c.get("number")
+               or c.get("display_id")
+               or f"{c.get('case_number','')}-{c.get('mmyy','')}").strip()
+
+
 def _merge_case_lists(existing: list, incoming: list) -> list:
-    """Merge case dicts by 'number', newest data winning — cumulative list."""
-    by_num = {c.get("number"): dict(c) for c in (existing or [])}
+    """Merge case dicts by identity, newest data winning — cumulative list."""
+    by_key: dict = {}
+    for c in (existing or []):
+        by_key[_case_key(c)] = dict(c)
     for c in (incoming or []):
-        by_num.setdefault(c.get("number"), {}).update(c)
-    return list(by_num.values())
+        by_key.setdefault(_case_key(c), {}).update(c)
+    return list(by_key.values())
+
+
+# cumulative NET case list — served via /api/net/cases
+_LAST_NET_CASES: list = []
+
+
+def get_last_net_cases() -> list:
+    return _LAST_NET_CASES
 
 
 # last ECA case list — served via /api/eca/cases so the picker survives an
@@ -518,7 +536,9 @@ def net_date_list(payload: dict, ctx: JobContext) -> str:
 
     cases = _run_portal(ctx, "net_date_list", _run, timeout=600)
     # Push straight to the UI as a live event / דחיפה ישירה ל-UI כאירוע חי
-    jobs.broadcast({"type": "net_cases", "cases": cases})
+    global _LAST_NET_CASES
+    _LAST_NET_CASES = _merge_case_lists(_LAST_NET_CASES, cases)
+    jobs.broadcast({"type": "net_cases", "cases": _LAST_NET_CASES})
     return f"נמצאו {len(cases)} תיקים בטווח"
 
 
@@ -860,22 +880,65 @@ def bdr_list(payload: dict, ctx: JobContext) -> str:
 
     def _run(page):
         from core.connection import ensure_logged_in
-        from core.bdr_batch import _JS_EXTRACT_GROUP_ROWS, _parse_group_row
+        from core.bdr_batch import (BdrBatchRunner, _JS_EXTRACT_GROUP_ROWS,
+                                    _JS_EXTRACT_DATA_ROWS, _parse_group_row,
+                                    _parse_sub_case)
         import time as _t
         ensure_logged_in(page, "BDR")
         _t.sleep(2)
-        raw = page.evaluate(_JS_EXTRACT_GROUP_ROWS) or []
+
+        # Use the runner's own navigation so we get the SAME grid the download
+        # uses: 'הכל' + 'אתר' (with its per-status fallback).
+        runner = BdrBatchRunner(page, logger=None)
+        try:
+            runner._goto_files_list()
+            runner._select_all_cases()
+        except Exception as _e:
+            print(f"[bdr_list] navigation: {_e}")
+
+        raw_groups = page.evaluate(_JS_EXTRACT_GROUP_ROWS) or []
+        parents = [_parse_group_row(g) for g in raw_groups]
+        parents = [p for p in parents if (p.case_number or p.parties)]
         out = []
-        for info in raw:
-            c = _parse_group_row(info)
-            if not (c.case_number or c.parties):
-                continue
-            out.append({"number": c.case_number or (c.parties[0] if c.parties else ""),
-                        "type": c.procedure,
-                        "parties": [{"role": "", "name": p} for p in c.parties],
-                        "party": " × ".join(c.parties),
-                        "court": "בית הדין הרבני",
-                        "status": ""})
+        for parent in parents:
+            # EXPAND every group so ALL sub-cases (לשוניות) are listed —
+            # "פתח הכל" behaviour requested by the user.
+            live = runner._find_current_row_index(parent.case_number) \
+                if parent.case_number else None
+            subs = []
+            if live is not None and runner._expand_group_js(live):
+                rows = page.evaluate(_JS_EXTRACT_DATA_ROWS) or []
+                for r in rows:
+                    if not r["text"].startswith(parent.case_number):
+                        continue
+                    sc = _parse_sub_case(r, parent)
+                    subs.append({
+                        "sub_id": sc.sub_id,
+                        "procedure": sc.procedure,
+                        "court": sc.court,                 # עיר / גדול
+                        "open_date": sc.open_date,
+                        "close_date": sc.close_date,
+                        "status": "סגור" if (sc.close_date or "").strip() else "פתוח",
+                        "future_hearing": sc.future_hearing,
+                        "last_activity": sc.last_activity,
+                    })
+            open_subs = [s for s in subs if s["status"] == "פתוח"]
+            out.append({
+                "number": parent.case_number or (parent.parties[0] if parent.parties else ""),
+                "type": parent.procedure,
+                "parties": [{"role": "", "name": p} for p in parent.parties],
+                "party": " × ".join(parent.parties),        # בין מי למי
+                "court": (subs[0]["court"] if subs else ""),
+                # a parent counts as open while ANY sub-case is still open
+                "status": "פתוח" if open_subs else ("סגור" if subs else ""),
+                "close_date": ("" if open_subs else
+                               max((s["close_date"] for s in subs), default="")),
+                "open_date": min((s["open_date"] for s in subs if s["open_date"]),
+                                 default=""),
+                "sub_cases": subs,
+            })
+            print(f"[bdr_list] {parent.case_number}: {len(subs)} תת-תיקים "
+                  f"({len(open_subs)} פתוחים)")
         return out
 
     _saved = ctx.browser
@@ -915,6 +978,7 @@ def bdr_batch(payload: dict, ctx: JobContext) -> str:
                         "force_rerun": payload.get("force_rerun", False),
                         "client_filter": payload.get("client_filter", ""),
                         "cases": payload.get("cases") or [],
+                        "sub_cases": payload.get("sub_cases") or [],
                         "user_mode": (payload.get("user_mode")
                                       or SESSION_SETTINGS.get("user_mode")
                                       or "private")}
@@ -1065,8 +1129,10 @@ def net_list_cases(payload: dict, ctx: JobContext) -> str:
                     "interest": c.get("CaseInterestName", ""),
                 })
 
-        jobs.broadcast({"type": "net_cases", "cases": parseable,
-                        "total": len(parseable), "years_back": years_back})
+        global _LAST_NET_CASES
+        _LAST_NET_CASES = _merge_case_lists(_LAST_NET_CASES, parseable)
+        jobs.broadcast({"type": "net_cases", "cases": _LAST_NET_CASES,
+                        "total": len(_LAST_NET_CASES), "years_back": years_back})
         return f"found {len(parseable)} cases"
 
     _run_portal(ctx, "net_list_cases", _run, timeout=300)

@@ -193,11 +193,24 @@ def ensure_logged_in(page: Page, portal: str) -> bool:
     """Audited + serialized entry point. Records every login attempt to the
     audit log and holds a per-portal lock so two logins to the SAME portal
     never run at once (which caused duplicate OTP emails / rate-limits)."""
-    from core import login_audit
+    from core import login_audit, gov_session
     with login_audit.portal_login(portal, method=_login_method_name(portal)) as _sess:
+        # Reuse a live gov.il SSO session from ANOTHER portal's browser before
+        # authenticating — the three portals run in separate profiles, so
+        # without this each one asks for its own OTP even though a session
+        # already exists ("no memory that we already logged in").
+        try:
+            gov_session.apply_to_context(page.context, portal)
+        except Exception:
+            pass
         ok = _ensure_logged_in_impl(page, portal)
         if ok:
             _sess.success("מחובר")
+            # Share this fresh session with the other portals' browsers.
+            try:
+                gov_session.save_from_context(page.context, portal)
+            except Exception:
+                pass
         else:
             _sess.fail("ההתחברות לא הושלמה")
         return ok

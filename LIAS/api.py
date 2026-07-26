@@ -387,7 +387,8 @@ async def act_bdr_batch(request: Request, force_rerun: bool = False,
         pass
     payload = {"force_rerun": body.get("force_rerun", force_rerun),
                "client_filter": body.get("client_filter", client_filter),
-               "cases": body.get("cases") or []}
+               "cases": body.get("cases") or [],
+               "sub_cases": body.get("sub_cases") or []}
     if body.get("user_mode"):
         payload["user_mode"] = body["user_mode"]
     return {"job_id": jobs.submit("bdr_batch", payload)}
@@ -397,6 +398,16 @@ async def act_bdr_batch(request: Request, force_rerun: bool = False,
 def act_bdr_list():
     """התחברות והצגת תיקי בד"ר לבחירה — כמו נט והוצל"פ."""
     return {"job_id": jobs.submit("bdr_list", {})}
+
+
+@app.get("/api/net/cases")
+def get_net_cases():
+    """Latest NET case list (cumulative cache — same contract as ECA/BDR)."""
+    try:
+        from LIAS.collector_bridge import get_last_net_cases
+        return {"cases": get_last_net_cases()}
+    except Exception:
+        return {"cases": []}
 
 
 @app.get("/api/bdr/cases")

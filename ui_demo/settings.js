@@ -41,6 +41,7 @@ async function openSettings(){
   }catch(e){}
   toggleEmailBox();
   if(typeof loadLoginAudit==='function') loadLoginAudit();
+  if(typeof loadGoogleStatus==='function') loadGoogleStatus();
   if($('g-lang')) $('g-lang').value = (typeof curLang==='function'?curLang():'he');
   if($('g-feedback')) $('g-feedback').checked = localStorage.getItem('lias_feedback')!=='0';
 }
@@ -123,6 +124,35 @@ async function saveTotp(){
       toast('סוד TOTP לא תקין', true);
     }
   }catch(e){ toast('שגיאה בשמירת TOTP', true); }
+}
+async function saveGoogleLogin(){
+  const client_id=($('g-google-client')?.value||'').trim();
+  const allowed=($('g-google-allowed')?.value||'').trim();
+  try{
+    const r=await fetch('/api/google/save',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({client_id, allowed_emails:allowed})});
+    const d=await r.json();
+    const st=$('google-status');
+    if(d.ok){
+      if(st){ st.style.color='var(--accent-strong)';
+        st.textContent = d.configured
+          ? `✓ מוגדר${(d.allowed_emails||[]).length?` · ${d.allowed_emails.length} מיילים מורשים`:' · כל חשבון Google'}`
+          : 'נוקה'; }
+      toast('הגדרות Google נשמרו ✓ — רענן את הדף כדי לראות את כפתור הכניסה');
+    } else { toast('שגיאה בשמירה', true); }
+  }catch(e){ toast('שגיאה בשמירה', true); }
+}
+async function loadGoogleStatus(){
+  try{
+    const d=await (await fetch('/api/google/status')).json();
+    if($('g-google-client')) $('g-google-client').value = d.client_id||'';
+    if($('g-google-allowed')) $('g-google-allowed').value = (d.allowed_emails||[]).join(', ');
+    const st=$('google-status');
+    if(st) st.innerHTML = d.configured
+      ? `<span style="color:var(--accent-strong)">✓ מוגדר${(d.allowed_emails||[]).length?` · ${d.allowed_emails.length} מיילים מורשים`:' · כל חשבון Google'}</span>`
+      : '<span class="sub">לא הוגדר — הזן Client ID כדי לאפשר כניסה עם Google</span>';
+  }catch(_){}
 }
 async function loadLoginAudit(){
   const el=$('login-audit-list'); if(!el) return;

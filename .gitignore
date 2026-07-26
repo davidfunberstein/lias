@@ -28,3 +28,5 @@ scratch/
 *.tmp
 ~$*
 login_audit.log
+.gov_session.json
+google_login.json

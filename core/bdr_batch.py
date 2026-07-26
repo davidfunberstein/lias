@@ -507,6 +507,25 @@ class BdrBatchRunner:
 
         # Optional client-name filter (from UI search) — keep only groups whose
         # party names contain the filter string.
+        # Explicit selection from the UI picker: whole cases and/or specific
+        # sub-cases. Whole-case numbers filter the groups; sub-case ids are
+        # kept for a second filter after discovery.
+        want_cases = {str(c).strip() for c in (session_settings.get("cases") or []) if str(c).strip()}
+        self._want_sub_ids = {str(s).strip() for s in (session_settings.get("sub_cases") or []) if str(s).strip()}
+        if want_cases:
+            filtered = {k: g for k, g in groups.items()
+                        if any(c.case_number in want_cases for c in g)}
+            self._log(f"בחירת תיקים מה-UI: {len(filtered)}/{len(groups)} קבוצות "
+                      f"({len(want_cases)} תיקים נבחרו).")
+            groups = filtered
+        elif self._want_sub_ids:
+            # only sub-cases were picked — keep groups that own them
+            filtered = {k: g for k, g in groups.items()
+                        if any(any(sid.startswith(c.case_number) for sid in self._want_sub_ids)
+                               for c in g)}
+            self._log(f"בחירת תת-תיקים מה-UI: {len(filtered)}/{len(groups)} קבוצות.")
+            groups = filtered
+
         client_filter = (session_settings.get("client_filter") or "").strip()
         if client_filter:
             filtered = {
@@ -518,6 +537,9 @@ class BdrBatchRunner:
             if not groups:
                 self._log("אף תיק לא תואם לשם הלקוח — יוצא.", "warn")
                 return
+        if not groups:
+            self._log("אין תיקים תואמים לבחירה — יוצא.", "warn")
+            return
 
         if lawyer_mode:
             selected_keys = list(groups.keys())
@@ -593,6 +615,17 @@ class BdrBatchRunner:
         # ── Step 5: DISCOVERY — expand and collect all sub-cases ──────
         selected_cases = [c for k in selected_keys for c in groups[k]]
         all_sub_cases = self._discover_all_sub_cases(selected_cases)
+
+        # Specific sub-cases picked in the UI → download only those. Whole
+        # cases picked (want_cases) already brought ALL their sub-cases here,
+        # so only narrow when a sub-case selection exists WITHOUT its parent.
+        want_sub = getattr(self, "_want_sub_ids", set())
+        if want_sub:
+            keep = [sc for sc in all_sub_cases
+                    if sc.sub_id in want_sub or sc.parent_case_number in want_cases]
+            if keep:
+                self._log(f"בחירת תת-תיקים: {len(keep)}/{len(all_sub_cases)} יורדו.")
+                all_sub_cases = keep
 
         if not all_sub_cases:
             self._log("לא נמצאו תת-תיקים אחרי פתיחת הקבוצות.", "error")

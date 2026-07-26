@@ -262,6 +262,12 @@ class Handler(BaseHTTPRequestHandler):
                             "otpauth": provisioning_uri()})
             except Exception:
                 self._json({"configured": False, "otpauth": ""})
+        elif path == "/api/google/status":
+            try:
+                from core.google_login import status as _gstatus
+                self._json(_gstatus())
+            except Exception:
+                self._json({"configured": False, "client_id": "", "allowed_emails": []})
         elif path == "/api/login_audit":
             try:
                 from core.login_audit import read_log
@@ -278,6 +284,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(code, body, "application/json; charset=utf-8")
         elif path == "/api/proxy/eca/cases":
             code, body, _ct = engine_inproc.request("GET", "/api/eca/cases")
+            self._send(code, body, "application/json; charset=utf-8")
+        elif path == "/api/proxy/net/cases":
+            code, body, _ct = engine_inproc.request("GET", "/api/net/cases")
             self._send(code, body, "application/json; charset=utf-8")
         elif path == "/api/proxy/bdr/cases":
             code, body, _ct = engine_inproc.request("GET", "/api/bdr/cases")
@@ -493,6 +502,33 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_govil_save(payload))
         elif path == "/api/email/save":
             self._json(_email_save(payload))
+        elif path == "/api/google/save":
+            try:
+                from core.google_login import save_config, status as _gstatus
+                save_config(payload.get("client_id", ""),
+                            payload.get("allowed_emails"))
+                self._json({"ok": True, **_gstatus()})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
+        elif path == "/api/google/login":
+            # Sign in with Google — verified server-side, then audited.
+            try:
+                from core.google_login import verify_id_token
+                from core.login_audit import record
+                res = verify_id_token(payload.get("credential", ""))
+                if not res.get("ok"):
+                    record("APP", "google", "failed", res.get("error", ""),
+                           payload.get("hint", ""))
+                    self._json({"ok": False, "error": res.get("error")}, 401)
+                    return
+                record("APP", "google", "success", "כניסה עם Google",
+                       f"{res.get('name','')} <{res.get('email','')}>")
+                self._json({"ok": True, "email": res.get("email"),
+                            "name": res.get("name")})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
         elif path == "/api/app_login":
             # App-level login gate. When a TOTP secret is configured, a valid
             # Google Authenticator code is REQUIRED. Every attempt (success or

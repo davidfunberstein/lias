@@ -15,6 +15,49 @@ async function _initLoginTotp(){
 }
 document.addEventListener('DOMContentLoaded', _initLoginTotp);
 
+/* ─── Sign in with Google (app login) ─── */
+async function _initGoogleSignIn(){
+  try{
+    const d = await (await fetch('/api/google/status')).json();
+    if(!d.configured || !d.client_id) return;
+    const wrap = $('g-signin-wrap'); if(wrap) wrap.style.display='block';
+    // load Google Identity Services once
+    if(!window.google || !google.accounts){
+      await new Promise((res,rej)=>{
+        const sc=document.createElement('script');
+        sc.src='https://accounts.google.com/gsi/client'; sc.async=true; sc.defer=true;
+        sc.onload=res; sc.onerror=rej; document.head.appendChild(sc);
+      });
+    }
+    google.accounts.id.initialize({client_id:d.client_id, callback:_onGoogleCredential});
+    google.accounts.id.renderButton($('g-signin'),
+      {theme:'outline', size:'large', width:320, text:'signin_with', locale:'he'});
+  }catch(_){}
+}
+document.addEventListener('DOMContentLoaded', _initGoogleSignIn);
+
+async function _onGoogleCredential(resp){
+  const err = $('l-err');
+  try{
+    const r = await fetch('/api/google/login', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({credential: resp.credential})});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok || !d.ok){
+      if(err){ err.style.display='block'; err.textContent = d.error || 'כניסה עם Google נכשלה'; }
+      return;
+    }
+    const role = $('l-role') ? $('l-role').value : 'LAWYER';
+    const u = {role, name:d.name||d.email, email:d.email, username:d.email,
+               remember:true, google:true,
+               bdr_entity_type: role==='LAWYER'?'lawyer':role==='PLEADER'?'pleader':'private'};
+    localStorage.setItem('lias_user', JSON.stringify(u));
+    if(err) err.style.display='none';
+    $('login').classList.add('hide');
+    boot();
+  }catch(e){ if(err){ err.style.display='block'; err.textContent='שגיאה: '+e.message; } }
+}
+
 async function doLogin(e){
   e.preventDefault();
   const role = $('l-role').value;
