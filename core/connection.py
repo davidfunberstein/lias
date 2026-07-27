@@ -62,10 +62,10 @@ def _click_eca_system_choice(page: Page) -> None:
                 'input[value*="הוצאה לפועל"]'):
         try:
             el = page.locator(sel).first
-            if el.count() > 0 and el.is_visible(timeout=1500):
+            if el.count() > 0 and el.is_visible(timeout=600):
                 el.click()
                 _progress("נבחרה מערכת: הוצאה לפועל")
-                time.sleep(2)
+                time.sleep(1)
                 return
         except Exception:
             continue
@@ -318,44 +318,40 @@ def _ensure_logged_in_impl(page: Page, portal: str) -> bool:
             else:
                 _progress("ממתין לזרימת ההתחברות האוטומטית של הוצל\"פ…")
 
-            deadline = time.time() + 150                # per-round budget
+            deadline = time.time() + 90                 # per-round budget
             _last_dbg = ""
             _same_url_since = time.time()
             _reloaded = False
             while time.time() < deadline:
-                time.sleep(4)
+                time.sleep(2)
                 u = page.url or ""
                 _dbg = u.split("?")[0]
                 if _dbg != _last_dbg:
                     print(f"{_ts()} [Auth][eca-wait] url={u[:90]}")
                     _last_dbg = _dbg
-                    _same_url_since = time.time()   # progressed — reset stall timer
+                    _same_url_since = time.time()
                 if already(page):
                     sso_done = True
                     break
                 if "login.gov.il" in u:
-                    # a "Verifying your browser" interstitial runs first (~60s) —
-                    # only break out once the actual ID field is on screen
                     if _id_form_visible():
                         break
                     continue
-                if "/callback" in u:        # OAuth exchange in progress — wait
+                if "/callback" in u:
                     _same_url_since = time.time()
                     continue
-                # Wedged on publicsso /he/login: one plain reload re-triggers the
-                # silent SSO; if that doesn't move it, end the round (→ clean round).
                 if ("publicsso.eca.gov.il" in u and "/home/OpenCase" not in u
-                        and time.time() - _same_url_since > 35):
+                        and time.time() - _same_url_since > 20):
                     if not _reloaded:
                         _reloaded = True
                         _progress("מאיץ את ההתחברות (טעינה מחדש)…")
                         try:
-                            page.reload(wait_until="domcontentloaded", timeout=25000)
+                            page.reload(wait_until="domcontentloaded", timeout=15000)
                         except Exception:
                             pass
                         _same_url_since = time.time()
                     else:
-                        break               # give up on this round → clean retry
+                        break
             if sso_done or _id_form_visible():
                 break                       # authenticated, or ready to type creds
 
@@ -369,18 +365,41 @@ def _ensure_logged_in_impl(page: Page, portal: str) -> bool:
                 page.goto(ECA_URL, wait_until="domcontentloaded", timeout=25000)
             except Exception:
                 pass
-            for _ in range(15):
-                time.sleep(4)
+            for _ in range(10):
+                time.sleep(2)
                 if already(page):
                     sso_done = True
                     break
-                # still stuck on the SSO side after landing? re-nudge OpenCase
                 if "login.gov.il" not in (page.url or "") and \
                    "publicsso.eca.gov.il" not in (page.url or ""):
+                    try:
+                        page.goto(ECA_URL, wait_until="domcontentloaded", timeout=15000)
+                    except Exception:
+                        pass
+        # Last-chance recovery before failing the whole sync: while ECA was
+        # grinding through its silent-SSO rounds, another portal (BDR/NET) may
+        # have completed a FRESH gov.il login and merged it into the shared
+        # session store. Re-inject that session and reload the cases page once —
+        # this rescues the common "ECA failed while the others succeeded" race
+        # instead of aborting and forcing the user to click download again.
+        if not already(page):
+            try:
+                from core import gov_session
+                if gov_session.apply_to_context(page.context, "ECA"):
+                    _progress("מנסה שוב עם סשן gov.il משותף עדכני…")
                     try:
                         page.goto(ECA_URL, wait_until="domcontentloaded", timeout=20000)
                     except Exception:
                         pass
+                    for _ in range(5):
+                        time.sleep(2)
+                        _click_eca_system_choice(page)
+                        if already(page):
+                            _progress("מחובר ✓ (סשן משותף)")
+                            break
+            except Exception:
+                pass
+
         # "portal down" ONLY applies on the ECA host itself — never on the
         # gov.il SSO pages (whose body is legitimately empty mid-verification).
         on_eca = "publicsso.eca.gov.il" in (page.url or "")
@@ -458,7 +477,7 @@ def _run_gov_autologin(page: Page, portal_name: str) -> None:
     # Locate the login.gov.il page
     login_page: Page | None = None
     try:
-        page.wait_for_url("*login.gov.il*", timeout=12000)
+        page.wait_for_url("*login.gov.il*", timeout=8000)
         login_page = page
         print(f"{_ts()} [Auth] Reached login.gov.il: {page.url}")
     except Exception:

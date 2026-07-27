@@ -242,9 +242,59 @@ function topSearch(q){
         `<div class="sr-item" onclick="openDoc(${d.document_id},'${(d.logical_name||'').replace(/'/g,'')}');_srClose()">
           📄 ${d.logical_name||'מסמך'} <span style="opacity:.6;font-size:11px"> · ${d.sub_number||''}</span></div>`).join('');
     }
+    html += await _portalCasesSection(q);
     box.innerHTML = html || '<div class="sr-item" style="opacity:.6">לא נמצאו תוצאות</div>';
     box.style.display='block';
   }, 220);
+}
+
+/* Unified portal view: every case known from NET + BDR + הוצל"פ, whether or not
+   its documents were downloaded. Served from the on-disk cache, so it answers
+   without any portal login — and marks what is still missing. */
+async function _portalCasesSection(q){
+  let d;
+  try{ d = await (await fetch('/api/proxy/cases/all?q='+encodeURIComponent(q))).json(); }
+  catch(_){ return ''; }
+  const cases = (d && d.cases) || [];
+  if(!cases.length) return '';
+  const ICON = {NET:'🏛', BDR:'🕍', ECA:'⚖️'};
+  const chip = c => {
+    const s=(c.status||'').trim();
+    if(!s) return '';
+    const closed=/סגור|closed/i.test(s);
+    return `<span style="font-size:10px;padding:1px 6px;border-radius:6px;
+      background:${closed?'rgba(150,150,150,.22)':'rgba(46,160,90,.20)'};
+      color:${closed?'var(--ink-soft)':'#2ea05a'}">${closed?'●':'●'} ${s}
+      ${closed&&c.close_date?' · '+c.close_date:''}</span>`;
+  };
+  const partiesLine = c => {
+    const ps=(c.parties||[]).filter(p=>p&&p.name);
+    if(ps.length) return ps.map(p=>`<span style="opacity:.65">${p.role||'צד'}:</span> ${p.name}`)
+                           .join(' • ');
+    return c.client ? `<span style="opacity:.65">לקוח:</span> ${c.client}` : '';
+  };
+  const missing = cases.filter(c=>!c.downloaded).length;
+  return `<div class="sr-head">תיקים בפורטלים · ${cases.length}`
+    + (missing?` · <span style="color:var(--warn,#e6a800)">${missing} טרם הורדו</span>`:'')
+    + `</div>` + cases.slice(0,25).map(c=>`
+    <div class="sr-item" onclick="_srPortalCase('${(c.number||'').replace(/'/g,'')}')">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span>${ICON[c.portal]||'📁'}</span><b>${c.number}</b>
+        <span style="opacity:.6;font-size:11px">${c.portal_label||''}${c.court?' · '+c.court:''}</span>
+        ${chip(c)}
+        ${c.downloaded
+          ? `<span style="font-size:10px;color:var(--accent-strong)">✓ הורד · ${c.doc_count} מסמכים</span>`
+          : `<span style="font-size:10px;color:var(--warn,#e6a800);font-weight:700">✗ טרם הורד</span>`}
+      </div>
+      <div style="font-size:11.5px;opacity:.85;margin-top:2px">${partiesLine(c)}</div>
+    </div>`).join('');
+}
+/* Jump to the case in the dashboard if it was imported; otherwise explain. */
+function _srPortalCase(num){
+  const card = (window.D&&D.case_cards||[]).find(c=>(c.sub_number||'').includes(num));
+  if(card){ _srClose(); $('topsearch').value=''; go('case', card.sub_case_id); return; }
+  _srClose();
+  toast(`תיק ${num} מוכר מהפורטל אך טרם יובא לדשבורד — הרץ סנכרון לתיק זה`, true);
 }
 function _srGo(v,id){ _srClose(); $('topsearch').value=''; go(v,id); }
 function _srClose(){ const b=$('search-results'); if(b) b.style.display='none'; }

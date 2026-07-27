@@ -376,10 +376,14 @@ header .nav button{font-size:15px;padding:10px 16px}
   background:var(--accent-soft,#e3edff);color:var(--accent-strong,#1d64d8);
   font-size:11px;font-weight:800;cursor:help;position:relative;margin:0 4px;vertical-align:middle}
 .qtip.warn{background:#fff3e0;color:#e65100}
-.qtip:hover::after{content:attr(data-tip);position:absolute;bottom:130%;right:50%;
-  transform:translateX(50%);background:#16243D;color:#fff;font-size:12px;font-weight:400;
-  padding:8px 12px;border-radius:8px;white-space:pre-line;width:max-content;max-width:260px;
-  z-index:300;box-shadow:0 6px 20px rgba(0,0,0,.3);direction:rtl;text-align:right;line-height:1.5}
+/* Tooltips are rendered into <body> by _initTooltips() with position:fixed.
+   The old :hover::after was position:absolute, so any scrolling ancestor
+   (the settings panel, the picker list) clipped it — that is why tips were
+   cut off. A body-level fixed layer cannot be clipped by an ancestor. */
+#qtip-layer{position:fixed;z-index:9999;pointer-events:none;background:#16243D;color:#fff;
+  font-size:12.5px;font-weight:400;padding:8px 12px;border-radius:8px;white-space:pre-line;
+  max-width:280px;box-shadow:0 6px 24px rgba(0,0,0,.38);direction:rtl;text-align:right;
+  line-height:1.55;display:none}
 
 /* log window: bigger readable font, clearly separated colorful tabs */
 #logwin-body{font-size:13.5px !important;line-height:1.8 !important}
@@ -394,8 +398,7 @@ header .nav button{font-size:15px;padding:10px 16px}
 .fresh.orange{background:#FFF0DB;color:#c46a00}
 .fresh.gray{background:#EEF1F5;color:#78828E}
 
-/* tooltip: open BELOW and right-aligned so it never clips inside modals */
-.qtip:hover::after{bottom:auto;top:135%;right:0;transform:none;max-width:230px}
+
 /* global font bump — bigger and clearer everywhere */
 html,body{font-size:15px}
 .card h2{font-size:16.5px}
@@ -406,3 +409,18 @@ th{font-size:12px}
 .hello .small{font-size:15px}
 /* clearer language button */
 #lang-btn{background:var(--accent-soft);border-color:var(--accent) !important}
+
+/* ─── settings tabs ─── */
+#set-tabs .set-tab{
+  flex:1 1 auto; min-width:88px; padding:8px 10px; font-size:12.5px; font-weight:600;
+  border:1px solid var(--line); border-radius:9px; background:transparent;
+  color:var(--ink-soft); cursor:pointer; display:flex; align-items:center;
+  justify-content:center; gap:5px; transition:background .15s,color .15s;
+}
+#set-tabs .set-tab:hover{ background:rgba(127,127,127,.10); }
+#set-tabs .set-tab.on{
+  background:var(--accent); border-color:var(--accent); color:#fff;
+}
+#set-tabs .set-ok{ font-size:11px; color:var(--accent-strong); }
+#set-tabs .set-tab.on .set-ok{ color:#fff; }
+.set-pane[hidden]{ display:none; }

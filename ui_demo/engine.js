@@ -31,6 +31,53 @@ function _sortCasesForPicker(cases){
     return _caseDateKey(b)-_caseDateKey(a);
   });
 }
+/* ── open/closed filter (Settings ⚙ → הורדות → סינון לפי מצב תיק) ──────────
+   all         — everything
+   open        — only cases that are open
+   open_sub    — cases open OR holding at least one open sub-case
+   open_client — every case of any client who has at least one open case
+                 (a lawyer usually wants the closed history of an active client) */
+function _openFilterMode(){
+  // the sync screen's own choice wins for this run; Settings is the default
+  if(window._syncOpenOverride) return window._syncOpenOverride;
+  const s = window._settings || {};
+  if(s.open_filter) return s.open_filter;
+  try{ return localStorage.getItem('lias_open_filter') || 'all'; }catch(_){ return 'all'; }
+}
+function _caseClientKey(c){
+  return (c.client || c.party || c.CaseName || c.name || '').trim();
+}
+function _hasOpenSub(c){
+  return (c.sub_cases||[]).some(s=>{
+    const st = s.status||''; return !st || /פתוח|פעיל|open/i.test(st);
+  });
+}
+function _applyOpenFilter(cases, mode){
+  mode = mode || _openFilterMode();
+  const list = cases||[];
+  if(mode==='all' || !list.length) return list;
+  if(mode==='open')     return list.filter(_caseIsOpen);
+  if(mode==='open_sub') return list.filter(c=>_caseIsOpen(c) || _hasOpenSub(c));
+  if(mode==='open_client'){
+    const activeClients = new Set(
+      list.filter(c=>_caseIsOpen(c)||_hasOpenSub(c)).map(_caseClientKey).filter(Boolean));
+    // keep cases of an active client; if a case has no client name, keep it only
+    // when it is itself open, so unattributed closed cases don't sneak back in.
+    return list.filter(c=>{
+      const k=_caseClientKey(c);
+      return k ? activeClients.has(k) : (_caseIsOpen(c)||_hasOpenSub(c));
+    });
+  }
+  return list;
+}
+/* short label for the picker header so the active filter is never invisible */
+const OPEN_FILTER_LABELS = {all:'', open:'רק פתוחים',
+  open_sub:'פתוחים או עם תת-תיק פתוח', open_client:'לקוחות עם תיק פתוח'};
+function _openFilterNote(shown, total){
+  const m=_openFilterMode(); if(m==='all' || shown===total) return '';
+  return ` · <span style="color:var(--accent-strong,#7fb3ff)">מסונן: ${OPEN_FILTER_LABELS[m]}
+           (${shown} מתוך ${total})</span>`;
+}
 /* merge new cases into an existing list, deduped by case id (cumulative) */
 function _mergeCasesList(existing, incoming){
   const byId={}; (existing||[]).forEach(c=>{ byId[_caseId(c)]=c; });
@@ -58,6 +105,70 @@ async function startEngine(){
   engineStarting=false; toast('המנוע לא עלה — בדוק את lias_engine.log', true);
   return false;
 }
+/* One portal at a time. NET/BDR/ECA share one gov.il identity and one OTP
+   mailbox, so two portals running together made each login swallow the other's
+   code. The engine enforces this with a lock; this is the friendly front door
+   so the user is told *before* a job is queued and fails. */
+const PORTAL_JOB_KINDS = ['net_smart_download','net_download_all','net_sync_selected',
+  'bdr_batch','bdr_sync_current','bdr_list','eca_sync','eca_list','net_list'];
+const PORTAL_JOB_LABEL = {net:'נט המשפט', bdr:'בית הדין הרבני', eca:'הוצאה לפועל'};
+async function portalBusy(){
+  try{
+    const jobs = await (await fetch('/api/jobs?limit=25')).json();
+    const running = (jobs||[]).find(j=>['RUNNING','PENDING'].includes(j.state)
+                                       && PORTAL_JOB_KINDS.includes(j.kind));
+    return running ? (PORTAL_JOB_LABEL[(running.kind||'').split('_')[0]]||running.kind) : '';
+  }catch(_){ return ''; }
+}
+async function ensureNoPortalRunning(){
+  const busy = await portalBusy();
+  if(busy){
+    toast(`כרגע רצה פעולה ב${busy} — אי אפשר לעבוד על שני פורטלים במקביל. `
+          +`המתן לסיום ואז נסה שוב.`, true);
+    return false;
+  }
+  return true;
+}
+
+/* ── visual lock ───────────────────────────────────────────────────────────
+   Refusing the click was correct but invisible: the other portals still LOOKED
+   clickable. While one portal runs, the other two are greyed out and disabled,
+   and a banner names what is running. Polls the same /api/jobs the guard uses,
+   so the button state can never disagree with the engine's lock. */
+let _portalLockTimer=null, _portalLockBusy='';
+async function refreshPortalLock(){
+  const bar=$('sync-platforms'); if(!bar) return;   // not on the sync screen
+  let running='';
+  try{
+    const jobs = await (await fetch('/api/jobs?limit=25')).json();
+    const j = (jobs||[]).find(x=>['RUNNING','PENDING'].includes(x.state)
+                                 && PORTAL_JOB_KINDS.includes(x.kind));
+    running = j ? (j.kind||'').split('_')[0].toUpperCase() : '';
+  }catch(_){ running=''; }
+  _portalLockBusy = running;
+  const note=$('portal-lock-note');
+  ['NET','BDR','ECA'].forEach(p=>{
+    const b=$('plat-'+p); if(!b) return;
+    const blocked = !!running && running!==p;
+    b.disabled = blocked;
+    b.style.opacity = blocked ? '.4' : '';
+    b.style.cursor  = blocked ? 'not-allowed' : '';
+    b.title = blocked ? `לא זמין — כרגע רצה פעולה ב${PORTAL_LABELS[running]||running}` : '';
+  });
+  if(note){
+    if(running){
+      note.style.display='block';
+      note.innerHTML = `🔒 כרגע רצה <b>${PORTAL_LABELS[running]||running}</b> — `
+        + `שאר הפורטלים חסומים עד לסיום. אי אפשר להוריד או לבקש תיקים במקביל.`;
+    } else note.style.display='none';
+  }
+}
+function startPortalLockWatch(){
+  clearInterval(_portalLockTimer);
+  refreshPortalLock();
+  _portalLockTimer = setInterval(refreshPortalLock, 3000);
+}
+
 async function act(path, label){
   if(!D?.live){
     toast('מתחיל רקע…');
@@ -433,7 +544,8 @@ let _realBrowserVisible=false;
 /* BDR: connect → list cases (with both parties) → pick → download.
    IDENTICAL flow to NET and ECA — no client-name prompt, nothing configurable
    on this screen (scope + user-mode come from Settings ⚙). */
-function bdrConnectAndList(){
+async function bdrConnectAndList(){
+  if(!await ensureNoPortalRunning()) return;
   toast('מתחבר לבית הדין הרבני ושולף תיקים…');
   logEvent('→ התחברות והצגת תיקי בד"ר');
   const picker=$('sync-case-picker');
@@ -441,7 +553,8 @@ function bdrConnectAndList(){
     picker.innerHTML='<div style="padding:10px;color:rgba(255,255,255,.7)">מתחבר לבית הדין הרבני… (ייתכן שיידרש קוד אימות)</div>'; }
   act('bdr_list','חיבור והצגת תיקי בד"ר');
 }
-function runBdrBatch(client_filter, cases, sub_cases){
+async function runBdrBatch(client_filter, cases, sub_cases){
+  if(!await ensureNoPortalRunning()) return;
   client_filter = client_filter || '';
   const n = (cases||[]).length, m = (sub_cases||[]).length;
   toast(n||m ? `מוריד ${n?n+' תיקים':''}${n&&m?' · ':''}${m?m+' תת-תיקים':''}…`
@@ -464,7 +577,8 @@ try{ const _s=localStorage.getItem('ecaCasesAll'); if(_s) _ecaCases=JSON.parse(_
 let _ecaHandled = new Set();
 try{ const _h=localStorage.getItem('ecaHandled'); if(_h) _ecaHandled=new Set(JSON.parse(_h)||[]); }catch(_){}
 function _saveEcaHandled(){ try{ localStorage.setItem('ecaHandled', JSON.stringify([..._ecaHandled])); }catch(_){}}
-function ecaConnectAndList(){
+async function ecaConnectAndList(){
+  if(!await ensureNoPortalRunning()) return;
   toast('מתחבר להוצאה לפועל ושולף תיקים…');
   logEvent('→ התחברות והצגת תיקי הוצל"פ');
   const picker=$('sync-case-picker');
@@ -495,18 +609,27 @@ function showEcaCases(cases){
   try{ localStorage.setItem('ecaCasesAll', JSON.stringify(_ecaCases)); }catch(_){}
   const picker=$('sync-case-picker'); if(!picker) return;
   if(!_ecaCases.length){ picker.style.display='none'; toast('לא נמצאו תיקי הוצל"פ', true); return; }
-  const list=_sortCasesForPicker(_ecaCases); _ecaCases=list;
+  // NOTE: the checkboxes carry data-i indexes into _ecaCases, so _ecaCases must
+  // BE the rendered (filtered) list — otherwise a filtered picker downloads the
+  // wrong cases. The unfiltered set stays in localStorage for the next open.
+  const _all=_sortCasesForPicker(_ecaCases);
+  const list=_applyOpenFilter(_all); _ecaCases=list;
+  if(!list.length){ picker.style.display='block';
+    picker.innerHTML='<div style="padding:10px;color:rgba(255,255,255,.7)">כל תיקי ההוצל"פ '
+      +'סוננו לפי מצב התיק. שנה את הסינון בהגדרות ⚙ → הורדות.</div>'; return; }
   picker.style.display='block';
-  picker.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,.7);margin-bottom:6px">
-      נמצאו ${list.length} תיקי הוצאה לפועל — סמן מה להוריד</div>
+  picker.innerHTML = `<div style="font-size:13px;color:rgba(255,255,255,.7);margin-bottom:6px">
+      נמצאו ${list.length} תיקי הוצאה לפועל — סמן מה להוריד${_openFilterNote(list.length,_all.length)}</div>
     <div style="display:flex;gap:6px;margin-bottom:8px">
       <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllEca(true)">סמן הכל</button>
       <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllEca(false)">נקה הכל</button>
     </div>
+    ${_pickerSearchBox('eca-q','🔎 סינון: מספר תיק / צד / סוג…')}
     <div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
       ${list.map((c,i)=>{
         const done=_ecaHandled.has(c.number);
-        return `<label style="display:flex;gap:8px;align-items:center;padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;cursor:pointer${done?';opacity:.72':''}">
+        return `<label data-searchrow="eca-q" data-hay="${_rowHay(c)}"
+          style="display:flex;gap:8px;align-items:center;padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;cursor:pointer${done?';opacity:.72':''}">
         <input type="checkbox" class="eca-cb" data-i="${i}" ${done?'':'checked'}>
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:13px">${c.number}
@@ -521,9 +644,10 @@ function showEcaCases(cases){
     <button class="btn-accent" style="width:100%;margin-top:10px;padding:12px" onclick="runEcaSelected()">⬇ הורד את המסומנים</button>`;
 }
 function _selectAllEca(v){ document.querySelectorAll('.eca-cb').forEach(cb=>cb.checked=v); }
-function runEcaSelected(){
+async function runEcaSelected(){
   const picked = [...document.querySelectorAll('.eca-cb:checked')].map(cb=>_ecaCases[+cb.dataset.i].number);
   if(!picked.length){ toast('לא סומן אף תיק', true); return; }
+  if(!await ensureNoPortalRunning()) return;
   const all = picked.length===_ecaCases.length;
   toast(all?'מוריד את כל תיקי ההוצל"פ…':`מוריד ${picked.length} תיקי הוצל"פ…`);
   logEvent('→ הורדת הוצל"פ ('+(all?'הכל':picked.join(', '))+')');
@@ -618,6 +742,9 @@ function syncCard(el){
     <div class="meta">בחר תחילה מאיזה פורטל להוריד, ואז מה להוריד.
       ☁ אם Drive מוגדר, הקבצים עולים אוטומטית במקביל.</div>
     <div id="dl-stats-panel" style="display:none"></div>
+    <div id="portal-lock-note" style="display:none;margin-top:12px;padding:9px 12px;
+         border-radius:10px;background:rgba(230,168,0,.14);border:1px solid rgba(230,168,0,.5);
+         font-size:12.5px;font-weight:600"></div>
     <div style="display:flex;gap:10px;margin-top:12px" id="sync-platforms">
       <button class="sync-plat" id="plat-NET" onclick="pickPlatform('NET')">🏛<div>נט המשפט</div></button>
       <button class="sync-plat" id="plat-BDR" onclick="pickPlatform('BDR')">🕍<div>בית הדין הרבני</div></button>
@@ -633,6 +760,7 @@ function syncCard(el){
   }).catch(()=>{});
   if(_syncPlatform) pickPlatform(_syncPlatform);
   if(Object.keys(_dlByPortal).length) _renderDlStats();
+  startPortalLockWatch();
 }
 
 function pickPlatform(p){
@@ -647,15 +775,10 @@ function pickPlatform(p){
   const s = window._settings || {};
   const scope = {NET:s.net_scope||'selected', BDR:s.bdr_scope||'all', ECA:s.eca_scope||'selected'}[p];
   const label = {NET:'נט המשפט', BDR:'בית הדין הרבני', ECA:'הוצאה לפועל'}[p];
-  const scopeText = scope==='all' ? 'כל התיקים (לפי ההגדרות)' : 'הצג רשימה ובחר תיקים (לפי ההגדרות)';
   const relNote = p==='NET' && s.net_related ? ' · כולל תיקים קשורים' : '';
-  const runFn = {NET:'runNet()', BDR:'runBdr()', ECA:'ecaConnectAndList()'}[p];
-  box.innerHTML = `
-    <div class="sync-opt-row">
-      <button class="btn-accent sync-opt" onclick="${runFn}">⬇ הורד מ${label} — ${scopeText}</button>
-      <div class="sync-opt-hint">ההיקף נקבע ב<a onclick="openSettings()" style="text-decoration:underline;cursor:pointer">הגדרות ⚙</a>${relNote?' · כולל תיקים קשורים':''}.
-        ${scope==='selected'?'לאחר ההתחברות תוצג רשימת התיקים מהאתר לבחירה.':''}</div>
-    </div>`;
+  if(!_syncScopeChoice) _syncScopeChoice = scope==='all' ? 'all' : 'selected';
+  box.innerHTML = _renderScopeChooser(p, label, relNote);
+  _applyScopeChoice();
   // Returning to the ECA tab after a completed list — restore the picker from
   // the server so the user doesn't have to reconnect just to see the cases.
   if(p==='ECA' && scope==='selected'){
@@ -675,64 +798,234 @@ function pickPlatform(p){
       .catch(()=>{ if(_allNetCases.length) showNetCases([]); });
   }
 }
+/* ── scope chooser ─────────────────────────────────────────────────────────
+   The scope used to live only in Settings, which meant the most important
+   decision of the screen was invisible at the moment of deciding. It is now a
+   two-step choice on the sync screen itself, and the second step depends on the
+   first — because "which cases" means something different in each branch:
+
+     כל התיקים      → how wide?  clients-with-an-open-case (the usual first run
+                       for a lawyer) / only open cases / everything incl. closed
+     תיקים מסוימים  → what to LIST for picking?  only open / everything
+
+   Settings still holds the default; this only overrides it for this run. */
+let _syncScopeChoice = '';                 // 'all' | 'selected'
+let _syncAllMode     = 'open_client';      // all-branch breadth
+let _syncPickMode    = 'open';             // selected-branch list filter
+try{
+  const _sc = JSON.parse(localStorage.getItem('lias_sync_scope')||'{}');
+  if(_sc.scope)    _syncScopeChoice = _sc.scope;
+  if(_sc.allMode)  _syncAllMode     = _sc.allMode;
+  if(_sc.pickMode) _syncPickMode    = _sc.pickMode;
+}catch(_){}
+function _saveSyncScope(){
+  try{ localStorage.setItem('lias_sync_scope', JSON.stringify(
+    {scope:_syncScopeChoice, allMode:_syncAllMode, pickMode:_syncPickMode})); }catch(_){}
+}
+
+function _renderScopeChooser(p, label, relNote){
+  const runFn = {NET:'runNet()', BDR:'runBdr()', ECA:'ecaConnectAndList()'}[p];
+  const seg = (val, cur, fn, title, sub) => `
+    <button onclick="${fn}('${val}')" class="scope-seg${cur===val?' on':''}"
+      style="flex:1;text-align:right;padding:9px 11px;border-radius:10px;cursor:pointer;
+             border:1px solid ${cur===val?'var(--accent)':'rgba(255,255,255,.18)'};
+             background:${cur===val?'rgba(47,125,246,.18)':'transparent'};color:inherit">
+      <div style="font-weight:700;font-size:13px">${cur===val?'◉':'○'} ${title}</div>
+      <div style="font-size:11.5px;opacity:.7;margin-top:2px">${sub}</div>
+    </button>`;
+
+  const subCaseNote = p==='BDR'
+    ? `<div class="note" style="margin-top:6px">בבד״ר: תיק שיש בו תת-תיק פתוח ייכלל
+       על כל ההליכים שתחתיו. לבחירת תת-תיק בודד — בחר "תיקים מסוימים".</div>` : '';
+
+  return `
+    <div style="font-weight:800;font-size:13.5px;margin-bottom:6px">1 · מה להוריד מ${label}?</div>
+    <div id="scope-step1" style="display:flex;gap:8px"></div>
+
+    <div id="scope-step2" style="margin-top:12px"></div>
+    ${subCaseNote}
+
+    <div class="sync-opt-row" style="margin-top:12px">
+      <button class="btn-accent sync-opt" id="scope-go" onclick="${runFn}"></button>
+      <div class="sync-opt-hint" id="scope-hint"></div>
+    </div>
+    <div class="note" style="margin-top:6px">ברירת המחדל נשמרת ב<a onclick="openSettings()"
+      style="text-decoration:underline;cursor:pointer">הגדרות ⚙</a>${relNote}.</div>`;
+}
+
+function setSyncScope(v){ _syncScopeChoice=v; _saveSyncScope(); _applyScopeChoice(); }
+function setSyncAllMode(v){ _syncAllMode=v; _saveSyncScope(); _applyScopeChoice(); }
+function setSyncPickMode(v){ _syncPickMode=v; _saveSyncScope(); _applyScopeChoice(); }
+
+function _applyScopeChoice(){
+  // keep the segment highlighting in sync
+  if(_syncPlatform){
+    const s=window._settings||{};
+    const label={NET:'נט המשפט',BDR:'בית הדין הרבני',ECA:'הוצאה לפועל'}[_syncPlatform];
+    const relNote=_syncPlatform==='NET'&&s.net_related?' · כולל תיקים קשורים':'';
+    const box=$('sync-options');
+    if(box && !box.querySelector('#scope-step1')) box.innerHTML=_renderScopeChooser(_syncPlatform,label,relNote);
+  }
+  const step1=$('scope-step1'), step2=$('scope-step2'), go=$('scope-go'), hint=$('scope-hint');
+  if(!step2||!go) return;
+  const seg = (val, cur, fn, title, sub) => `
+    <button onclick="${fn}('${val}')"
+      style="flex:1;text-align:right;padding:9px 11px;border-radius:10px;cursor:pointer;
+             border:1px solid ${cur===val?'var(--accent)':'rgba(255,255,255,.18)'};
+             background:${cur===val?'rgba(47,125,246,.18)':'transparent'};color:inherit">
+      <div style="font-weight:700;font-size:12.5px">${cur===val?'◉':'○'} ${title}</div>
+      <div style="font-size:11px;opacity:.7;margin-top:2px">${sub}</div>
+    </button>`;
+
+  // Step 1 must be repainted too. It used to be rendered once inside the parent
+  // template, so picking "כל התיקים" updated the logic and step 2 but left the
+  // step-1 radio still showing "תיקים מסוימים" as the selected one.
+  if(step1){
+    step1.innerHTML =
+      seg('all', _syncScopeChoice, 'setSyncScope', 'כל התיקים',
+          'המערכת מורידה לבד, בלי בחירה')
+    + seg('selected', _syncScopeChoice, 'setSyncScope', 'תיקים מסוימים',
+          'הצג רשימה ואבחר ידנית');
+  }
+
+  if(_syncScopeChoice==='all'){
+    step2.innerHTML =
+      `<div style="font-weight:800;font-size:13.5px;margin-bottom:6px">2 · באיזה היקף?</div>
+       <div style="display:flex;gap:8px;flex-wrap:wrap">
+         ${seg('open_client',_syncAllMode,'setSyncAllMode','לקוחות עם תיק פתוח ⭐',
+               'כל התיקים של אותו לקוח — כולל הסגורים')}
+         ${seg('open',_syncAllMode,'setSyncAllMode','רק תיקים פתוחים',
+               'מדלג על כל מה שנסגר')}
+         ${seg('all',_syncAllMode,'setSyncAllMode','הכל','כולל תיקים סגורים של כולם')}
+       </div>`;
+    const t={open_client:'לקוחות עם תיק פתוח', open:'תיקים פתוחים', all:'הכל'}[_syncAllMode];
+    go.textContent = `⬇ הורד הכל — ${t}`;
+    if(hint) hint.textContent = _syncAllMode==='open_client'
+      ? 'מומלץ לריצה ראשונה: מביא את כל התיקים של כל לקוח שיש לו לפחות תיק פתוח אחד.'
+      : 'ההורדה מתחילה מיד אחרי ההתחברות, בלי בחירה ידנית.';
+  } else {
+    step2.innerHTML =
+      `<div style="font-weight:800;font-size:13.5px;margin-bottom:6px">2 · מה להציג ברשימה?</div>
+       <div style="display:flex;gap:8px">
+         ${seg('open',_syncPickMode,'setSyncPickMode','רק תיקים פתוחים','רשימה קצרה וממוקדת')}
+         ${seg('all',_syncPickMode,'setSyncPickMode','הכל','כולל תיקים סגורים')}
+       </div>`;
+    go.textContent = '📋 הצג רשימה ובחר תיקים';
+    if(hint) hint.textContent = 'תוצג רשימה עם חיפוש וצ׳קבוקסים — אפשר לבחור תיק שלם או תת-תיק.';
+  }
+  window._syncOpenOverride = _syncScopeChoice==='all' ? _syncAllMode : _syncPickMode;
+}
+
 /* ── BDR case picker — same contract/behaviour as the ECA one ── */
 let _bdrCases = [];
 try{ const _s=localStorage.getItem('bdrCasesAll'); if(_s) _bdrCases=JSON.parse(_s)||[]; }catch(_){}
 let _bdrHandled = new Set();
 try{ const _h=localStorage.getItem('bdrHandled'); if(_h) _bdrHandled=new Set(JSON.parse(_h)||[]); }catch(_){}
 /* status chip — open (green) / closed + date (grey) */
+/* ── picker search ─────────────────────────────────────────────────────────
+   With dozens of cases the list was unusable without scrolling. One search box
+   per picker, filtering on case number, parties, court, type and sub-case ids.
+   Rows are hidden with `display:none` rather than re-rendered, so checkboxes
+   the user already ticked keep both their state and their data-i index. */
+function _pickerSearchBox(id, placeholder){
+  return `<input id="${id}" type="search" autocomplete="off"
+    placeholder="${placeholder||'🔎 סינון: מספר תיק / צד / ערכאה…'}"
+    oninput="_filterPickerRows('${id}')"
+    style="width:100%;margin-bottom:8px;padding:8px 10px;border-radius:8px;
+           border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.08);
+           color:inherit;font-size:13px">
+    <div id="${id}-count" style="font-size:11.5px;opacity:.6;margin-bottom:6px"></div>`;
+}
+function _filterPickerRows(inputId){
+  const inp=$(inputId); if(!inp) return;
+  const q=(inp.value||'').trim().toLowerCase();
+  const rows=document.querySelectorAll(`[data-searchrow="${inputId}"]`);
+  let shown=0;
+  rows.forEach(r=>{
+    const hit = !q || (r.dataset.hay||'').includes(q);
+    r.style.display = hit ? '' : 'none';
+    if(hit) shown++;
+  });
+  const c=$(inputId+'-count');
+  if(c) c.textContent = q ? `${shown} מתוך ${rows.length} תיקים תואמים` : '';
+}
+/* everything a row should be findable by, lowercased once at render time */
+function _rowHay(c){
+  return [c.number, c.display_id, c.CaseDisplayIdentifier, c.type, c.CaseTypeShortName,
+          c.court, c.CourtName, c.party, c.client, c.name, c.CaseName, c.status,
+          ...(c.parties||[]).map(p=>p&&p.name),
+          ...(c.sub_cases||[]).flatMap(s=>[s.sub_id, s.procedure, s.court])]
+    .filter(Boolean).join(' ').toLowerCase().replace(/"/g,'');
+}
+
+/* Open = green, closed = red. Grey read as "no data" and the two states were
+   hard to tell apart at a glance, which is the whole point of the chip. */
 function _statusChip(status, closeDate, openDate){
   const closed = status==='סגור' || !!(closeDate||'').trim();
   if(closed){
     const d=(closeDate||'').trim();
-    return `<span style="font-size:10.5px;padding:1px 7px;border-radius:999px;
-      background:rgba(150,150,150,.22);color:#c9c9c9;white-space:nowrap">
-      ✔ נסגר${d?' · '+d:''}</span>`;
+    return `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;
+      background:rgba(235,64,52,.18);color:#ff7b70;border:1px solid rgba(235,64,52,.45);
+      white-space:nowrap">✖ סגור${d?' · '+d:''}</span>`;
   }
   const d=(openDate||'').trim();
-  return `<span style="font-size:10.5px;padding:1px 7px;border-radius:999px;
-    background:rgba(52,199,89,.20);color:#5ede83;white-space:nowrap">
-    ● פתוח${d?' · מ-'+d:''}</span>`;
+  return `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;
+    background:rgba(52,199,89,.20);color:#5ede83;border:1px solid rgba(52,199,89,.45);
+    white-space:nowrap">● פתוח${d?' · מ-'+d:''}</span>`;
 }
 function showBdrCases(cases){
   _bdrCases = _mergeCasesList(_bdrCases, cases||[]);
   try{ localStorage.setItem('bdrCasesAll', JSON.stringify(_bdrCases)); }catch(_){}
   const picker=$('sync-case-picker'); if(!picker) return;
   if(!_bdrCases.length){ picker.style.display='none'; toast('לא נמצאו תיקי בד"ר', true); return; }
-  const list=_sortCasesForPicker(_bdrCases); _bdrCases=list;
+  // Remember what the user already ticked. A blanket "don't re-render" guard
+  // used to protect the selection, but it also froze the list so newly-listed
+  // cases never appeared. Re-render always; restore the ticks afterwards.
+  const _wasChecked = new Set(
+    [...document.querySelectorAll('.bdr-cb:checked,.bdr-sub-cb:checked')]
+      .map(cb=>cb.className+':'+(cb.dataset.i||'')+':'+(cb.dataset.j||'')));
+  const _hadPicker = picker.innerHTML.includes('bdr-cb');
+  // data-i indexes point into _bdrCases, so it must be the rendered (filtered) list
+  const _all=_sortCasesForPicker(_bdrCases);
+  const list=_applyOpenFilter(_all); _bdrCases=list;
+  if(!list.length){ picker.style.display='block';
+    picker.innerHTML='<div style="padding:10px;color:rgba(255,255,255,.7)">כל תיקי בד"ר סוננו '
+      +'לפי מצב התיק. שנה את הסינון בהגדרות ⚙ → הורדות.</div>'; return; }
   const totalSubs=list.reduce((n,c)=>n+((c.sub_cases||[]).length||0),0);
   picker.style.display='block';
-  picker.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,.7);margin-bottom:6px">
-      נמצאו ${list.length} תיקים${totalSubs?` · ${totalSubs} תת-תיקים`:''} — סמן תיק שלם או תת-תיק מסוים</div>
+  picker.innerHTML = `<div style="font-size:13px;color:rgba(255,255,255,.7);margin-bottom:6px">
+      נמצאו ${list.length} תיקים${totalSubs?` · ${totalSubs} תת-תיקים`:''} — סמן תיק שלם או תת-תיק מסוים${_openFilterNote(list.length,_all.length)}</div>
     <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
       <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_bdrSelectAll(true)">סמן הכל</button>
       <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_bdrSelectAll(false)">נקה הכל</button>
       <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_bdrSelectOpen()">רק תיקים פתוחים</button>
     </div>
+    ${_pickerSearchBox('bdr-q','🔎 סינון: מספר תיק / צד / ערכאה / תת-תיק…')}
     <div style="max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">
       ${list.map((c,i)=>{
         const done=_bdrHandled.has(c.number);
         const subs=c.sub_cases||[];
-        return `<div style="border:1px solid rgba(255,255,255,.14);border-radius:9px;padding:7px 10px${done?';opacity:.75':''}">
+        return `<div data-searchrow="bdr-q" data-hay="${_rowHay(c)}"
+          style="border:1px solid rgba(255,255,255,.14);border-radius:9px;padding:7px 10px${done?';opacity:.75':''}">
         <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
           <input type="checkbox" class="bdr-cb" data-i="${i}" data-whole="1" ${done?'':'checked'}
                  onchange="_bdrToggleWhole(${i}, this.checked)">
           <div style="flex:1;min-width:0">
-            <div style="font-weight:700;font-size:13px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <div style="font-weight:700;font-size:15px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
               <span>תיק ${c.number}</span>
               <span style="font-weight:400;opacity:.7">· ${c.type||''}</span>
               ${_statusChip(c.status, c.close_date, c.open_date)}
-              ${subs.length?`<span style="font-size:10px;opacity:.6">(${subs.length} תת-תיקים — תיק שלם)</span>`:''}
-              ${done?'<span style="font-size:10px;color:var(--accent-strong,#7fb3ff)">✓ הורד</span>':''}
+              ${subs.length?`<span style="font-size:11px;opacity:.6">(${subs.length} תת-תיקים — תיק שלם)</span>`:''}
+              ${done?'<span style="font-size:11px;color:var(--accent-strong,#7fb3ff)">✓ הורד</span>':''}
             </div>
-            <div style="font-size:11.5px;opacity:.85;line-height:1.5">
+            <div style="font-size:13px;opacity:.85;line-height:1.5">
               <span style="opacity:.7">בין:</span> <b>${c.party||'—'}</b>
               ${c.court?` &nbsp;•&nbsp; <span style="opacity:.7">ערכאה:</span> <b>${c.court}</b>`:''}
             </div>
           </div>
         </label>
         ${subs.length?`<div style="margin-inline-start:24px;margin-top:5px;display:flex;flex-direction:column;gap:3px">
-          ${subs.map((s,j)=>`<label style="display:flex;gap:7px;align-items:center;cursor:pointer;font-size:11.5px">
+          ${subs.map((s,j)=>`<label style="display:flex;gap:7px;align-items:center;cursor:pointer;font-size:13px">
             <input type="checkbox" class="bdr-sub-cb" data-i="${i}" data-j="${j}" ${done?'':'checked'}>
             <span style="flex:1;min-width:0">
               <b>${s.sub_id}</b> <span style="opacity:.75">${s.procedure||''}</span>
@@ -744,6 +1037,13 @@ function showBdrCases(cases){
       </div>`;}).join('')}
     </div>
     <button class="btn-accent" style="width:100%;margin-top:10px;padding:12px" onclick="runBdrSelected()">⬇ הורד את המסומנים</button>`;
+  // put the user's ticks back after the re-render (only when a picker existed —
+  // a first render keeps its default of "everything not yet downloaded")
+  if(_hadPicker){
+    document.querySelectorAll('.bdr-cb,.bdr-sub-cb').forEach(cb=>{
+      cb.checked = _wasChecked.has(cb.className+':'+(cb.dataset.i||'')+':'+(cb.dataset.j||''));
+    });
+  }
 }
 function _bdrSelectAll(v){
   document.querySelectorAll('.bdr-cb,.bdr-sub-cb').forEach(cb=>cb.checked=v);
@@ -778,20 +1078,24 @@ function runBdrSelected(){
   runBdrBatch('', [...picked], subs);
   const picker=$('sync-case-picker'); if(picker) picker.style.display='none';
 }
-function runNet(){
+async function runNet(){
+  if(!await ensureNoPortalRunning()) return;
   const s = window._settings || {};
-  if((s.net_scope||'selected')==='all'){
-    if(!confirm('להוריד את כל תיקי נט המשפט? (לפי ההגדרות)')) return;
+  const scope = _syncScopeChoice || s.net_scope || 'selected';
+  if(scope==='all'){
+    const t={open_client:'כל התיקים של לקוחות שיש להם תיק פתוח',
+             open:'רק תיקים פתוחים', all:'כל התיקים כולל סגורים'}[_syncAllMode];
+    if(!confirm(`להוריד מנט המשפט — ${t}?`)) return;
     act('net_download_all','הורדת כל תיקי נט');
   } else {
     startNetDownload();   // show list → pick
   }
 }
 function runBdr(){
+  // Follows the scope chosen ON SCREEN (step 1), falling back to Settings.
   const s = window._settings || {};
-  // Exactly like NET/ECA: 'all' downloads everything; 'selected' connects and
-  // shows the case list for checkbox selection (no client-name prompt).
-  if((s.bdr_scope||'all')==='all') runBdrBatch('');
+  const scope = _syncScopeChoice || s.bdr_scope || 'all';
+  if(scope==='all') runBdrBatch('');
   else bdrConnectAndList();
 }
 function checkCaseByNumber(portal){
@@ -827,7 +1131,8 @@ function showLoginRetry(kind, err){
     </div>`;
   document.body.appendChild(d);
 }
-function startNetDownload(){
+async function startNetDownload(){
+  if(!await ensureNoPortalRunning()) return;
   toast('מתחבר לנט המשפט ומחפש תיקים…');
   act('net_list_cases','חיפוש תיקים בנט');
 }
@@ -870,6 +1175,7 @@ function _confirmNetCases(){
   _startSmartDownload(mode, selected);
 }
 async function _startSmartDownload(mode, cases){
+  if(!await ensureNoPortalRunning()) return;
   if(!D?.live){
     const ok = await startEngine();
     if(!ok){ toast('המנוע לא עלה — לא ניתן להוריד', true); return; }
@@ -1000,16 +1306,21 @@ function showNetCases(cases){
 function _renderNetCasesPicker(cases){
   const picker = $('sync-case-picker');
   if(!picker){ setTimeout(()=>_renderNetCasesPicker(cases), 300); return; }
-  cases = _sortCasesForPicker(cases);   // open on top, newest first
+  const _allNet = _sortCasesForPicker(cases);   // open on top, newest first
+  cases = _applyOpenFilter(_allNet);            // value="i" indexes this list
   _pendingNetCases = cases;
   const _esc = s => (s||'').replace(/"/g, '״').replace(/'/g, '׳');
   picker.style.display='block';
+  if(!cases.length){
+    picker.innerHTML='<div style="padding:10px;color:rgba(255,255,255,.7)">כל תיקי נט המשפט '
+      +'סוננו לפי מצב התיק. שנה את הסינון בהגדרות ⚙ → הורדות.</div>'; return; }
   picker.innerHTML=`<div style="font-size:13px;color:rgba(255,255,255,.85);margin-bottom:8px;font-weight:700">
-      נמצאו ${cases.length} תיקים — סמן מה להוריד</div>
+      נמצאו ${cases.length} תיקים — סמן מה להוריד${_openFilterNote(cases.length,_allNet.length)}</div>
     <div style="display:flex;gap:6px;margin-bottom:8px">
       <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllNetCases(true)">סמן הכל</button>
       <button class="btn-accent" style="font-size:11px;padding:5px 10px" onclick="_selectAllNetCases(false)">נקה הכל</button>
     </div>
+    ${_pickerSearchBox('net-q','🔎 סינון: מספר תיק / צד / ערכאה…')}
     <div id="net-cases-list" style="max-height:400px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
     ${cases.map((c,i)=>{
       const did = _esc(c.CaseDisplayIdentifier || c.display_id || '');
@@ -1020,7 +1331,8 @@ function _renderNetCasesPicker(cases){
       const interest = _esc(c.CaseInterestName || c.interest || '');
       const dm = did.match(/(\d+)-(\d{2})-(\d{2})/);
       const mmyy = dm ? dm[2]+'/'+dm[3] : '';
-      return `<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+      return `<label data-searchrow="net-q" data-hay="${_rowHay(c)}"
+        style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
         background:rgba(255,255,255,.08);cursor:pointer;font-size:12.5px;color:rgba(255,255,255,.9)">
         <input type="checkbox" name="net-case" value="${i}" style="accent-color:var(--accent)">
         <span style="flex:1">
@@ -1041,9 +1353,10 @@ function ncCount(){
   const t = $('nc-btn-txt'); if(t) t.textContent = n? `⬇ סנכרן ${n} תיקים מסומנים` : 'סמן תיקים לסנכרון';
   const all = $('nc-all'); if(all) all.checked = n===document.querySelectorAll('.nc-pick').length && n>0;
 }
-function syncPickedCases(){
+async function syncPickedCases(){
   const picked = [...document.querySelectorAll('.nc-pick:checked')].map(el=>window._netCases[+el.dataset.i]);
   if(!picked.length){ toast('לא סומן אף תיק', true); return; }
+  if(!await ensureNoPortalRunning()) return;
   const items = [];
   for(const c of picked){
     const did = (c.CaseDisplayIdentifier||c.display_id||'').trim();

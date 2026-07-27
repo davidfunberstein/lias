@@ -37,10 +37,50 @@ def _parse_display_id(display_id: str) -> tuple[str, str] | None:
     return None
 
 
+# JS run in the page: find a menu <a>/<button> by its visible Hebrew label
+# (text or alt) and fire the REAL __doPostBack target parsed out of its
+# href/onclick. This is resilient to the portal renaming its ASP.NET naming
+# container (header$UpperMenu1$… → Header1$CaseLocatorHeaderUC2$…), which is
+# what silently broke the date-range search and forced the "my cases" fallback.
+_POSTBACK_BY_LABEL_JS = r"""
+(label) => {
+  const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+  const els = Array.from(document.querySelectorAll(
+    "a[href*='__doPostBack'], a[onclick*='__doPostBack'], a.dropdown-item, button, input[type='button']"));
+  for (const el of els) {
+    const lab = norm(el.getAttribute && el.getAttribute('alt')) ||
+                norm(el.textContent) || norm(el.value);
+    if (lab === label) {
+      const src = (el.getAttribute('href') || '') + ' ' + (el.getAttribute('onclick') || '');
+      const m = src.match(/__doPostBack\((['"])(.*?)\1/);
+      if (m && typeof __doPostBack === 'function') { __doPostBack(m[2], ''); return m[2]; }
+      try { el.click(); return 'click'; } catch (e) {}
+    }
+  }
+  return null;
+}
+"""
+
+
+def _fire_postback_by_label(page: "Page", label: str) -> bool:
+    """Trigger the menu item whose visible label == `label`, container-agnostic.
+    Returns True if a postback target was found and fired (or the item clicked)."""
+    try:
+        target = page.evaluate(_POSTBACK_BY_LABEL_JS, label)
+        if target:
+            print(f"[Search] Fired '{label}' via {target}")
+            return True
+    except Exception as e:
+        print(f"[Search] postback-by-label '{label}' failed: {e}")
+    return False
+
+
 def _open_case_search_dropdown(page: "Page") -> None:
     """Open the Bootstrap 'איתור תיקים' dropdown so sub-items become visible.
 
-    The menu uses data-bs-toggle="dropdown" inside #header_UpperMenu1_tdSearchCase.
+    The menu uses data-bs-toggle="dropdown"; the container id has changed across
+    portal versions (#header_UpperMenu1_tdSearchCase → CaseLocatorHeaderUC2), so
+    we try several container-scoped selectors plus a plain text match.
     """
     container = page.locator("#header_UpperMenu1_tdSearchCase")
     try:
@@ -54,13 +94,16 @@ def _open_case_search_dropdown(page: "Page") -> None:
     selectors = [
         '#header_UpperMenu1_tdSearchCase > button.dropdown-toggle',
         '#header_UpperMenu1_tdSearchCase button:has-text("איתור תיקים")',
+        'button.dropdown-toggle:has-text("איתור תיקים")',
+        '[data-bs-toggle="dropdown"]:has-text("איתור תיקים")',
+        'a:has-text("איתור תיקים")',
         'button:has-text("איתור תיקים")',
     ]
     for sel in selectors:
         try:
             btn = page.locator(sel).first
             if btn.count() > 0:
-                btn.click()
+                btn.click(timeout=4000)
                 time.sleep(0.5)
                 print(f"[Search] Clicked dropdown toggle 'איתור תיקים' via {sel}")
                 return
@@ -103,11 +146,22 @@ def navigate_to_my_cases(page: "Page") -> bool:
 
     _open_case_search_dropdown(page)
 
+    # Container-agnostic: fire 'התיקים שלי' by its live postback target.
+    if _fire_postback_by_label(page, "התיקים שלי"):
+        try:
+            page.wait_for_load_state("networkidle", timeout=12000)
+        except Exception:
+            pass
+        time.sleep(1)
+        if _form_visible():
+            print("[Search] Opened 'התיקים שלי' (label postback).")
+            return True
+
     for sel in ("#header_UpperMenu1_btnMyCases", 'a:has-text("התיקים שלי")'):
         try:
             link = page.locator(sel).first
             if link.count() > 0:
-                link.click()
+                link.click(timeout=4000)
                 try:
                     page.wait_for_load_state("networkidle", timeout=12000)
                 except Exception:
@@ -121,6 +175,18 @@ def navigate_to_my_cases(page: "Page") -> bool:
     return False
 
 
+# The portal removed/changed the date-range search form, so all six strategies
+# below fail and every listing paid ~30s of doomed attempts before falling back
+# to "התיקים שלי" (which works and returns the same cases). Remember the failure
+# for the life of the process and skip straight to the fallback next time.
+# A restart re-tests it, so a portal-side fix is picked up on its own.
+_DATE_SEARCH_UNAVAILABLE = False
+
+
+def date_search_known_broken() -> bool:
+    return _DATE_SEARCH_UNAVAILABLE
+
+
 def navigate_to_date_search(page: "Page") -> bool:
     """Click 'תיקים לתאריך פתיחה' and wait for the date form to appear.
 
@@ -129,6 +195,10 @@ def navigate_to_date_search(page: "Page") -> bool:
     postback, wait for the network to quiet down, then look for the form.
     Falls back to clicking the visible link if JS evaluation doesn't work.
     """
+    global _DATE_SEARCH_UNAVAILABLE      # declared before first use (read below)
+    if _DATE_SEARCH_UNAVAILABLE:
+        print("[Search] Skipping date-range form — known unavailable this session.")
+        return False
 
     def _is_date_search_page() -> bool:
         """Check we're on the date search page specifically (not MyCases which also has fromDateCalendar)."""
@@ -151,7 +221,21 @@ def navigate_to_date_search(page: "Page") -> bool:
     if _is_date_search_page():
         return True
 
-    # Primary: postback (the confirmed button ID from the portal HTML)
+    # Primary (container-agnostic): open the parent menu, then fire the item's
+    # own postback target parsed from the live DOM — survives id/container
+    # renames on the portal side.
+    _open_case_search_dropdown(page)
+    if _fire_postback_by_label(page, "תיקים לתאריך פתיחה"):
+        try:
+            page.wait_for_load_state("networkidle", timeout=12000)
+        except Exception:
+            pass
+        time.sleep(0.5)
+        if _wait_form(10000):
+            print("[Search] Opened date-range search form (label postback).")
+            return True
+
+    # Legacy: postback to the old hard-coded button ID (older portal versions)
     try:
         page.evaluate("__doPostBack('header$UpperMenu1$btnCaseDate','')")
         # UpdatePanel AJAX — wait for network to settle, not a full page load
@@ -173,7 +257,7 @@ def navigate_to_date_search(page: "Page") -> bool:
     try:
         link = page.locator("#header_UpperMenu1_btnCaseDate")
         if link.count() > 0:
-            link.click()
+            link.click(timeout=4000)
             try:
                 page.wait_for_load_state("networkidle", timeout=12000)
             except Exception:
@@ -189,7 +273,7 @@ def navigate_to_date_search(page: "Page") -> bool:
     try:
         link = page.locator('a:has-text("תיקים לתאריך פתיחה")').first
         if link.count() > 0:
-            link.click()
+            link.click(timeout=4000)
             try:
                 page.wait_for_load_state("networkidle", timeout=12000)
             except Exception:
@@ -211,7 +295,9 @@ def navigate_to_date_search(page: "Page") -> bool:
     except Exception:
         pass
 
-    print("[Search] Could not open date-range search form — all strategies failed.")
+    _DATE_SEARCH_UNAVAILABLE = True
+    print("[Search] Could not open date-range search form — all strategies failed. "
+          "Using 'התיקים שלי' from here on (no more retries this session).")
     return False
 
 

@@ -30,3 +30,7 @@ scratch/
 login_audit.log
 .gov_session.json
 google_login.json
+
+# Google Cloud console exports (contain OAuth client details) — never commit
+*Google Cloud console.pdf
+Client ID for Web application*
