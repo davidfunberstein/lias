@@ -407,8 +407,24 @@ def _ensure_logged_in_impl(page: Page, portal: str) -> bool:
             _progress("⛔ אתר ההוצאה לפועל לא נטען — תקלה באתר הממשלתי עצמו. נסה מאוחר יותר.")
             raise RuntimeError("אתר ההוצאה לפועל אינו זמין כרגע (תקלה בצד הממשלתי) — נסה מאוחר יותר")
         if not already(page) and "login.gov.il" in (page.url or ""):
-            raise RuntimeError("ההתחברות ל-gov.il לא הושלמה — ודא שהוזנה סיסמת "
-                               "האפליקציה של האימייל בהגדרות ⚙ (לקריאת קוד ה-OTP)")
+            # Don't blame the mailbox by default. The same end state ("still on
+            # login.gov.il") happens when the browser was relaunched mid-login —
+            # the OTP page it belonged to is gone, so no code could ever be
+            # typed. Saying "check your email App Password" there sent the user
+            # hunting a setting that was already correct.
+            relaunched = False
+            try:
+                _bm = getattr(page.context, "_lias_manager", None)
+                relaunched = bool(_bm and getattr(_bm, "_relaunch_count", 0))
+            except Exception:
+                pass
+            if relaunched:
+                raise RuntimeError(
+                    "ההתחברות ל-gov.il נקטעה — הדפדפן עלה מחדש באמצע ההזדהות "
+                    "(דף הקוד אבד). זו לא בעיה בהגדרות המייל. נסה שוב.")
+            raise RuntimeError("ההתחברות ל-gov.il לא הושלמה — לא התקבל קוד אימות. "
+                               "בדוק שסיסמת האפליקציה של המייל בהגדרות ⚙ תקינה, "
+                               "או שהדפדפן לא נסגר באמצע ההזדהות.")
         for _ in range(3):
             time.sleep(2)
             _click_eca_system_choice(page)

@@ -1098,13 +1098,22 @@ function runBdr(){
   if(scope==='all') runBdrBatch('');
   else bdrConnectAndList();
 }
-function checkCaseByNumber(portal){
+async function checkCaseByNumber(portal){
   if(portal==='NET'){ openNetCase(true); return; }
   const num=($('nc-num')?.value||'').trim();
   if(!num){ toast('נא להזין מספר תיק', true); return; }
+  if(!await ensureNoPortalRunning()) return;
   if(portal==='ECA'){
-    act(`eca_sync`,'סנכרון תיק הוצל"פ '+num);
-    fetch('/api/proxy/actions/eca_sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cases:[num]})});
+    // ONE request. This used to fire act('eca_sync') (no body → download every
+    // case) and immediately a second eca_sync for this case; the first grabbed
+    // the portal lock and the second died with "כרגע רצה פעולה בהוצאה לפועל".
+    logEvent('→ סנכרון תיק הוצל"פ '+num);
+    toast('מסנכרן תיק הוצל"פ '+num+'…');
+    fetch('/api/proxy/actions/eca_sync',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({cases:[num]})})
+      .then(r=>{ if(!r.ok) toast('שגיאה בהפעלת סנכרון', true); })
+      .catch(e=>toast('שגיאה: '+e.message, true));
   } else if(portal==='BDR'){
     runBdrBatch(num);   // client_filter also matches a case number substring
   }
