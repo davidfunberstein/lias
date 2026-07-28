@@ -11,6 +11,11 @@ keyring>=24.0.0
 # LIAS — web UI + AI
 fastapi>=0.110.0
 uvicorn>=0.29.0
+# Required by starlette.testclient, which the in-process engine uses as its
+# ASGI client. It was never declared: the app only ran where some other package
+# happened to pull httpx in, and a clean install failed with
+# "starlette.testclient requires the httpx package" on every engine start.
+httpx>=0.27.0
 pdfplumber>=0.10.0
 mammoth>=1.6.0
 pytesseract>=0.3.10
