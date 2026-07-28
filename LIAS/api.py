@@ -420,6 +420,89 @@ def get_bdr_cases():
         return {"cases": []}
 
 
+@app.get("/api/cases/all")
+def get_all_cases(q: str = ""):
+    """Every case this installation knows about, from all three portals, merged
+    into one list and marked with whether its documents were actually downloaded.
+
+    Served from the on-disk case cache, so it answers with NO portal login —
+    the user can search and see what exists (and what is still missing) offline.
+    Optional `q` filters on case number, parties, court or client."""
+    from LIAS.collector_bridge import (get_last_net_cases, get_last_bdr_cases,
+                                       get_last_eca_cases, downloaded_case_index)
+    PORTALS = (("NET", 'נט המשפט', get_last_net_cases),
+               ("BDR", 'בית הדין הרבני', get_last_bdr_cases),
+               ("ECA", 'הוצאה לפועל', get_last_eca_cases))
+    have = downloaded_case_index()
+    out = []
+    for code, label, getter in PORTALS:
+        try:
+            cases = getter() or []
+        except Exception:
+            cases = []
+        for c in cases:
+            num = str(c.get("number") or c.get("display_id")
+                      or c.get("CaseDisplayIdentifier") or "").strip()
+            if not num:
+                continue
+            info = have.get(num) or {}
+            parties = c.get("parties") or []
+            if not parties and c.get("party"):
+                parties = [{"role": c.get("role") or "", "name": c["party"]}]
+            out.append({
+                "number": num,
+                "portal": code,
+                "portal_label": label,
+                "type": c.get("type") or c.get("CaseTypeShortName") or "",
+                "court": c.get("court") or c.get("CourtName") or "",
+                "status": c.get("status") or c.get("CaseStatusName") or "",
+                "open_date": c.get("open_date") or c.get("OpenDate") or "",
+                "close_date": c.get("close_date") or "",
+                "client": c.get("client") or c.get("party") or "",
+                "parties": parties,
+                "sub_cases": c.get("sub_cases") or [],
+                "downloaded": bool(info),
+                "doc_count": info.get("docs", 0),
+                "folder": info.get("folder", ""),
+            })
+    # Cases sitting on disk that no portal listing covers (a cache was cleared,
+    # or the documents arrived before the cache existed). Without this the view
+    # would claim "no cases" while 1000+ documents are downloaded.
+    seen = {r["number"] for r in out}
+    for num, info in have.items():
+        if num in seen:
+            continue
+        out.append({
+            "number": num,
+            "portal": info.get("portal", ""),
+            "portal_label": info.get("portal_label", 'לא ידוע'),
+            "type": "", "court": "", "status": "",
+            "open_date": "", "close_date": "",
+            "client": info.get("client", ""),
+            "parties": info.get("parties", []),
+            "sub_cases": [],
+            "downloaded": True,
+            "doc_count": info.get("docs", 0),
+            "folder": info.get("folder", ""),
+            "from_disk": True,
+        })
+
+    if q:
+        needle = q.strip().lower()
+
+        def _hit(r: dict) -> bool:
+            hay = " ".join([r["number"], r["type"], r["court"], r["client"],
+                            r["portal_label"],
+                            " ".join(p.get("name", "") for p in r["parties"])])
+            return needle in hay.lower()
+
+        out = [r for r in out if _hit(r)]
+    out.sort(key=lambda r: (r["downloaded"], r["number"]))
+    return {"cases": out,
+            "total": len(out),
+            "missing": sum(1 for r in out if not r["downloaded"])}
+
+
 @app.post("/api/actions/open_case_view")
 def act_open_case_view(portal: str = "", case_number: str = ""):
     """פתיחת התיק ויזואלית בדפדפן האוטומציה."""

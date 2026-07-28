@@ -95,7 +95,7 @@ def _make_filename(process: str, date: str, doc_type: str, applicant: str) -> st
 # Login
 # ---------------------------------------------------------------------------
 
-def _wait_for_eca_home(page, timeout: int = 120) -> bool:
+def _wait_for_eca_home(page, timeout: int = 60) -> bool:
     """Wait until we land on an authenticated ECA page (not login.gov.il)."""
     _log("ממתין להתחברות ל-ECA…")
     deadline = time.time() + timeout
@@ -125,10 +125,10 @@ def _click_system_choice(page) -> None:
     for sel in _ECA_CHOICE_SELECTORS:
         try:
             el = page.locator(sel).first
-            if el.count() > 0 and el.is_visible(timeout=2000):
+            if el.count() > 0 and el.is_visible(timeout=600):
                 el.click()
                 _log("✓ נבחרה מערכת: הוצאה לפועל")
-                time.sleep(2)
+                time.sleep(1)
                 return
         except Exception:
             continue
@@ -354,24 +354,72 @@ def _extract_cases(page) -> list[dict]:
 # Navigate to case and open בקשות והחלטות tab
 # ---------------------------------------------------------------------------
 
-def _open_motions_tab(page, case_num: str) -> bool:
-    """Navigate to case info page and click the 'בקשות והחלטות' tab."""
-    url = f"{BASE_URL}/he/caseinfo/{case_num}"
-    _log(f"  ניווט לתיק {case_num}")
-    page.goto(url, wait_until="domcontentloaded", timeout=30000)
-    time.sleep(2)
-
-    # Click the MotionDecisionTable tab
+def _on_case_page(page, case_num: str) -> bool:
+    """True only when the browser is really sitting on THIS case's page.
+    The Angular router can silently bounce us back to OpenCase (or to the SSO)
+    after a goto, which used to look like a successful navigation."""
     try:
-        tab = page.locator("#MotionDecisionTable").first
-        tab.wait_for(state="visible", timeout=10000)
-        tab.click()
-        _log("  ✓ לחץ על 'בקשות והחלטות'")
-        time.sleep(2)
-        return True
-    except Exception as e:
-        _log(f"  ⚠ לא מצא טאב 'בקשות והחלטות': {e}")
+        return f"/caseinfo/{case_num}" in (page.url or "")
+    except Exception:
         return False
+
+
+def _goto_case(page, case_num: str) -> bool:
+    """Land on https://publicsso.eca.gov.il/he/caseinfo/{case_num} and stay there.
+
+    Every case is opened by URL — that is the portal's own deep link. Because the
+    SPA sometimes swallows the first navigation (router still booting, session
+    re-check mid-flight), we verify the URL stuck and retry instead of silently
+    downloading the *previous* case's documents."""
+    url = f"{BASE_URL}/he/caseinfo/{case_num}"
+    for attempt in range(1, 4):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        except Exception as e:
+            _log(f"  ⚠ ניווט לתיק {case_num} נכשל (ניסיון {attempt}/3): {e}")
+            time.sleep(2)
+            continue
+        # give the router a moment, then confirm the URL really stuck
+        for _ in range(10):
+            time.sleep(1)
+            if _on_case_page(page, case_num):
+                break
+        if not _on_case_page(page, case_num):
+            _log(f"  ⚠ הפורטל החזיר אותנו מ-{case_num} אל {(page.url or '')[:70]} "
+                 f"(ניסיון {attempt}/3)")
+            time.sleep(2)
+            continue
+        # URL is right — wait for the case shell to actually render
+        try:
+            page.wait_for_selector("#MotionDecisionTable, mat-tab-link, app-caseinfo",
+                                   timeout=20000)
+        except Exception:
+            pass
+        _log(f"  ✓ נכנס לתיק {case_num}")
+        return True
+    _log(f"  ✗ לא הצלחתי להיכנס לתיק {case_num} אחרי 3 ניסיונות")
+    return False
+
+
+def _open_motions_tab(page, case_num: str) -> bool:
+    """Enter the case by URL, then open its 'בקשות והחלטות' tab."""
+    if not _on_case_page(page, case_num):
+        if not _goto_case(page, case_num):
+            return False
+
+    for attempt in range(1, 3):
+        try:
+            tab = page.locator("#MotionDecisionTable").first
+            tab.wait_for(state="visible", timeout=10000)
+            tab.click()
+            _log("  ✓ לחץ על 'בקשות והחלטות'")
+            time.sleep(2)
+            return True
+        except Exception as e:
+            _log(f"  ⚠ לא מצא טאב 'בקשות והחלטות' (ניסיון {attempt}/2): {e}")
+            if attempt == 1:
+                _goto_case(page, case_num)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -602,11 +650,22 @@ def _download_doc(page, row_loc, btn_id: str, save_path: Path) -> str:
         try:
             with page.expect_download(timeout=6000) as dl_info:
                 btn.click()
-            dl_info.value.save_as(str(save_path))
-            _log(f"      ✓ {save_path.name}")
+            dl = dl_info.value
+            # save_as() blocks until the transfer completes and takes NO timeout,
+            # so a stalled file used to hang the whole run with nothing in the log
+            # to say which document was stuck. Name it first, then bound the wait
+            # by checking the download actually finished before copying it.
+            _log(f"      ↓ מוריד: {save_path.name}")
+            _t0 = time.time()
+            fail = dl.failure()            # returns None once the transfer ended
+            if fail:
+                _log(f"      ⚠ ההורדה נכשלה ({fail}) — מדלג: {save_path.name}")
+                return "fail"
+            dl.save_as(str(save_path))
+            _log(f"      ✓ {save_path.name} ({time.time()-_t0:.1f}s)")
             return "ok"
-        except Exception:
-            pass
+        except Exception as _e:
+            _log(f"      ⚠ נתיב ההורדה הישיר נכשל ({str(_e)[:60]}) — מנסה דרך ה-API")
 
         # Wait for the API response that carries the document
         deadline = time.time() + 12
@@ -704,17 +763,25 @@ def _harvest_parties(page) -> list[dict]:
                     time.sleep(1.0)
             except Exception:
                 pass
-            # Strategy 1: read from table rows (mat-column-* cells)
+            # Strategy 1: read from table rows (cdk-column-* cells)
             rows = panel.locator("tr.mat-mdc-row, tr.mat-row").all()
+            if not rows:
+                rows = panel.locator("tr").all()
             for row in rows:
                 rec = {"role": role}
                 for col, key in [("name", "name"),
                                  ("authenticationNumber", "id"),
                                  ("phoneNumber", "phone")]:
                     try:
-                        cell = row.locator(f"td.mat-column-{col}")
+                        cell = row.locator(f"td.cdk-column-{col}")
+                        if cell.count() == 0:
+                            cell = row.locator(f"td.mat-column-{col}")
                         if cell.count() > 0:
-                            val = cell.inner_text(timeout=1000).strip()
+                            inner = cell.locator("div.general-text")
+                            if inner.count() > 0:
+                                val = inner.first.inner_text(timeout=1000).strip()
+                            else:
+                                val = cell.inner_text(timeout=1000).strip()
                             if val:
                                 rec[key] = val
                     except Exception:
@@ -741,52 +808,153 @@ def _harvest_parties(page) -> list[dict]:
     return parties
 
 
-def _collect_case_parties(page, case_dir: Path) -> dict:
-    """First visit to a case: harvest all parties into case_info.json (cached —
-    parties rarely change, so we only do this when the file is missing)."""
-    import json as _json
-    info_path = case_dir / "case_info.json"
-    if info_path.exists():
-        try:
-            return json.loads(info_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    parties = _harvest_parties(page)
-    info = {"parties": parties}
-    if parties:
-        try:
-            case_dir.mkdir(parents=True, exist_ok=True)
-            info_path.write_text(_json.dumps(info, ensure_ascii=False, indent=1),
-                                 encoding="utf-8")
-            _log("  ✓ צדדים: " + ", ".join(f"{p['role']}: {p.get('name','')}" for p in parties))
-        except Exception:
-            pass
-    return info
+# ---------------------------------------------------------------------------
+# Which client does a case belong to?
+# ---------------------------------------------------------------------------
+# The card in the carousel shows the OTHER side (e.g. "הבנק הבינלאומי" — the
+# זוכה). Filing the case under that name buried the lawyer's own client: case
+# 529310-10-24 ended up under the bank instead of under דוד פונברשטיין, who is
+# the חייב the office represents. So: prefer a party this installation already
+# knows as a client, and only fall back to the card name when nothing matches.
+
+_CASE_INDEX_NAME = ".eca_case_index.json"
+
+
+def _norm_name(s: str) -> str:
+    """Fold a party name for comparison. Quotes are DROPPED, not turned into
+    spaces, so the portal's 'בע"מ' matches the folder's sanitized 'בעמ'."""
+    s = re.sub(r"[\"'׳״]", "", s or "")
+    return re.sub(r"[\s\-–—,.]+", " ", s).strip().lower()
+
+
+def _load_case_index(downloads_dir: Path) -> dict:
+    try:
+        p = downloads_dir / _CASE_INDEX_NAME
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8")) or {}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_case_index(downloads_dir: Path, index: dict) -> None:
+    try:
+        (downloads_dir / _CASE_INDEX_NAME).write_text(
+            json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _known_clients(downloads_dir: Path) -> dict[str, int]:
+    """Client folders already created by any portal → how many cases each holds.
+
+    The count is what tells a real client from an opposing party: the office's
+    own client recurs across many cases, the other side usually appears once."""
+    out: dict[str, int] = {}
+    try:
+        for d in downloads_dir.iterdir():
+            if not d.is_dir() or d.name.startswith("."):
+                continue
+            subs = [c for c in d.iterdir() if c.is_dir()]
+            if not subs:            # a client folder holds case folders, not PDFs
+                continue
+            # portal folders (e.g. 'הוצאה לפועל') nest the cases one level deeper
+            n = 0
+            for s in subs:
+                inner = [x for x in s.iterdir() if x.is_dir()]
+                n += len(inner) if inner else 1
+            out[d.name] = n
+    except Exception:
+        pass
+    return out
+
+
+def _resolve_client(case: dict, parties: list[dict], downloads_dir: Path) -> str:
+    """Pick the client folder this case belongs under.
+
+    The carousel card shows the OPPOSING side, so trusting it filed cases under
+    the other party (case 529310-10-24 landed under the bank instead of under
+    the חייב the office represents). Instead: of the case's real parties, take
+    the one this installation already knows best — the client with the most
+    existing cases wins. Falls back to the card name on a clean install."""
+    card_party = (case.get("party") or "").strip()
+    known = _known_clients(downloads_dir)
+    by_norm: dict[str, tuple[str, int]] = {}
+    for name, count in known.items():
+        k = _norm_name(name)
+        if count > by_norm.get(k, ("", -1))[1]:
+            by_norm[k] = (name, count)
+
+    # real parties only — 'בא כוח …' rows are the lawyers, never the client
+    names = [(p.get("name") or "").strip() for p in (parties or [])
+             if "בא כוח" not in (p.get("role") or "")]
+    names = [n for n in names if n]
+
+    best_name, best_count = "", -1
+    for n in names:
+        hit = by_norm.get(_norm_name(n))
+        if hit and hit[1] > best_count:
+            best_name, best_count = hit
+
+    if best_name:
+        if _norm_name(best_name) != _norm_name(card_party):
+            _log(f"  ↳ לקוח זוהה: {best_name} ({best_count} תיקים קיימים) — "
+                 f"ולא '{card_party}' שמופיע בכרטיס (הצד שכנגד)")
+        return best_name
+
+    # nothing known yet (clean install) — keep the card name, but prefer a real
+    # party over an empty card so the folder is never 'ללא שם' for no reason.
+    return card_party or (names[0] if names else "ללא שם")
 
 
 def _process_case(page, case: dict, output_dir: Path, by_client: bool = False,
-                  should_cancel=None) -> None:
+                  should_cancel=None, on_case_done=None) -> None:
     case_num = case["number"]
-    if by_client:
-        client = _sanitize(case.get("party") or "ללא שם")
-        case_dir = output_dir / client / "הוצאה לפועל" / _sanitize(case_num)
-    else:
-        case_dir = output_dir / _sanitize(case_num)
 
     _log(f"\n{'='*60}")
     _log(f"תיק: {case_num}  ({case.get('type', '')})")
 
+    # Enter THIS case (by its own /he/caseinfo/<case> URL) before reading
+    # anything — otherwise we would harvest the previous case's data.
     if not _open_motions_tab(page, case_num):
         _log(f"  ✗ דילוג על תיק {case_num}")
         return
 
-    # First visit: harvest parties (role/name/ID) from גורמים בתיק, then
-    # return to the motions tab.
-    if not (case_dir / "case_info.json").exists():
-        _collect_case_parties(page, case_dir)
+    # Parties decide which client folder the case belongs to, so they must be
+    # known BEFORE case_dir exists. Cache them per case in a single index at the
+    # downloads root so repeat runs don't re-open the גורמים tab every time.
+    index = _load_case_index(output_dir)
+    entry = index.get(case_num) or {}
+    parties = entry.get("parties") or []
+    if not parties:
+        parties = _harvest_parties(page)
+        if parties:
+            _log("  ✓ צדדים: " + ", ".join(
+                f"{p.get('role','')}: {p.get('name','')}" for p in parties))
+        # _harvest_parties left us on the גורמים tab — go back to the motions tab
+        if not _open_motions_tab(page, case_num):
+            _log(f"  ✗ דילוג על תיק {case_num} (לא חזר לטאב הבקשות)")
+            return
+
+    if by_client:
+        client = _sanitize(entry.get("client")
+                           or _resolve_client(case, parties, output_dir))
+        case_dir = output_dir / client / "הוצאה לפועל" / _sanitize(case_num)
+    else:
+        client = ""
+        case_dir = output_dir / _sanitize(case_num)
+
+    index[case_num] = {"client": client, "parties": parties,
+                       "type": case.get("type", ""), "dir": str(case_dir)}
+    _save_case_index(output_dir, index)
+
+    if parties and not (case_dir / "case_info.json").exists():
         try:
-            page.locator("#MotionDecisionTable").first.click()
-            time.sleep(2)
+            case_dir.mkdir(parents=True, exist_ok=True)
+            (case_dir / "case_info.json").write_text(
+                json.dumps({"parties": parties, "client": client,
+                            "case_number": case_num}, ensure_ascii=False, indent=1),
+                encoding="utf-8")
         except Exception:
             pass
 
@@ -796,6 +964,24 @@ def _process_case(page, case: dict, output_dir: Path, by_client: bool = False,
 
     rows_data = _extract_rows(page)
     _log(f"  {len(rows_data)} שורות נמצאו")
+
+    # Two rows can produce the very same "{הליך} - {תאריך} - {סוג} - {מגיש}"
+    # name. _download_doc skips a path that already exists, so without a
+    # disambiguating suffix the second document is silently never downloaded and
+    # the case still reports as fully synced. Number the repeats instead.
+    used: set[str] = set()
+
+    def _unique(path: Path) -> Path:
+        key = str(path).lower()
+        if key not in used:
+            used.add(key)
+            return path
+        for n in range(2, 100):
+            cand = path.with_name(f"{path.stem} ({n}){path.suffix}")
+            if str(cand).lower() not in used:
+                used.add(str(cand).lower())
+                return cand
+        return path
 
     for rd in rows_data:
         if should_cancel and should_cancel():
@@ -808,20 +994,27 @@ def _process_case(page, case: dict, output_dir: Path, by_client: bool = False,
         proc_dir = case_dir / _sanitize(proc.split(".")[0])
 
         if rd["has_motion"]:
-            filename = _make_filename(proc, date, "בקשה", applicant)
-            _log(f"    [{proc}] בקשה ({date}) — {filename}")
+            target = _unique(proc_dir / _make_filename(proc, date, "בקשה", applicant))
+            _log(f"    [{proc}] בקשה ({date}) — {target.name}")
             row = _row_locator(page, proc, rd["date"])
-            _stats_tick(_download_doc(page, row, "motionDocumentID", proc_dir / filename))
+            _stats_tick(_download_doc(page, row, "motionDocumentID", target))
 
         if rd["has_decision"]:
-            filename = _make_filename(proc, dec_date, "החלטה", applicant)
-            _log(f"    [{proc}] החלטה ({dec_date}) — {filename}")
+            target = _unique(proc_dir / _make_filename(proc, dec_date, "החלטה", applicant))
+            _log(f"    [{proc}] החלטה ({dec_date}) — {target.name}")
             row = _row_locator(page, proc, rd["date"])
-            _stats_tick(_download_doc(page, row, "decisionDocumentID", proc_dir / filename))
+            _stats_tick(_download_doc(page, row, "decisionDocumentID", target))
 
         time.sleep(0.3)
 
     _write_case_manifest(case_dir, case_num)
+    # Hand the finished case to the importer straight away so it shows up in the
+    # dashboard now, rather than only when the whole run ends.
+    if on_case_done:
+        try:
+            on_case_done(case_dir, case_num)
+        except Exception as _e:
+            _log(f"  ⚠ ייבוא מיידי נכשל ({_e}) — ייובא בסוף הריצה")
 
 
 def _write_case_manifest(case_dir: Path, case_num: str) -> None:
@@ -867,7 +1060,8 @@ def _write_case_manifest(case_dir: Path, case_num: str) -> None:
 # ---------------------------------------------------------------------------
 
 def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None = None,
-                     progress=None, should_cancel=None, job_id=None) -> str:
+                     progress=None, should_cancel=None, job_id=None,
+                     on_case_done=None) -> str:
     """Download all ECA cases into root_output_dir/downloads/{client}/הוצאה לפועל/{case}.
 
     Assumes the caller provides a Playwright page; handles ECA login itself
@@ -941,7 +1135,8 @@ def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None
             progress(frac, f"תיק {_STATS['case_idx']}/{len(cases)}: {cnum}")
         try:
             _process_case(page, case, downloads_dir, by_client=True,
-                          should_cancel=lambda: _cancel() or _cancel(cnum))
+                          should_cancel=lambda: _cancel() or _cancel(cnum),
+                          on_case_done=on_case_done)
             ok += 1
             if cnum in _by_id:
                 _by_id[cnum]["status"] = "done"

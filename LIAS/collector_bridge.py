@@ -28,6 +28,9 @@ HE: נקודות הכניסה הקיימות ב-core/ כבר מקבלות `page`
 from __future__ import annotations
 
 import json
+import re
+import threading
+from datetime import datetime as _dt
 from pathlib import Path
 
 from . import config, db, jobs, snapshot
@@ -38,6 +41,33 @@ from .jobs import handler, JobContext
 #     message instead of killing the process.
 # HE: הייבוא של הקוד הישן עצל ומוגן, כך ש-LIAS רצה (UI, DB, משימות) גם בלי
 #     playwright מותקן; משימות דפדפן ייכשלו עם הודעה ברורה במקום להפיל הכל.
+
+
+def import_one_case(case_dir: Path, portal: str = "", case_number: str = "") -> int:
+    """Import a SINGLE finished case into SQLite and tell the UI to refresh.
+
+    Downloads used to reach the dashboard only when the whole job ended, because
+    the import ran once at the very end. A run over 20 cases therefore showed
+    nothing for its entire duration. Each case is now imported the moment it is
+    finished, so the dashboard fills in live."""
+    from .migrate_csv import _find_manifest_dirs, _import_manifest
+    downloads_root = config.COURT_DOCS_DIR / "downloads"
+    n = 0
+    try:
+        for d, csv_path in _find_manifest_dirs(Path(case_dir)):
+            docs, _ = _import_manifest(d, csv_path, downloads_root)
+            n += docs
+    except Exception as exc:
+        print(f"[import_one_case] {case_number}: {exc}")
+        return 0
+    if n:
+        try:
+            jobs.broadcast({"type": "case_imported", "portal": portal,
+                            "case": case_number, "docs": n,
+                            "message": f"{case_number}: {n} מסמכים נוספו לדשבורד"})
+        except Exception:
+            pass
+    return n
 
 
 def _reimport_folder(case_dir: Path) -> int:
@@ -307,7 +337,7 @@ def eca_list(payload: dict, ctx: JobContext) -> str:
     # Persist CUMULATIVELY so the UI keeps every case ever listed (merge by
     # number) and the picker survives a missed SSE broadcast / re-render.
     global _LAST_ECA_CASES
-    _LAST_ECA_CASES = _merge_case_lists(_LAST_ECA_CASES, cases)
+    _LAST_ECA_CASES = remember_cases("eca", _LAST_ECA_CASES, cases)
     jobs.broadcast({"type": "eca_cases", "cases": _LAST_ECA_CASES})
     _finish_portal(ctx, eca, "ECA", "הוצאה לפועל")
     return f"נמצאו {len(cases)} תיקי הוצל\"פ"
@@ -331,8 +361,107 @@ def _merge_case_lists(existing: list, incoming: list) -> list:
     return list(by_key.values())
 
 
+# ── Case-list cache, on disk ──────────────────────────────────────────────
+# These lists used to live only in memory, so every engine restart emptied the
+# pickers and the case lists were unavailable until the user logged into the
+# portal again. They are plain metadata (number, parties, court, status) — no
+# documents — so they are cached to disk and served with no portal login at all.
+_CASE_CACHE_DIR = config.COURT_DOCS_DIR / ".case_cache"
+
+
+def _cache_path(portal: str) -> Path:
+    return _CASE_CACHE_DIR / f"{portal.lower()}_cases.json"
+
+
+def _load_cached_cases(portal: str) -> list:
+    try:
+        p = _cache_path(portal)
+        if p.exists():
+            data = json.loads(p.read_text(encoding="utf-8"))
+            return data.get("cases", []) if isinstance(data, dict) else (data or [])
+    except Exception:
+        pass
+    return []
+
+
+def _save_cached_cases(portal: str, cases: list) -> None:
+    try:
+        _CASE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _cache_path(portal).write_text(json.dumps(
+            {"portal": portal.upper(), "cases": cases,
+             "saved_at": _dt.now().isoformat(timespec="seconds")},
+            ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def remember_cases(portal: str, existing: list, incoming: list) -> list:
+    """Merge, persist, and return the cumulative list for a portal."""
+    merged = _merge_case_lists(existing, incoming)
+    _save_cached_cases(portal, merged)
+    return merged
+
+
+_CASE_NUM_RE = re.compile(r"\d{3,6}-\d{1,2}-\d{2,4}|\d{6,7}(?:-\d+)?")
+
+
+def downloaded_case_index() -> dict:
+    """Map case-number → {docs, folder} for everything actually on disk.
+
+    Answers "was this case downloaded, and how much of it?" without touching a
+    portal. Case numbers appear in folder names in several shapes across the
+    portals (``תמש 15083-09-24``, ``1355021-3 …``, ``529310-10-24``), so the
+    number is matched out of the folder name rather than assumed."""
+    index: dict = {}
+    downloads = config.COURT_DOCS_DIR / "downloads"
+    if not downloads.exists():
+        return index
+    try:
+        for folder in downloads.rglob("*"):
+            if not folder.is_dir():
+                continue
+            m = _CASE_NUM_RE.search(folder.name)
+            if not m:
+                continue
+            num = m.group(0)
+            docs = sum(1 for f in folder.rglob("*.pdf"))
+            if not docs:
+                continue
+            prev = index.get(num)
+            if prev is not None and docs <= prev["docs"]:
+                continue
+            rel = folder.relative_to(downloads)
+            parts = rel.parts
+            # downloads/<client>/<portal folder>/<case>  — or  downloads/<case>
+            portal, label = "", 'לא ידוע'
+            if 'הוצאה לפועל' in parts:
+                portal, label = "ECA", 'הוצאה לפועל'
+            elif any(p.startswith(('תמש', 'תלהמ', 'תאדמ', 'יס', 'בל')) for p in parts) \
+                    or ' — ' in folder.name:
+                portal, label = "NET", 'נט המשפט'
+            elif re.match(r"^\d{6,7}-\d+", folder.name):
+                portal, label = "BDR", 'בית הדין הרבני'
+            entry = {"docs": docs, "folder": str(folder),
+                     "portal": portal, "portal_label": label,
+                     "client": parts[0] if len(parts) > 1 else "",
+                     "parties": []}
+            # ECA writes the harvested parties next to the documents
+            try:
+                info_f = folder / "case_info.json"
+                if info_f.exists():
+                    info = json.loads(info_f.read_text(encoding="utf-8"))
+                    entry["parties"] = info.get("parties", []) or []
+                    entry["client"] = info.get("client") or entry["client"]
+            except Exception:
+                pass
+            index[num] = entry
+    except Exception:
+        pass
+    return index
+
+
 # cumulative NET case list — served via /api/net/cases
-_LAST_NET_CASES: list = []
+_LAST_NET_CASES: list = _load_cached_cases("net")
 
 
 def get_last_net_cases() -> list:
@@ -341,7 +470,7 @@ def get_last_net_cases() -> list:
 
 # last ECA case list — served via /api/eca/cases so the picker survives an
 # SSE reconnect or a sync-view re-render during the long login.
-_LAST_ECA_CASES: list = []
+_LAST_ECA_CASES: list = _load_cached_cases("eca")
 
 
 def get_last_eca_cases() -> list:
@@ -370,7 +499,8 @@ def eca_sync(payload: dict, ctx: JobContext) -> str:
         cases = payload.get("cases") or None
         return run_eca_download(page, config.COURT_DOCS_DIR, cases_filter=cases,
                                 progress=ctx.progress, job_id=ctx.job_id,
-                                should_cancel=lambda case=None: _is_case_cancelled(ctx.job_id, case))
+                                should_cancel=lambda case=None: _is_case_cancelled(ctx.job_id, case),
+                                on_case_done=lambda d, num: import_one_case(d, "ECA", num))
 
     try:
         result = _run_portal(ctx, "eca_sync", _run, timeout=3600)
@@ -414,13 +544,57 @@ def open_portal(payload: dict, ctx: JobContext) -> str:
     return f"opened {portal} with auto-login"
 
 
+# ── One portal at a time ──────────────────────────────────────────────────
+# Two portals must never drive their browsers at the same time: they share one
+# gov.il identity, one OTP mailbox and one machine. Running NET and ECA together
+# made each login steal the other's OTP mail, and the browsers starved each
+# other. So every portal-bound command takes this lock — downloads AND listings.
+# It is an RLock so a handler that runs several portal commands in sequence on
+# its own thread is unaffected; only *other* jobs are held out.
+_PORTAL_BUSY = threading.RLock()
+_PORTAL_BUSY_WHO: dict = {"label": "", "since": 0.0}
+
+PORTAL_LABELS_HE = {"NET": 'נט המשפט', "BDR": 'בית הדין הרבני', "ECA": 'הוצאה לפועל'}
+
+
+def portal_busy_with() -> str:
+    """Label of the portal operation currently running ('' when nothing runs).
+    Read by the UI so it can grey out the other portals' sync buttons."""
+    return _PORTAL_BUSY_WHO.get("label", "")
+
+
 def _run_portal(ctx: JobContext, name: str, fn, timeout: int):
     """EN: run a portal-bound browser command with STUBBORN retries — the
         court WAF sometimes resets connections (blocked fingerprint or rate
         limiting). Escalation ladder: retry → wait → relaunch visible →
         wait longer → final try. The user asked: keep trying until it works.
+        Serialized: only one portal command runs at a time, machine-wide.
     HE: הרצת פקודת פורטל עם נסיונות עקשניים — ה-WAF לפעמים חותך חיבורים.
-        סולם: ניסיון חוזר ← המתנה ← חלון גלוי ← המתנה ארוכה ← ניסיון אחרון."""
+        סולם: ניסיון חוזר ← המתנה ← חלון גלוי ← המתנה ארוכה ← ניסיון אחרון.
+        מריצים פורטל אחד בכל רגע — אין הורדות/בקשות במקביל."""
+    import time as _t
+    from .browser_manager import BrowserDead
+
+    # Refuse to run in parallel with another portal — fail fast with a clear
+    # message instead of queueing silently for an unknown amount of time.
+    if not _PORTAL_BUSY.acquire(timeout=2):
+        busy = _PORTAL_BUSY_WHO.get("label") or "פורטל אחר"
+        mins = int((_t.time() - (_PORTAL_BUSY_WHO.get("since") or _t.time())) // 60)
+        raise RuntimeError(
+            f"כרגע רצה פעולה ב{busy}"
+            + (f" (כבר {mins} דקות)" if mins else "")
+            + ". אי אפשר להוריד או לבקש תיקים משני פורטלים במקביל — "
+              "המתן לסיום ואז הפעל שוב.")
+    _PORTAL_BUSY_WHO.update(label=PORTAL_LABELS_HE.get(name.split("_")[0].upper(), name),
+                            since=_t.time())
+    try:
+        return _run_portal_locked(ctx, name, fn, timeout)
+    finally:
+        _PORTAL_BUSY_WHO.update(label="", since=0.0)
+        _PORTAL_BUSY.release()
+
+
+def _run_portal_locked(ctx: JobContext, name: str, fn, timeout: int):
     import time as _t
     from .browser_manager import BrowserDead
 
@@ -537,7 +711,7 @@ def net_date_list(payload: dict, ctx: JobContext) -> str:
     cases = _run_portal(ctx, "net_date_list", _run, timeout=600)
     # Push straight to the UI as a live event / דחיפה ישירה ל-UI כאירוע חי
     global _LAST_NET_CASES
-    _LAST_NET_CASES = _merge_case_lists(_LAST_NET_CASES, cases)
+    _LAST_NET_CASES = remember_cases("net", _LAST_NET_CASES, cases)
     jobs.broadcast({"type": "net_cases", "cases": _LAST_NET_CASES})
     return f"נמצאו {len(cases)} תיקים בטווח"
 
@@ -860,7 +1034,7 @@ def net_auto_update(payload: dict, ctx: JobContext) -> str:
 # BDR batch — all cases / הורדת כל תיקי בתי הדין הרבניים
 # ---------------------------------------------------------------------------
 
-_LAST_BDR_CASES: list = []
+_LAST_BDR_CASES: list = _load_cached_cases("bdr")
 
 
 def get_last_bdr_cases() -> list:
@@ -948,7 +1122,7 @@ def bdr_list(payload: dict, ctx: JobContext) -> str:
     finally:
         ctx.browser = _saved
     global _LAST_BDR_CASES
-    _LAST_BDR_CASES = _merge_case_lists(_LAST_BDR_CASES, cases)
+    _LAST_BDR_CASES = remember_cases("bdr", _LAST_BDR_CASES, cases)
     jobs.broadcast({"type": "bdr_cases", "cases": _LAST_BDR_CASES})
     _finish_portal(ctx, bdr, "BDR", "בית הדין הרבני")
     return f"נמצאו {len(cases)} תיקי בד\"ר"
@@ -1103,15 +1277,17 @@ def net_list_cases(payload: dict, ctx: JobContext) -> str:
         to_str = today.strftime("%d/%m/%Y")
 
         cases = []
-        # Prefer date-search ("תיקים לתאריך פתיחה") — filters by date range
-        if navigate_to_date_search(page):
+        # "התיקים שלי" first: it is the route that actually works on the current
+        # portal and filters by the same date range. The date-range form is tried
+        # only as a backup — previously it went first, failed every one of its
+        # strategies, and burned ~30s on every single listing before falling back.
+        if navigate_to_my_cases(page):
+            if fill_my_cases_dates_and_search(page, from_str, to_str):
+                cases = extract_cases_from_my_cases_grid(page)
+
+        if not cases and navigate_to_date_search(page):
             if fill_date_range_and_search(page, from_str, to_str):
                 cases = extract_cases_from_search_grid(page)
-
-        if not cases:
-            if navigate_to_my_cases(page):
-                if fill_my_cases_dates_and_search(page, from_str, to_str):
-                    cases = extract_cases_from_my_cases_grid(page)
 
         parseable = []
         for c in cases:
@@ -1130,7 +1306,7 @@ def net_list_cases(payload: dict, ctx: JobContext) -> str:
                 })
 
         global _LAST_NET_CASES
-        _LAST_NET_CASES = _merge_case_lists(_LAST_NET_CASES, parseable)
+        _LAST_NET_CASES = remember_cases("net", _LAST_NET_CASES, parseable)
         jobs.broadcast({"type": "net_cases", "cases": _LAST_NET_CASES,
                         "total": len(_LAST_NET_CASES), "years_back": years_back})
         return f"found {len(parseable)} cases"

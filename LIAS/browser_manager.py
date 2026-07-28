@@ -270,15 +270,20 @@ class BrowserManager:
         #     fingerprint and passes — prefer it, fall back to bundled.
         # HE: ה-WAF של נט חותך את ה-Chromium של Playwright; Chrome אמיתי
         #     עובר — מעדיפים אותו, עם נסיגה ל-Chromium המובנה.
+        # Cap the launch. Playwright's default is 180s, and three portals each
+        # opening real Chrome on its own persistent profile can deadlock on the
+        # profile SingletonLock — one launch then hung the full three minutes,
+        # crashed, and took a login that was mid-OTP down with it. Failing over
+        # to bundled Chromium after 45s is far better than hanging.
         try:
             ctx = p.chromium.launch_persistent_context(
-                channel="chrome", args=args, **kwargs)
+                channel="chrome", args=args, timeout=45000, **kwargs)
             self._log("[browser] using real Google Chrome / משתמש ב-Chrome אמיתי")
         except Exception as exc:
             # keep the log readable — Playwright errors carry a huge call log
             brief = str(exc).split("Call log:")[0].strip()[:200]
             self._log(f"[browser] Chrome channel unavailable ({brief}) — bundled Chromium")
-            ctx = p.chromium.launch_persistent_context(args=args, **kwargs)
+            ctx = p.chromium.launch_persistent_context(args=args, timeout=60000, **kwargs)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         return ctx, page
 

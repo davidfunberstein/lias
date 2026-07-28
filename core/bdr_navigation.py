@@ -282,13 +282,20 @@ class BdrNavigator:
                     expected_base += f"_{submitter.replace('/', ' ')}"
                 # Append duplicate suffix to filename too, so each gets its own file
                 expected_base_unique = expected_base + dup_suffix
-                expected_filename = (
-                    re.sub(r'[\\*?:"<>|]', "-", expected_base_unique)[:120].strip() + ".pdf"
-                )
+                expected_stem = re.sub(r'[\\*?:"<>|]', "-", expected_base_unique)[:120].strip()
+                expected_filename = expected_stem + ".pdf"
 
+                # EXACT match only. This used to be a prefix test
+                # (f.name.startswith(expected_base_unique[:100])), which silently
+                # skipped real documents: a shorter name is a prefix of a longer
+                # one, so "01_01_2026_החלטה" counted as already-downloaded merely
+                # because "01_01_2026_החלטה בבקשה.pdf" was on disk — and the run
+                # reported everything up to date while documents were missing.
+                # Duplicates on the same date are already disambiguated by
+                # dup_suffix, so an exact comparison is the correct test.
                 file_exists = any(
-                    f.name.startswith(expected_base_unique[:100]) for f in case_dir.iterdir()
-                    if f.is_file()
+                    f.is_file() and (f.name == expected_filename or f.stem == expected_stem)
+                    for f in case_dir.iterdir()
                 )
                 is_missing = unique_id in missing_ids
 

@@ -16,11 +16,105 @@ async function _initLoginTotp(){
 document.addEventListener('DOMContentLoaded', _initLoginTotp);
 
 /* ─── Sign in with Google (app login) ─── */
+/* ── tooltips ──────────────────────────────────────────────────────────────
+   Rendered into a single fixed-position layer on <body>, so no scrolling
+   ancestor can clip them (the settings panel and the case pickers both scroll,
+   which is why the old CSS ::after tips were cut off at the panel edge).
+   The tip flips to whichever side has room and is clamped to the viewport. */
+function _initTooltips(){
+  if(window._qtipReady) return;
+  window._qtipReady = true;
+  const layer = document.createElement('div');
+  layer.id = 'qtip-layer';
+  document.body.appendChild(layer);
+
+  const hide = () => { layer.style.display = 'none'; };
+  const show = (el) => {
+    const tip = el.getAttribute('data-tip');
+    if(!tip) return;
+    layer.textContent = tip;
+    layer.style.display = 'block';
+    layer.style.left = '0px'; layer.style.top = '0px';   // measure unconstrained
+    const r = el.getBoundingClientRect();
+    const t = layer.getBoundingClientRect();
+    const pad = 8;
+    // prefer below; flip above when it would overflow the viewport bottom
+    let top = r.bottom + 6;
+    if(top + t.height > window.innerHeight - pad) top = Math.max(pad, r.top - t.height - 6);
+    // RTL: align the tip's right edge to the icon, then clamp into view
+    let left = r.right - t.width;
+    left = Math.min(Math.max(pad, left), window.innerWidth - t.width - pad);
+    layer.style.left = left + 'px';
+    layer.style.top  = top + 'px';
+  };
+
+  document.addEventListener('mouseover', e => {
+    const el = e.target.closest && e.target.closest('.qtip[data-tip]');
+    if(el) show(el);
+  });
+  document.addEventListener('mouseout', e => {
+    if(e.target.closest && e.target.closest('.qtip[data-tip]')) hide();
+  });
+  window.addEventListener('scroll', hide, true);
+  window.addEventListener('resize', hide);
+}
+document.addEventListener('DOMContentLoaded', _initTooltips);
+
+/* Local (username+password) login is the fallback path — Google is primary.
+   The fields carry `required`, which blocks form submit while they are hidden,
+   so required is toggled together with visibility. */
+function setLocalLoginOpen(open){
+  const box = $('local-login-fields'); if(!box) return;
+  box.style.display = open ? 'block' : 'none';
+  ['l-name','l-email','l-user','l-pass'].forEach(id=>{
+    const el=$(id); if(el){ if(open) el.setAttribute('required',''); else el.removeAttribute('required'); }
+  });
+  const btn=$('local-login-btn');
+  if(btn) btn.textContent = open ? 'הסתר כניסה עם שם משתמש וסיסמה ▴'
+                                 : 'כניסה עם שם משתמש וסיסמה במקום ▾';
+}
+function toggleLocalLogin(){
+  const box=$('local-login-fields');
+  setLocalLoginOpen(!box || box.style.display==='none');
+}
+/* Open Settings straight on the tab that holds the Google Client ID field. */
+async function _openGoogleSetup(){
+  try{ await openSettings(); }catch(_){}
+  try{ setTab('account'); }catch(_){}
+  const el=$('g-google-client');
+  if(el){ el.scrollIntoView({block:'center'}); el.focus(); }
+}
+
 async function _initGoogleSignIn(){
+  const wrap = $('g-signin-wrap');
+  setLocalLoginOpen(false);          // collapsed by default — Google first
   try{
     const d = await (await fetch('/api/google/status')).json();
-    if(!d.configured || !d.client_id) return;
-    const wrap = $('g-signin-wrap'); if(wrap) wrap.style.display='block';
+    if(!d.configured || !d.client_id){
+      setLocalLoginOpen(true);       // no Google yet — don't lock the user out
+      // Used to return silently, so the login screen looked like Google sign-in
+      // simply didn't exist. Say what's missing and offer the way to fix it.
+      if(wrap){
+        wrap.style.display='block';
+        wrap.innerHTML =
+          `<div style="padding:12px 14px;border:1px dashed var(--line);border-radius:10px;
+                       font-size:12.5px;line-height:1.8;color:var(--ink-soft)">
+             <b style="font-size:13.5px;color:var(--ink)">🔵 כניסה עם חשבון Google</b><br>
+             מוכנה לשימוש — חסר רק <b>Client ID</b>. גוגל מנפיקה אותו על החשבון שלך,
+             ולכן רק אתה יכול ליצור אותו. פעם אחת, כדקה:<br>
+             1. <b>console.cloud.google.com</b> → APIs &amp; Services → <b>Credentials</b><br>
+             2. <b>Create credentials</b> → <b>OAuth client ID</b> → Web application<br>
+             3. ב-<b>Authorized JavaScript origins</b> הוסף בדיוק:
+                <code style="background:rgba(47,125,246,.14);padding:1px 6px;border-radius:4px"
+                >http://localhost:8500</code><br>
+             4. העתק את ה-Client ID והדבק בהגדרות → <b>חשבון וכניסה</b>
+             <button type="button" class="btn-accent" style="width:100%;margin-top:10px;padding:8px"
+                     onclick="_openGoogleSetup()">פתח הגדרות והדבק Client ID</button>
+           </div>`;
+      }
+      return;
+    }
+    if(wrap) wrap.style.display='block';
     // load Google Identity Services once
     if(!window.google || !google.accounts){
       await new Promise((res,rej)=>{

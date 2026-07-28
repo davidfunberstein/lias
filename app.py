@@ -291,6 +291,12 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/proxy/bdr/cases":
             code, body, _ct = engine_inproc.request("GET", "/api/bdr/cases")
             self._send(code, body, "application/json; charset=utf-8")
+        elif path == "/api/proxy/cases/all":
+            # unified search across all portals (served from the on-disk cache,
+            # so it answers with no portal login)
+            code, body, _ct = engine_inproc.request(
+                "GET", "/api/cases/all" + (("?" + u.query) if u.query else ""))
+            self._send(code, body, "application/json; charset=utf-8")
         elif path.startswith("/api/doc_pdf/") or path in (
                 "/api/browser/screenshot", "/api/browser/status", "/api/log",
                 "/api/jobs"):
