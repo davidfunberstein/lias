@@ -291,12 +291,6 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/proxy/bdr/cases":
             code, body, _ct = engine_inproc.request("GET", "/api/bdr/cases")
             self._send(code, body, "application/json; charset=utf-8")
-        elif path == "/api/proxy/cases/all":
-            # unified search across all portals (served from the on-disk cache,
-            # so it answers with no portal login)
-            code, body, _ct = engine_inproc.request(
-                "GET", "/api/cases/all" + (("?" + u.query) if u.query else ""))
-            self._send(code, body, "application/json; charset=utf-8")
         elif path.startswith("/api/doc_pdf/") or path in (
                 "/api/browser/screenshot", "/api/browser/status", "/api/log",
                 "/api/jobs"):
@@ -678,8 +672,32 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def _raise_fd_limit() -> None:
+    """Raise the open-file limit before anything opens a file descriptor.
+
+    macOS ships a soft limit as low as 256. LIAS runs three Chrome profiles via
+    Playwright plus SQLite, the log and the HTTP server, which blows straight
+    through it — and the failure is brutal rather than graceful: Playwright
+    cannot spawn its driver ("OSError: [Errno 24] Too many open files"), SQLite
+    reports "unable to open database file", and all three browser threads enter
+    a crash/relaunch loop that never recovers because every retry needs more
+    descriptors. Raising the soft limit to the hard limit costs nothing and
+    removes the whole failure mode."""
+    try:
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        want = 8192 if hard == resource.RLIM_INFINITY else min(hard, 65536)
+        if soft < want:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
+            print(f"[startup] open-file limit {soft} → {want}")
+    except Exception as exc:
+        print(f"[startup] could not raise the open-file limit ({exc}); "
+              f"if you see 'Too many open files', run:  ulimit -n 8192")
+
+
 def main() -> int:
     import webbrowser
+    _raise_fd_limit()
     if os.environ.get("LIAS_KEEP_ENGINE") != "1":
         if _do_stop_engine():
             print("[startup] stopped a stale engine — a fresh one will load latest code")

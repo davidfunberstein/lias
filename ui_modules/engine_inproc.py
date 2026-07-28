@@ -67,13 +67,11 @@ def start() -> dict:
             # not two stray windows at startup.
             _headless = True
             browser = BrowserManager(headless=_headless, restore=_restore)
-            browser.start()
             bdr_browser = BrowserManager(
                 headless=_headless, restore=_restore,
                 profile_dir=config.BROWSER_PROFILE_BDR_DIR,
                 log=lambda m: print(f"[BDR] {m}"),
             )
-            bdr_browser.start()
             # Dedicated ECA browser → ECA runs in parallel with NET and BDR.
             # Seed its profile from the main one (cold copy) so the existing
             # gov.il session carries over instead of forcing a fresh OTP.
@@ -92,8 +90,8 @@ def start() -> dict:
                 profile_dir=config.BROWSER_PROFILE_ECA_DIR,
                 log=lambda m: print(f"[ECA] {m}"),
             )
-            eca_browser.start()
-            print("[engine] browser threads up (NET+BDR+ECA)")
+            print("[engine] browser managers ready (NET+BDR+ECA) — "
+                  "each Chrome starts on first use")
         except ImportError:
             print("[engine] playwright missing — browser jobs disabled")
 

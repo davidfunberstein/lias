@@ -28,6 +28,16 @@ echo "════════════════════════�
 echo "  LIAS — הפעלה"
 echo "════════════════════════════════════════════"
 
+# ── מגבלת קבצים פתוחים ────────────────────────────────────────
+# macOS מגיע לעיתים עם 256 בלבד. LIAS מריץ שלושה פרופילי Chrome דרך
+# Playwright + SQLite + שרת HTTP; חציית המגבלה מפילה הכל עם
+# "Too many open files" ולולאת קריסות שלא מתאוששת. מעלים מראש.
+CUR=$(ulimit -n 2>/dev/null || echo 0)
+if [ "$CUR" != "unlimited" ] && [ "$CUR" -lt 4096 ] 2>/dev/null; then
+  ulimit -n 8192 2>/dev/null || ulimit -n 4096 2>/dev/null || true
+  echo "→ מגבלת קבצים פתוחים: $CUR → $(ulimit -n)"
+fi
+
 # ── 1. משיכת הגרסה האחרונה ────────────────────────────────────
 if [ "$PULL" = "1" ] && [ -d .git ]; then
   echo "→ מושך את הגרסה האחרונה…"
@@ -53,7 +63,13 @@ if [ -z "$PY" ]; then
   echo "  התקן מ: https://www.python.org/downloads/  ואז הרץ שוב את הפקודה."
   exit 1
 fi
-echo "→ פייתון: $PY ($("$PY" -c 'import sys;print(sys.version.split()[0])'))"
+PYVER=$("$PY" -c 'import sys;print(sys.version.split()[0])')
+echo "→ פייתון: $PY ($PYVER)"
+case "$PYVER" in
+  3.14*|3.15*)
+    echo "  ⚠ Python $PYVER חדש מאוד — ל-Playwright יש בו באגים ידועים"
+    echo "    (קריסות דפדפן, '_ssock'). מומלץ Python 3.12." ;;
+esac
 
 # ── 3. ספריות ─────────────────────────────────────────────────
 NEED=0
