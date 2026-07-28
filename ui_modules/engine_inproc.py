@@ -13,7 +13,8 @@ from __future__ import annotations
 import threading
 
 _state: dict = {"started": False, "starting": False, "client": None,
-                "browser": None, "bdr": None, "pool": None, "err": ""}
+                "browser": None, "bdr": None, "pool": None, "err": "",
+                "fatal": False}
 _lock = threading.Lock()
 
 
@@ -29,6 +30,8 @@ def start() -> dict:
             return {"ok": True, "already": True}
         if _state["starting"]:
             return {"ok": True, "starting": True}
+        if _state.get("fatal"):
+            return {"ok": False, "error": _state["err"], "fatal": True}
         _state["starting"] = True
 
     try:
@@ -100,7 +103,19 @@ def start() -> dict:
         pool.start()
         jobs._pool = pool
 
-        # In-memory ASGI client to the SAME FastAPI app the old server used
+        # In-memory ASGI client to the SAME FastAPI app the old server used.
+        # Check httpx ourselves: starlette raises a RuntimeError naming a
+        # package that does not always match what actually needs installing
+        # (one version told users to "pip install httpx2", which does not exist
+        # on PyPI — so following the advice failed too).
+        try:
+            import httpx  # noqa: F401
+        except ModuleNotFoundError:
+            raise RuntimeError(
+                "חסרה הספרייה httpx — המנוע לא יכול לעלות בלעדיה.\n"
+                "        התקן:  python3 -m pip install httpx\n"
+                "        או פשוט הרץ:  bash start.sh  (מתקין הכל לבד)"
+            ) from None
         from LIAS.api import app as fastapi_app
         from starlette.testclient import TestClient
         client = TestClient(fastapi_app, base_url="http://engine.internal")
@@ -111,9 +126,17 @@ def start() -> dict:
         print("[engine] in-process engine up — port 8400 is GONE")
         return {"ok": True, "starting": True}
     except Exception as exc:  # pragma: no cover
-        _state.update(starting=False, err=str(exc))
-        print(f"[engine] start failed: {exc}")
-        return {"ok": False, "error": str(exc)}
+        # A missing dependency cannot fix itself, but request() calls start()
+        # whenever the engine is down — so every UI poll retried and reprinted
+        # the same failure, thousands of times, burying it. Remember a fatal
+        # error and report it without re-attempting.
+        msg = str(exc)
+        fatal = isinstance(exc, (ModuleNotFoundError, ImportError)) or "httpx" in msg
+        _state.update(starting=False, err=msg, fatal=fatal)
+        print(f"[engine] start failed: {msg}")
+        if fatal:
+            print("[engine] ⛔ שגיאה שלא תיפתר מעצמה — לא ינוסה שוב עד להפעלה מחדש.")
+        return {"ok": False, "error": msg}
 
 
 def stop() -> bool:
@@ -137,6 +160,7 @@ def stop() -> bool:
 
 def restart() -> dict:
     stop()
+    _state["fatal"] = False        # a restart is the user's "I fixed it" signal
     import time
     time.sleep(1.0)
     return start()
