@@ -274,9 +274,16 @@ function togglePw(){
 function closeSettings(){ $('settings').style.display='none'; $('set-bg').classList.remove('on'); document.body.style.overflow=''; }
 async function saveGovil(){
   const id=$('g-id').value.trim(), pw=$('g-pw').value;
-  if(!id||!pw){ toast('נא למלא ת.ז. וסיסמה', true); return; }
+  // Either field alone is a valid save — an empty one means "keep what is
+  // stored". Demanding both forced you to retype an invisible password just to
+  // correct the ID, and a typo there overwrote a working password.
+  if(!id && !pw){ toast('מלא ת.ז. או סיסמה — מה שריק יישאר כפי שהוא', true); return; }
   const r = await (await fetch('/api/govil/save',{method:'POST',
     headers:{'Content-Type':'application/json'}, body:JSON.stringify({id, password:pw})})).json();
-  if(r.ok){ toast('נשמר ב-Keychain ✓'); $('g-id').value=''; $('g-pw').value=''; closeSettings(); }
+  if(r.ok){
+    toast((r.message||'נשמר') + ' ב-Keychain ✓');
+    $('g-id').value=''; $('g-pw').value='';
+    if(typeof openSettings==='function') openSettings();   // refresh the ✓ marks
+  }
   else toast('שגיאה: '+(r.error||''), true);
 }
