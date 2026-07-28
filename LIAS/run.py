@@ -193,17 +193,19 @@ def main() -> int:
         # Set LIAS_HEADLESS=1 to hide once the flows are trusted.
         import os as _os
         _headless = _os.environ.get("LIAS_HEADLESS") == "1"
+        # Lazy: the manager exists, but Chrome does not launch until a job for
+        # this portal actually runs (BrowserManager.run -> ensure_started).
+        # Launching all three at boot exhausted the macOS file-descriptor limit
+        # and put every browser thread into a crash/relaunch loop.
         browser = BrowserManager(headless=_headless, restore=_restore)
-        browser.start()
-        print("browser thread up (NET) / Thread הדפדפן למעלה")
+        print("browser manager ready (NET) — Chrome starts on first use")
         # Separate BDR browser with its own profile
         bdr_browser = BrowserManager(
             headless=_headless, restore=_restore,
             profile_dir=config.BROWSER_PROFILE_BDR_DIR,
             log=lambda m: print(f"[BDR] {m}"),
         )
-        bdr_browser.start()
-        print("browser thread up (BDR) / Thread דפדפן BDR למעלה")
+        print("browser manager ready (BDR) — Chrome starts on first use")
     except ImportError:
         print("!! playwright not installed — browser jobs disabled, UI/DB still work")
         print("!! playwright לא מותקן — משימות דפדפן כבויות, ה-UI וה-DB עובדים")
