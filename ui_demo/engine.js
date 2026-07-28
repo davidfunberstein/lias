@@ -485,8 +485,35 @@ async function _refreshTasks(){
     </div>`;
     el.innerHTML =
       activePortals.map(p=>{const st=_dlByPortal[p];const docs=st.docs_downloaded||0;
+        // Per-case control lived only in the floating download panel, so during
+        // a run the tasks window — the place you actually watch — could stop
+        // everything but not a single stuck case. The case list is rendered
+        // here too, each row with its own ⏹.
+        const cases = st.cases_detail || [];
+        const casesHtml = cases.length ? `
+          <div style="margin-top:6px;max-height:180px;overflow-y:auto;font-weight:400">
+          ${cases.map(c=>{
+            const s=c.status||'pending';
+            const icon={done:'✓',downloading:'⏳',failed:'✗',skipped:'⏭'}[s]||'·';
+            const canStop = (s==='pending'||s==='downloading');
+            return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;
+                     font-size:12px;border-top:1px solid rgba(127,127,127,.15);
+                     opacity:${s==='done'?'.6':'1'}">
+              <span style="width:14px">${icon}</span>
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+                    white-space:nowrap"><b>${c.id}</b> ${c.name||''}</span>
+              ${canStop ? `<button class="fv-btn" title="עצור רק את התיק הזה"
+                   style="font-size:10.5px;padding:2px 8px;color:var(--danger)"
+                   onclick="stopCase('${p}','${c.id}')">⏹ תיק</button>` : ''}
+            </div>`;}).join('')}
+          </div>` : '';
         return `<div style="padding:8px 12px;margin-bottom:8px;border-radius:10px;background:var(--accent-soft,#eef4ff);font-weight:600">
-        ⬇ <b>${PORTAL_LABELS[p]||p}</b>: תיק ${st.done||0}/${st.total||0} · ${docs} מסמכים${st.speed_per_min?` · ${st.speed_per_min}/דקה`:''} ${st.failed?` · <span style="color:var(--danger)">${st.failed} כשלו</span>`:''}
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="flex:1">⬇ <b>${PORTAL_LABELS[p]||p}</b>: תיק ${st.done||0}/${st.total||0} · ${docs} מסמכים${st.speed_per_min?` · ${st.speed_per_min}/דקה`:''} ${st.failed?` · <span style="color:var(--danger)">${st.failed} כשלו</span>`:''}</span>
+          <button class="fv-btn" style="font-size:10.5px;padding:3px 9px;color:var(--danger)"
+                  onclick="stopPortalDownload('${p}')" title="עצור את כל ההורדה של פורטל זה">⏹ פורטל</button>
+        </div>
+        ${casesHtml}
       </div>`;}).join('')
       + (active.length? '<div style="font-weight:800;margin:4px 0;color:var(--accent-strong,#1d64d8)">רץ עכשיו / בהמתנה</div>'+active.map(row).join('')
                       : '<div class="empty" style="padding:16px 0">אין משימות פעילות כרגע</div>')
@@ -1247,10 +1274,21 @@ function stopPortalDownload(portal){
 function stopCase(portal, caseId){
   const s=_dlByPortal[portal]; const jid=s&&s.job_id;
   if(!jid){ toast('אין הורדה פעילה', true); return; }
+  // Mark it locally at once. The engine only reacts between documents, so
+  // without this the row kept looking active for seconds and the click felt
+  // ignored — people pressed it again and again.
+  const row=(s.cases_detail||[]).find(c=>String(c.id)===String(caseId));
+  if(row && (row.status==='pending'||row.status==='downloading')){
+    row.status='skipped'; _saveDl();
+    if(typeof _renderDlStats==='function') _renderDlStats();
+    if(typeof _refreshTasks==='function') _refreshTasks();
+  }
+  logEvent(`⏹ בקשת עצירה לתיק ${caseId} (${PORTAL_LABELS[portal]||portal})`);
   fetch('/api/proxy/actions/cancel_case',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({job_id:jid,case:caseId})})
-    .then(r=>{ if(r.ok) toast('עצירת תיק '+caseId+' — יידלג'); else toast('שגיאה', true); })
-    .catch(e=>toast('שגיאה: '+e.message,true));
+    .then(r=>{ if(r.ok) toast(`תיק ${caseId} יידלג — ההורדה ממשיכה לשאר התיקים`);
+               else { toast('שגיאה בעצירת התיק', true); if(row) row.status='downloading'; } })
+    .catch(e=>{ toast('שגיאה: '+e.message,true); if(row) row.status='downloading'; });
 }
 function _renderDlStats(){
   const portals=Object.keys(_dlByPortal);

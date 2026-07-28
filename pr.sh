@@ -12,12 +12,16 @@
 #    bash pr.sh open "<כותרת>"       קומיט + פוש + פתיחת PR
 #    bash pr.sh status               מצב ה-PR של הענף הנוכחי
 #    bash pr.sh merge                מיזוג ה-PR, מחיקת הענף, חזרה ל-main
+#    bash pr.sh ship "<כותרת>"       הכל בפקודה אחת: קומיט+פוש+PR+מיזוג
 #
 #  ── תהליך עבודה טיפוסי ────────────────────────────────────────
 #    bash pr.sh new fix/eca-login    # פותחים ענף
 #    ... עורכים קבצים ...
 #    bash pr.sh open "תיקון התחברות להוצל\"פ"
 #    bash pr.sh merge                # אחרי שבדקת שהכל עובד
+#
+#  ── או פקודה אחת שעושה הכל ─────────────────────────────────────
+#    bash pr.sh ship "תיקון התחברות"   # קומיט → פוש → PR → מיזוג
 # ═══════════════════════════════════════════════════════════════════
 set -e
 cd "$(dirname "$0")"
@@ -154,6 +158,16 @@ print('✓ '+d['message'] if d.get('merged') else '✗ '+str(d.get('message')))"
   git push -q origin --delete "$BR" 2>/dev/null || true
   echo "✓ מוזג. אתה על main מעודכן."
   exit 0
+fi
+
+# ── ship: open + merge, no second command ─────────────────────────
+if [ "$CMD" = "ship" ]; then
+  TITLE="${2:-}"
+  [ -z "$TITLE" ] && { echo "שימוש: bash pr.sh ship \"כותרת\""; exit 1; }
+  bash "$0" open "$TITLE" || exit 1
+  echo
+  echo "y" | bash "$0" merge
+  exit $?
 fi
 
 # ── help ──────────────────────────────────────────────────────────

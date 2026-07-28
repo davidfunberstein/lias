@@ -88,22 +88,47 @@ _JS_EXTRACT_GROUP_ROWS = """
 
 _JS_EXTRACT_DATA_ROWS = """
 () => {
+    // Locate columns by HEADER TEXT, not by a fixed position. Open/closed is
+    // decided purely by whether a close date exists, and that was read from a
+    // hard-coded cells[5]. One shifted column in the grid and a CLOSED case
+    // reported as open — which is exactly what users saw. Positions stay as a
+    // fallback for when the headers cannot be read.
+    const headerCells = Array.from(
+        document.querySelectorAll('td.dxgHEC, th.dxgHEC, td[id*="_col"]'));
+    const headers = headerCells.map(h => (h.innerText || '').replace(/\\u00a0/g,'').trim());
+    const findCol = (names, fallback) => {
+        for (const n of names) {
+            const i = headers.findIndex(h => h && h.indexOf(n) !== -1);
+            if (i !== -1) return i;
+        }
+        return fallback;
+    };
+    const iOpen  = findCol(['תאריך פתיחה'], 2);
+    const iCourt = findCol(['בית דין', 'ערכאה'], 3);
+    const iNext  = findCol(['דיון'], 4);
+    const iClose = findCol(['תאריך סגירה', 'סגירה'], 5);
+    const iLast  = findCol(['פעילות'], 7);
+
+    // A close date must actually look like a date. A stray "-" or a label in
+    // that cell used to count as "closed"; anything unparseable now reads as
+    // empty, and the row stays open.
+    const asDate = v => /\\d{1,2}[\\/.\\-]\\d{1,2}[\\/.\\-]\\d{2,4}/.test(v || '') ? v : '';
+
     const rows = document.querySelectorAll('tr[id*="DXDataRow"]');
     return Array.from(rows).map(row => {
         const linkEl = row.querySelector('td[id$="_0"] a');
         if (!linkEl) return null;
         const cells = Array.from(row.querySelectorAll('td.dxgv'));
-        // cells: [0]=indent [1]=link [2]=open_date [3]=court
-        //        [4]=future_hearing [5]=close_date [6]=represent [7]=last_activity
         const cell = i => (cells[i] ? cells[i].innerText.split('\\n')[0].replace(/\\u00a0/g,'').trim() : '');
         return {
             text: linkEl.textContent.trim(),
             onclick: linkEl.getAttribute('onclick') || '',
-            open_date: cell(2),
-            court: cell(3),
-            future_hearing: cell(4),
-            close_date: cell(5),
-            last_activity: cell(7)
+            open_date: cell(iOpen),
+            court: cell(iCourt),
+            future_hearing: cell(iNext),
+            close_date: asDate(cell(iClose)),
+            last_activity: cell(iLast),
+            _cols: {open: iOpen, court: iCourt, close: iClose}  // for the log
         };
     }).filter(Boolean).filter(r => r.text);
 }
