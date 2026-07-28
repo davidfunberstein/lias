@@ -17,10 +17,17 @@
   <form class="login" onsubmit="doLogin(event)">
     <div class="logo"><div class="logo-badge">⚖</div> LIAS</div>
     <p class="sub">מי מתחבר למערכת?</p>
-    <div id="g-signin-wrap" style="display:none;margin-bottom:10px">
+    <div id="g-signin-wrap" style="margin-bottom:10px">
       <div id="g-signin"></div>
-      <div style="text-align:center;font-size:12px;opacity:.6;margin:8px 0">— או כניסה מקומית —</div>
     </div>
+    <div id="local-login-toggle" style="text-align:center;margin:10px 0">
+      <button type="button" onclick="toggleLocalLogin()" id="local-login-btn"
+        style="background:none;border:none;font-size:12.5px;color:var(--ink-soft);
+               text-decoration:underline;cursor:pointer">
+        כניסה עם שם משתמש וסיסמה במקום ▾
+      </button>
+    </div>
+    <div id="local-login-fields" style="display:none">
     <label>סוג משתמש</label>
     <select id="l-role">
       <option value="LAWYER">💼 עורך דין</option>
@@ -38,6 +45,7 @@
     </div>
     <label class="rem" style="display:flex"><input type="checkbox" id="l-rem" checked style="width:auto"> זכור אותי במחשב הזה</label>
     <button class="btn-accent" type="submit">כניסה</button>
+    </div><!-- /local-login-fields -->
     <div id="l-err" style="display:none;margin-top:8px;color:var(--danger);font-size:13px;font-weight:700"></div>
     <div class="note"><b>שים לב:</b> אלה פרטי הכניסה למערכת LIAS בלבד —<br>
       <b>לא</b> הסיסמה של gov.il (היא נשמרת בנפרד ב-Keychain).<br>
@@ -90,6 +98,85 @@
 <div class="drawer-bg" id="set-bg" onclick="closeSettings()"></div>
 <div class="login" id="settings" style="position:fixed;top:50%;right:50%;transform:translate(50%,-50%);z-index:95;display:none;max-height:90vh;overflow-y:auto;overscroll-behavior:contain">
   <div class="logo"><div class="logo-badge">⚙</div> הגדרות</div>
+  <div class="note" style="margin:-4px 0 10px">ההגדרות מחולקות ללשוניות. ✓ מסמן שלב שהוגדר — אפשר לחזור ולשנות בכל רגע.</div>
+  <div id="set-tabs" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">
+    <button class="set-tab" data-tab="account" onclick="setTab('account')">👤 חשבון וכניסה<span class="set-ok" id="set-ok-account"></span></button>
+    <button class="set-tab" data-tab="govil" onclick="setTab('govil')">🏛 gov.il<span class="set-ok" id="set-ok-govil"></span></button>
+    <button class="set-tab" data-tab="share" onclick="setTab('share')">☁️ שיתוף<span class="set-ok" id="set-ok-share"></span></button>
+    <button class="set-tab" data-tab="downloads" onclick="setTab('downloads')">⬇ הורדות<span class="set-ok" id="set-ok-downloads"></span></button>
+    <button class="set-tab" data-tab="general" onclick="setTab('general')">⚙ כללי<span class="set-ok" id="set-ok-general"></span></button>
+  </div>
+  <div class="set-pane" data-pane="account">
+  <div id="google-box" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px">
+    <b style="font-size:13.5px">🔵 כניסה למערכת עם חשבון Google</b>
+    <div id="google-status" class="sub" style="margin:4px 0;font-weight:700"></div>
+    <label>Client ID (מ-Google Cloud Console)</label>
+    <input id="g-google-client" type="text" placeholder="....apps.googleusercontent.com" autocomplete="off">
+    <div id="g-google-client-view" style="display:none;align-items:center;gap:8px;
+         padding:7px 10px;border:1px solid var(--line);border-radius:8px"></div>
+    <label style="margin-top:8px">מיילים מורשים להתחבר (מופרדים בפסיק — ריק = כל חשבון)</label>
+    <input id="g-google-allowed" type="text" placeholder="you@gmail.com, partner@gmail.com" autocomplete="off">
+    <button class="btn-accent" style="width:100%;margin-top:8px" onclick="saveGoogleLogin()">💾 שמור הגדרות Google</button>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-size:12.5px;color:var(--accent-strong)">איך משיגים Client ID? (הוראות מדויקות)</summary>
+      <div class="note" style="line-height:1.8">
+        1. פתח <b>console.cloud.google.com</b> → צור פרויקט (או בחר קיים).<br>
+        2. תפריט → <b>APIs &amp; Services</b> → <b>Credentials</b>.<br>
+        3. <b>Create credentials</b> → <b>OAuth client ID</b>.<br>
+        4. אם מבקשים "Configure consent screen": בחר <b>External</b>,
+           <b style="color:var(--accent-strong)">App name: <code style="background:rgba(47,125,246,.14);padding:1px 6px;border-radius:4px">LIAS</code></b>,
+           והזן את המייל שלך כ-User support email וכ-Developer contact. שמור.<br>
+        5. חזור ל-OAuth client ID → <b>Application type: Web application</b> →
+           <b>Name: LIAS</b>.<br>
+        6. תחת <b>Authorized JavaScript origins</b> הוסף בדיוק:
+           <code style="background:rgba(47,125,246,.14);padding:1px 6px;border-radius:4px">http://localhost:8500</code><br>
+        7. <b>Create</b> → העתק את ה-<b>Client ID</b> (מסתיים ב-
+           <code>.apps.googleusercontent.com</code>) והדבק כאן.<br>
+        <b>הערה:</b> את ה-Client secret אין צורך — האימות נעשה מול Google בצד השרת.
+      </div>
+    </details>
+  </div>
+  <div id="totp-box" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px">
+    <b style="font-size:13.5px">🔐 Google Authenticator (קוד TOTP) — חלופה מהירה ל-OTP במייל</b>
+    <div id="totp-status" class="sub" style="margin:4px 0;font-weight:700"></div>
+    <label>מקור קוד האימות</label>
+    <select id="g-otp-source" onchange="saveOtpSource(this.value)" style="width:100%">
+      <option value="email">מייל (OTP נקרא אוטומטית מהמייל)</option>
+      <option value="totp">Google Authenticator (קוד מהאפליקציה)</option>
+    </select>
+    <label style="margin-top:8px">סוד ה-TOTP (Secret key — base32 מ-Google Authenticator)</label>
+    <input id="g-totp-secret" type="password" placeholder="למשל JBSW Y3DP EHPK 3PXP" autocomplete="off">
+    <button class="btn-accent" style="width:100%;margin-top:8px" onclick="saveTotp()">💾 שמור סוד TOTP</button>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-size:12.5px;color:var(--accent-strong)">מה זה ומאיפה משיגים את הסוד? (הוראות)</summary>
+      <div class="note" style="line-height:1.8">
+        <b>למה זה משמש:</b> (א) כניסה למערכת LIAS עצמה — כשמוגדר סוד, מסך
+        הכניסה ידרוש קוד בן 6 ספרות, וכל כניסה תירשם ביומן ההתחברויות;
+        (ב) אם ההזדהות שלך ב-gov.il מוגדרת עם אפליקציית אימות — בחר למעלה
+        "Google Authenticator" והמערכת תחשב את הקוד לבד במקום להמתין למייל.<br>
+        <b>איך מייצרים סוד:</b><br>
+        1. פתח את אפליקציית <b>Google Authenticator</b> בטלפון → <b>+</b> →
+           <b>הזנת מפתח התקנה</b> (Enter a setup key).<br>
+        2. <b style="color:var(--accent-strong)">שם החשבון: הקלד
+           <code style="background:rgba(47,125,246,.14);padding:1px 6px;border-radius:4px">LIAS</code></b>
+           — כך תזהה אותו ברשימה.<br>
+        3. במפתח (Key) הקלד מחרוזת base32 משלך (אותיות A–Z וספרות 2–7,
+           16–32 תווים) — או הדבק כאן סוד קיים שקיבלת מ-gov.il.<br>
+        4. הדבק את אותו סוד בשדה למעלה ולחץ 💾 שמור. (נשמר ב-Keychain בלבד.)<br>
+        הקוד מתחלף כל 30 שניות; המערכת מקבלת גם קוד מהחלון הקודם (סטיית שעון).
+      </div>
+    </details>
+  </div>
+  <div id="login-audit-box" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <b style="font-size:13.5px">🛡️ יומן התחברויות (מי מתחבר, מתי, ומה התוצאה)</b>
+      <button class="btn" style="font-size:11px;padding:4px 10px" onclick="loadLoginAudit()">רענן</button>
+    </div>
+    <div class="note">כל ניסיון התחברות נרשם. שתי התחברויות לאותו פורטל לא ירוצו במקביל (מונע OTP כפול).</div>
+    <div id="login-audit-list" style="max-height:220px;overflow-y:auto;margin-top:6px;font-size:12px"></div>
+  </div>
+  </div>
+  <div class="set-pane" data-pane="govil" hidden>
   <p class="sub">חיבור ל-gov.il — נשמר ישירות ב-Keychain של המחשב</p>
   <div id="gov-status" class="sub" style="text-align:center;margin-bottom:8px;font-weight:700"></div>
   <label>תעודת זהות (9 ספרות — איתה נכנסים ל-gov.il)</label>
@@ -144,117 +231,47 @@
       </div>
     </details>
   </div>
-  <div id="totp-box" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px">
-    <b style="font-size:13.5px">🔐 Google Authenticator (קוד TOTP) — חלופה מהירה ל-OTP במייל</b>
-    <div id="totp-status" class="sub" style="margin:4px 0;font-weight:700"></div>
-    <label>מקור קוד האימות</label>
-    <select id="g-otp-source" onchange="saveOtpSource(this.value)" style="width:100%">
-      <option value="email">מייל (OTP נקרא אוטומטית מהמייל)</option>
-      <option value="totp">Google Authenticator (קוד מהאפליקציה)</option>
-    </select>
-    <label style="margin-top:8px">סוד ה-TOTP (Secret key — base32 מ-Google Authenticator)</label>
-    <input id="g-totp-secret" type="password" placeholder="למשל JBSW Y3DP EHPK 3PXP" autocomplete="off">
-    <button class="btn-accent" style="width:100%;margin-top:8px" onclick="saveTotp()">💾 שמור סוד TOTP</button>
-    <details style="margin-top:8px">
-      <summary style="cursor:pointer;font-size:12.5px;color:var(--accent-strong)">מה זה ומאיפה משיגים את הסוד? (הוראות)</summary>
-      <div class="note" style="line-height:1.8">
-        <b>למה זה משמש:</b> (א) כניסה למערכת LIAS עצמה — כשמוגדר סוד, מסך
-        הכניסה ידרוש קוד בן 6 ספרות, וכל כניסה תירשם ביומן ההתחברויות;
-        (ב) אם ההזדהות שלך ב-gov.il מוגדרת עם אפליקציית אימות — בחר למעלה
-        "Google Authenticator" והמערכת תחשב את הקוד לבד במקום להמתין למייל.<br>
-        <b>איך מייצרים סוד:</b><br>
-        1. פתח את אפליקציית <b>Google Authenticator</b> בטלפון → <b>+</b> →
-           <b>הזנת מפתח התקנה</b> (Enter a setup key).<br>
-        2. <b style="color:var(--accent-strong)">שם החשבון: הקלד
-           <code style="background:rgba(47,125,246,.14);padding:1px 6px;border-radius:4px">LIAS</code></b>
-           — כך תזהה אותו ברשימה.<br>
-        3. במפתח (Key) הקלד מחרוזת base32 משלך (אותיות A–Z וספרות 2–7,
-           16–32 תווים) — או הדבק כאן סוד קיים שקיבלת מ-gov.il.<br>
-        4. הדבק את אותו סוד בשדה למעלה ולחץ 💾 שמור. (נשמר ב-Keychain בלבד.)<br>
-        הקוד מתחלף כל 30 שניות; המערכת מקבלת גם קוד מהחלון הקודם (סטיית שעון).
-      </div>
-    </details>
-  </div>
-  <div id="google-box" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px">
-    <b style="font-size:13.5px">🔵 כניסה למערכת עם חשבון Google</b>
-    <div id="google-status" class="sub" style="margin:4px 0;font-weight:700"></div>
-    <label>Client ID (מ-Google Cloud Console)</label>
-    <input id="g-google-client" type="text" placeholder="....apps.googleusercontent.com" autocomplete="off">
-    <label style="margin-top:8px">מיילים מורשים להתחבר (מופרדים בפסיק — ריק = כל חשבון)</label>
-    <input id="g-google-allowed" type="text" placeholder="you@gmail.com, partner@gmail.com" autocomplete="off">
-    <button class="btn-accent" style="width:100%;margin-top:8px" onclick="saveGoogleLogin()">💾 שמור הגדרות Google</button>
-    <details style="margin-top:8px">
-      <summary style="cursor:pointer;font-size:12.5px;color:var(--accent-strong)">איך משיגים Client ID? (הוראות מדויקות)</summary>
-      <div class="note" style="line-height:1.8">
-        1. פתח <b>console.cloud.google.com</b> → צור פרויקט (או בחר קיים).<br>
-        2. תפריט → <b>APIs &amp; Services</b> → <b>Credentials</b>.<br>
-        3. <b>Create credentials</b> → <b>OAuth client ID</b>.<br>
-        4. אם מבקשים "Configure consent screen": בחר <b>External</b>,
-           <b style="color:var(--accent-strong)">App name: <code style="background:rgba(47,125,246,.14);padding:1px 6px;border-radius:4px">LIAS</code></b>,
-           והזן את המייל שלך כ-User support email וכ-Developer contact. שמור.<br>
-        5. חזור ל-OAuth client ID → <b>Application type: Web application</b> →
-           <b>Name: LIAS</b>.<br>
-        6. תחת <b>Authorized JavaScript origins</b> הוסף בדיוק:
-           <code style="background:rgba(47,125,246,.14);padding:1px 6px;border-radius:4px">http://localhost:8500</code><br>
-        7. <b>Create</b> → העתק את ה-<b>Client ID</b> (מסתיים ב-
-           <code>.apps.googleusercontent.com</code>) והדבק כאן.<br>
-        <b>הערה:</b> את ה-Client secret אין צורך — האימות נעשה מול Google בצד השרת.
-      </div>
-    </details>
-  </div>
-  <div id="login-audit-box" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px">
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <b style="font-size:13.5px">🛡️ יומן התחברויות (מי מתחבר, מתי, ומה התוצאה)</b>
-      <button class="btn" style="font-size:11px;padding:4px 10px" onclick="loadLoginAudit()">רענן</button>
-    </div>
-    <div class="note">כל ניסיון התחברות נרשם. שתי התחברויות לאותו פורטל לא ירוצו במקביל (מונע OTP כפול).</div>
-    <div id="login-audit-list" style="max-height:220px;overflow-y:auto;margin-top:6px;font-size:12px"></div>
-  </div>
   <div class="note" id="g-method-note">בשיטה המהירה ההתחברות רצה לבד; במצב SMS יופיע חלון להזנת הקוד מהטלפון.</div>
   <div id="manual-auth-note" style="display:none;margin-top:10px;padding:10px 14px;background:rgba(255,200,50,.18);border:2px solid #e6a800;border-radius:10px;font-size:13px;line-height:1.6">
     <b style="font-size:14px">⚠️ אימות ידני</b><br>
     במצב זה הדפדפן ייפתח ותצטרך <b>להתחבר בעצמך</b> דרך אתר gov.il — באמצעות הטלפון, ביומטרי, או כל שיטה אחרת.<br>
     לאחר ההתחברות הפורטל ייפתח אוטומטית וההורדה תתחיל — <b>גם אם הדפדפן ייסגר אחר כך</b>.
   </div>
+  <div class="note">הסיסמה נכתבת ל-Keychain בלבד — לא נשמרת בקבצים,
+    לא ב-DB, ולא ניתנת לצפייה חוזרת מה-UI.<br>
+    בה משתמשת ההתחברות האוטומטית לפורטלים (NET + BDR).</div>
+  </div>
+  <div class="set-pane" data-pane="share" hidden>
   <label style="margin-top:12px">שיתוף Drive לצפייה בלבד — מיילים</label>
   <input id="g-share" type="text" placeholder="name@gmail.com, other@gmail.com — מופרדים בפסיק" onchange="saveShareEmail(this.value)">
   <div class="note">אפשר כמה מיילים מופרדים בפסיק. כל מה שעולה לדרייב ישותף איתם אוטומטית בצפייה בלבד — בלי עריכה או תגובות. אישור יופיע כאן:</div>
   <div id="g-share-ok" class="sub" style="min-height:16px;color:var(--accent-strong)"></div>
+  </div>
+  <div class="set-pane" data-pane="downloads" hidden>
   <label style="margin-top:12px">סוג משתמש (BDR — בתי הדין הרבניים)</label>
   <select id="g-usermode" onchange="saveUserMode(this.value)" style="width:100%">
     <option value="private">גורם פרטי</option>
     <option value="lawyer">עו״ד מייצג</option>
     <option value="pleader">טו״ר מייצג</option>
   </select>
-  <label style="margin-top:12px">🌐 שפת ממשק / Interface language</label>
-  <select onchange="setLang(this.value)" style="width:100%" id="g-lang">
-    <option value="he">עברית</option>
-    <option value="en">English</option>
-  </select>
   <div style="margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:10px">
     <b style="font-size:13.5px">הגדרות סנכרון — לכל פורטל בנפרד</b>
     <div class="note" style="margin:4px 0 10px">כל פורטל עצמאי. ההגדרה קובעת מה קורה בלחיצת ההורדה בלשונית "סנכרון".</div>
 
-    <label>🏛 נט המשפט — היקף</label>
-    <select id="g-net-scope" style="width:100%" onchange="_syncNetRelated()">
-      <option value="all">כל התיקים (הכל ללא בחירה)</option>
-      <option value="selected">תיקים מסוימים (בחירה מרשימה)</option>
-    </select>
-    <label id="g-net-related-row" style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:400">
-      <input type="checkbox" id="g-net-related" style="width:auto"> כלול תיקים קשורים (רק כשמורידים תיקים מסוימים)
+    <div style="padding:10px 12px;border:1px dashed var(--line);border-radius:10px;
+         font-size:12.5px;line-height:1.7;color:var(--ink-soft)">
+      <b style="color:var(--ink)">היקף ההורדה נבחר במסך הסנכרון עצמו</b>
+      <span class="qtip" data-tip="ההיקף היה מוגדר גם כאן וגם במסך הסנכרון, ושתי ההגדרות יכלו לסתור זו את זו. עכשיו יש מקום אחד בלבד: מסך הסנכרון, שם רואים את הבחירה ברגע שמורידים.">?</span><br>
+      בוחרים שם פורטל ← <b>כל התיקים</b> או <b>תיקים מסוימים</b> ← ואז את ההיקף
+      (לקוחות עם תיק פתוח / רק פתוחים / הכל). הבחירה נשמרת לפעם הבאה.
+      <button type="button" class="btn-accent" style="width:100%;margin-top:8px;padding:7px"
+              onclick="closeSettings();go('sync')">פתח את מסך הסנכרון</button>
+    </div>
+
+    <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-weight:400">
+      <input type="checkbox" id="g-net-related" style="width:auto"> כלול תיקים קשורים בנט המשפט
+      <span class="qtip" data-tip="כשמורידים תיקים מסוימים מנט המשפט — המערכת תוריד גם תיקים שקשורים אליהם (אותם צדדים או אותו הליך).">?</span>
     </label>
-
-    <label style="margin-top:12px">🕍 בית הדין הרבני — היקף</label>
-    <select id="g-bdr-scope" style="width:100%">
-      <option value="all">כל התיקים</option>
-      <option value="selected">תיקים מסוימים (לפי לקוח/בחירה)</option>
-    </select>
-
-    <label style="margin-top:12px">⚖️ הוצאה לפועל — היקף</label>
-    <select id="g-eca-scope" style="width:100%">
-      <option value="all">כל התיקים</option>
-      <option value="selected">תיקים מסוימים (בחירה מרשימה)</option>
-    </select>
 
     <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-weight:400">
       <input type="checkbox" id="g-browser-visible" style="width:auto"> הצג את דפדפן האוטומציה (לראות התחברות והורדה)
@@ -269,17 +286,14 @@
     <button class="btn-accent" style="width:100%;margin-top:12px" onclick="saveSyncSettings()">💾 שמור הגדרות סנכרון</button>
     <div id="g-sync-ok" class="sub" style="min-height:16px;margin-top:4px"></div>
   </div>
-  <label style="margin-top:12px">מפתח Groq — המרת מסמכים לטקסט (חינמי)</label>
-  <input id="g-groq" type="password" autocomplete="off" placeholder="gsk_…  (מ-console.groq.com)">
-  <div style="display:flex;gap:6px;margin-top:6px">
-    <button class="btn-accent" style="flex:1" onclick="saveGroq()">שמור מפתח Groq</button>
-    <button class="btn-accent" style="flex:1" onclick="testGroq()">בדוק מפתח</button>
   </div>
-  <div id="g-groq-status" class="sub" style="min-height:16px"></div>
-  <div class="note">עם מפתח שמור, כל PDF סרוק יומר אוטומטית לטקסט בעברית אחרי ההורדה — בלי לחיצה.</div>
-  <div class="note">הסיסמה נכתבת ל-Keychain בלבד — לא נשמרת בקבצים,
-    לא ב-DB, ולא ניתנת לצפייה חוזרת מה-UI.<br>
-    בה משתמשת ההתחברות האוטומטית לפורטלים (NET + BDR).</div>
+  <div class="set-pane" data-pane="general" hidden>
+  <label style="margin-top:12px">🌐 שפת ממשק / Interface language</label>
+  <select onchange="setLang(this.value)" style="width:100%" id="g-lang">
+    <option value="he">עברית</option>
+    <option value="en">English</option>
+  </select>
+  </div>
   <button style="width:100%;margin-top:10px;font-size:12.5px;color:var(--ink-soft)" onclick="closeSettings()">סגור</button>
 </div>
 

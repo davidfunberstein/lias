@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import time
+import threading
 from datetime import datetime
 from typing import TYPE_CHECKING
 from core.i18n import t
+
+_govil_login_lock = threading.Lock()
 
 
 def _ts() -> str:
@@ -723,20 +726,32 @@ def auto_login_flow(
     logger: "Logger | None" = None,
 ) -> bool:
     """
-    Full automated login flow:
-    1. Check if on login page
-    2. Load credentials from keychain
-    3. Fill ID + password, submit
-    4. Wait for OTP page (up to 10s)
-    5. If SMS page: click 'send to email'
-    6. Print "[Auth] OTP email sent — waiting for code..."
-    7. If email_reader provided: wait_for_otp() → fill_otp_and_submit()
-       If no email_reader: print "[Auth] Please enter OTP from your email:" → input() → fill
-    8. Return True if login completed
+    Full automated login flow — serialized with a global lock so two portals
+    never race through the gov.il OTP phase simultaneously.
     """
     if not is_gov_login_page(page):
         if logger:
             logger.info("[GovLogin] Not on login page — skipping auto_login_flow.")
+        return False
+
+    if not _govil_login_lock.acquire(timeout=300):
+        msg = "[GovLogin] התחברות אחרת ל-gov.il כבר מתבצעת — לא ניתן להמשיך"
+        print(f"{_ts()} {msg}")
+        if logger:
+            logger.warn(msg)
+        return False
+    try:
+        return _auto_login_flow_inner(page, email_reader, logger)
+    finally:
+        _govil_login_lock.release()
+
+
+def _auto_login_flow_inner(
+    page: "Page",
+    email_reader=None,
+    logger: "Logger | None" = None,
+) -> bool:
+    if not is_gov_login_page(page):
         return False
 
     from core.credentials import get_credentials

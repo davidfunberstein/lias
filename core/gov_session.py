@@ -44,21 +44,48 @@ def _is_shared(cookie: dict) -> bool:
                for d in _SHARED_DOMAINS)
 
 
+def _cookie_key(c: dict) -> tuple:
+    """Identity of a cookie for de-duplication across portals."""
+    return (c.get("name"), (c.get("domain") or "").lstrip("."), c.get("path") or "/")
+
+
 def save_from_context(context, portal: str = "") -> int:
     """Persist the gov.il-related cookies of a context that just authenticated.
-    Returns how many cookies were stored."""
+
+    MERGE (not overwrite): the three portals authenticate in separate browsers
+    and each contributes different portal cookies (sides.rbc / eca / court) on
+    top of the SAME login.gov.il SSO cookies. Overwriting the file with only the
+    last portal's snapshot threw away the others, so a later portal re-OTP'd.
+    We now merge the new cookies over whatever is already stored (newest wins per
+    name+domain+path) and refresh the timestamp, so an active multi-portal run
+    keeps ONE growing, rolling session jar instead of a single overwritten slot.
+    Returns how many cookies are now stored."""
     try:
         cookies = [c for c in context.cookies() if _is_shared(c)]
     except Exception:
         return 0
     if not cookies:
         return 0
-    payload = {"ts": time.time(), "portal": portal, "cookies": cookies}
     try:
         with _lock:
+            merged: dict[tuple, dict] = {}
+            # Seed with existing store IF still fresh (stale cookies are dropped).
+            try:
+                data = json.loads(_STORE.read_text(encoding="utf-8"))
+                if time.time() - float(data.get("ts") or 0) <= MAX_AGE_SEC:
+                    for c in data.get("cookies") or []:
+                        merged[_cookie_key(c)] = c
+            except Exception:
+                pass
+            # New cookies win over any older copy of the same cookie.
+            for c in cookies:
+                merged[_cookie_key(c)] = c
+            all_cookies = list(merged.values())
+            payload = {"ts": time.time(), "portal": portal, "cookies": all_cookies}
             _STORE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        print(f"[GovSession] נשמר סשן gov.il משותף ({len(cookies)} עוגיות, מקור: {portal})")
-        return len(cookies)
+        print(f"[GovSession] סשן gov.il משותף עודכן "
+              f"(+{len(cookies)} מ-{portal}, סה\"כ {len(all_cookies)} עוגיות)")
+        return len(all_cookies)
     except Exception:
         return 0
 
