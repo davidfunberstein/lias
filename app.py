@@ -97,37 +97,76 @@ def _do_serve_document(document_id: int):
 
 
 # ── gov.il credentials (small, kept here) ──────────────────────────────────
+# Cache for "is it configured?" answers. Every read of a keychain item can make
+# macOS raise its "allow access?" prompt — most often after the app is launched
+# by a different Python than the one that stored the item, because the binary is
+# no longer on the item's ACL. The status endpoints are called on every settings
+# open and on the startup check, so each of those turned into another prompt and
+# the user got them "every second". A configured/not-configured answer changes
+# only when we ourselves save, so it is cached and invalidated on write.
+_status_cache: dict = {}
+_STATUS_TTL_SEC = 300.0
+
+
+def _cached_status(key: str, fn):
+    import time as _t
+    hit = _status_cache.get(key)
+    if hit and (_t.time() - hit[0]) < _STATUS_TTL_SEC:
+        return hit[1]
+    val = fn()
+    _status_cache[key] = (_t.time(), val)
+    return val
+
+
 def _govil_status() -> dict:
-    try:
-        import keyring
-        has_id = bool(keyring.get_password(KEYRING_SERVICE, "id_number")
-                      or keyring.get_password(KEYRING_SERVICE, "id"))
-        has_pw = bool(keyring.get_password(KEYRING_SERVICE, "password"))
-        return {"ok": True, "configured": has_id and has_pw}
-    except Exception as exc:
-        return {"ok": False, "configured": False, "error": str(exc)}
+    def _read() -> dict:
+        try:
+            import keyring
+            has_id = bool(keyring.get_password(KEYRING_SERVICE, "id_number")
+                          or keyring.get_password(KEYRING_SERVICE, "id"))
+            has_pw = bool(keyring.get_password(KEYRING_SERVICE, "password"))
+            return {"ok": True, "configured": has_id and has_pw}
+        except Exception as exc:
+            return {"ok": False, "configured": False, "error": str(exc)}
+    return _cached_status("govil", _read)
 
 
 def _govil_save(payload: dict) -> dict:
+    """Save whichever of ID / password was supplied — each one independently.
+
+    This used to demand BOTH on every save, while the form cleared both fields
+    after saving and never showed the stored password again. Correcting only the
+    ID therefore meant retyping a password you could not see; a typo there
+    silently replaced a working password with a broken one. Now an empty field
+    means "leave it as it is", so one value can never clobber the other."""
     try:
         import keyring
         gid = (payload.get("id") or "").strip()
         pw = payload.get("password") or ""
-        if not gid or not pw:
-            return {"ok": False, "error": "missing id/password"}
-        keyring.set_password(KEYRING_SERVICE, "id_number", gid)
-        keyring.set_password(KEYRING_SERVICE, "password", pw)
-        try:
-            keyring.delete_password(KEYRING_SERVICE, "id")
-        except Exception:
-            pass
-        return {"ok": True, "configured": True}
+        if not gid and not pw:
+            return {"ok": False, "error": "לא הוזן דבר — מלא ת.ז. או סיסמה"}
+        if gid:
+            keyring.set_password(KEYRING_SERVICE, "id_number", gid)
+            try:
+                keyring.delete_password(KEYRING_SERVICE, "id")   # legacy key
+            except Exception:
+                pass
+        if pw:
+            keyring.set_password(KEYRING_SERVICE, "password", pw)
+        _status_cache.pop("govil", None)          # reflect the change at once
+        saved = [n for n, v in (("ת.ז.", gid), ("סיסמה", pw)) if v]
+        return {"ok": True, "configured": True, "saved": saved,
+                "message": "נשמר: " + " + ".join(saved)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
 
 # ── email OTP account (reads the gov.il one-time code from your inbox) ──────
 def _email_status() -> dict:
+    return _cached_status("email", _email_status_read)
+
+
+def _email_status_read() -> dict:
     import json
     cfg_path = os.path.join(HERE, "email_config.json")
     address = ""
@@ -176,6 +215,7 @@ def _email_save(payload: dict) -> dict:
         if app_pw:
             import keyring
             keyring.set_password("gov-il-connect-email", address, app_pw)
+        _status_cache.pop("email", None)
         return {"ok": True, "configured": True, "host": host}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
