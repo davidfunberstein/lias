@@ -165,7 +165,15 @@ class NetScraper:
             try:
                 if hasattr(ctx, "is_detached") and ctx.is_detached():
                     continue
-                marker = ctx.locator("#MessageLS_DocumentNotAvailable")
+                # PREFIX match, not exact. The portal renders the container as
+                #   id="MessageLS_DocumentNotAvailable-ct'"
+                # (note the -ct' suffix, apostrophe included), so "#MessageLS_
+                # DocumentNotAvailable" never matched. Two things broke: the
+                # popup was only ever found by its Hebrew text, and — worse —
+                # the "is it still open?" re-check below always evaluated to
+                # "closed", so the reload that clears a STUCK overlay never
+                # ran. That is the "צריך אישור או לרענן" case.
+                marker = ctx.locator('[id^="MessageLS_DocumentNotAvailable"]')
                 found = marker.count() > 0 and marker.first.is_visible(timeout=300)
                 if not found:
                     txt = ctx.locator("div:has-text('אינו זמין'), span:has-text('אינו זמין')")

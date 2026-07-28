@@ -55,8 +55,9 @@ class BdrNavigator:
         """Dismiss 'מסמך אינו זמין כעת' / 'DocumentNotAvailable' popup. Returns True if dismissed."""
         import time as _t
         for sel in [
-            '#MessageLS_DocumentNotAvailable a.modal_ReturnMessageClose',
-            '#MessageLS_DocumentNotAvailable a.modal_close2',
+            # prefix match — the real id carries a suffix: MessageLS_DocumentNotAvailable-ct'
+            '[id^="MessageLS_DocumentNotAvailable"] a.modal_ReturnMessageClose',
+            '[id^="MessageLS_DocumentNotAvailable"] a.modal_close2',
             'a.modal_ReturnMessageClose',
             'a.modal_close2',
         ]:
