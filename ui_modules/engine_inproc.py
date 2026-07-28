@@ -67,7 +67,7 @@ def start() -> dict:
             # not two stray windows at startup.
             _headless = True
             browser = BrowserManager(headless=_headless, restore=_restore)
-                bdr_browser = BrowserManager(
+            bdr_browser = BrowserManager(
                 headless=_headless, restore=_restore,
                 profile_dir=config.BROWSER_PROFILE_BDR_DIR,
                 log=lambda m: print(f"[BDR] {m}"),
