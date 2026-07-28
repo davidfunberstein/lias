@@ -101,8 +101,21 @@ class BrowserManager:
     # ---- public API / ממשק ציבורי ----------------------------------------
 
     def start(self) -> None:
+        if self._thread.is_alive():
+            return
         self._thread.start()
         self._watchdog.start()
+
+    def ensure_started(self) -> None:
+        """Start this portal's browser on first real use.
+
+        All three portals used to launch Chrome at engine startup even when the
+        user only wanted one. That is three persistent Chrome profiles competing
+        for file descriptors and profile locks before any work exists — the main
+        contributor to "Too many open files" on a default macOS limit."""
+        if not self._thread.is_alive():
+            self._log("[browser] starting on first use / עולה בשימוש הראשון")
+            self.start()
 
     def run(self, name: str, fn: Callable[[Any], Any], timeout: Optional[float] = None) -> Any:
         """EN: execute fn(page) on the browser thread; blocks the caller only,
@@ -113,6 +126,7 @@ class BrowserManager:
             לולאת הדפדפן. זורק BrowserDead בכשל/פסק זמן — המשימה של הקורא
             עוברת ל-ERROR ותנוסה שוב; בינתיים ה-Watchdog מרים את הדפדפן מחדש.
         """
+        self.ensure_started()          # lazy: this portal's Chrome starts here
         cmd = BrowserCommand(name=name, fn=fn, timeout=timeout or config.BROWSER_CMD_TIMEOUT_SEC)
         self._cmd_q.put(cmd)
         try:
@@ -270,20 +284,15 @@ class BrowserManager:
         #     fingerprint and passes — prefer it, fall back to bundled.
         # HE: ה-WAF של נט חותך את ה-Chromium של Playwright; Chrome אמיתי
         #     עובר — מעדיפים אותו, עם נסיגה ל-Chromium המובנה.
-        # Cap the launch. Playwright's default is 180s, and three portals each
-        # opening real Chrome on its own persistent profile can deadlock on the
-        # profile SingletonLock — one launch then hung the full three minutes,
-        # crashed, and took a login that was mid-OTP down with it. Failing over
-        # to bundled Chromium after 45s is far better than hanging.
         try:
             ctx = p.chromium.launch_persistent_context(
-                channel="chrome", args=args, timeout=45000, **kwargs)
+                channel="chrome", args=args, **kwargs)
             self._log("[browser] using real Google Chrome / משתמש ב-Chrome אמיתי")
         except Exception as exc:
             # keep the log readable — Playwright errors carry a huge call log
             brief = str(exc).split("Call log:")[0].strip()[:200]
             self._log(f"[browser] Chrome channel unavailable ({brief}) — bundled Chromium")
-            ctx = p.chromium.launch_persistent_context(args=args, timeout=60000, **kwargs)
+            ctx = p.chromium.launch_persistent_context(args=args, **kwargs)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         return ctx, page
 
@@ -328,10 +337,21 @@ class BrowserManager:
                         pass
                 if self._stop.is_set():
                     return
-            except Exception:
+            except Exception as _exc:
                 _tb = traceback.format_exc(limit=3)
                 _tb = _tb.split("Call log:")[0].strip()   # drop the huge Playwright arg dump
                 self._log("[browser] crashed / קרס:\n" + _tb[:600])
+                # Out of file descriptors: retrying cannot help — every attempt
+                # needs more of the resource that just ran out, and three
+                # browsers looping on it buried the real error under thousands
+                # of tracebacks. Stop this thread and say exactly what to do.
+                if isinstance(_exc, OSError) and getattr(_exc, "errno", None) == 24:
+                    self._log(
+                        "[browser] ⛔ נגמרו הקבצים הפתוחים המותרים (Too many open files).\n"
+                        "           הדפדפן לא יורם שוב עד שתפעיל מחדש את המערכת.\n"
+                        "           פתרון: הרץ  ulimit -n 8192  ואז  bash start.sh")
+                    self._alive.clear()
+                    return
             # a newer generation took over (show() relaunched) → this loop is
             # a zombie; exit instead of fighting over the profile lock.
             if self._generation != my_gen:
