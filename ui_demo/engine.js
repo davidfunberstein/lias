@@ -293,7 +293,16 @@ function connectEngineSSE(){
       _dlByPortal[portal]=e; _saveDl();
       if(e.job_id && !_netDownloadJobId){ _netDownloadJobId=e.job_id; try{sessionStorage.setItem('dlJobId',e.job_id);}catch(_){} }
       _renderDlStats();
-      if((e.docs_downloaded||e.done)>0 && (e.docs_downloaded||e.done)%3===0 && typeof refresh==='function') refresh(true);
+    }
+    /* A case finished and was imported — the dashboard has real new rows now,
+       so refresh immediately instead of guessing from the document counter. */
+    if(e.type==='case_imported'){
+      logEvent(`✓ ${e.case}: ${e.docs} מסמכים נוספו לדשבורד`);
+      _serverDlAt = 0;                       // force the picker's next truth check
+      refreshDownloadedSet(true).then(()=>{
+        if(typeof _renderDlStats==='function') _renderDlStats();
+      });
+      if(typeof refresh==='function') refresh(true);
     }
     if(e.type==='portal_done'){
       logEvent(`✅ ${e.message||((e.label||'')+' — ההורדה הסתיימה')}`);

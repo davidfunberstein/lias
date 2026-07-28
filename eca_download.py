@@ -908,7 +908,7 @@ def _resolve_client(case: dict, parties: list[dict], downloads_dir: Path) -> str
 
 
 def _process_case(page, case: dict, output_dir: Path, by_client: bool = False,
-                  should_cancel=None) -> None:
+                  should_cancel=None, on_case_done=None) -> None:
     case_num = case["number"]
 
     _log(f"\n{'='*60}")
@@ -1008,6 +1008,13 @@ def _process_case(page, case: dict, output_dir: Path, by_client: bool = False,
         time.sleep(0.3)
 
     _write_case_manifest(case_dir, case_num)
+    # Hand the finished case to the importer straight away so it shows up in the
+    # dashboard now, rather than only when the whole run ends.
+    if on_case_done:
+        try:
+            on_case_done(case_dir, case_num)
+        except Exception as _e:
+            _log(f"  ⚠ ייבוא מיידי נכשל ({_e}) — ייובא בסוף הריצה")
 
 
 def _write_case_manifest(case_dir: Path, case_num: str) -> None:
@@ -1053,7 +1060,8 @@ def _write_case_manifest(case_dir: Path, case_num: str) -> None:
 # ---------------------------------------------------------------------------
 
 def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None = None,
-                     progress=None, should_cancel=None, job_id=None) -> str:
+                     progress=None, should_cancel=None, job_id=None,
+                     on_case_done=None) -> str:
     """Download all ECA cases into root_output_dir/downloads/{client}/הוצאה לפועל/{case}.
 
     Assumes the caller provides a Playwright page; handles ECA login itself
@@ -1127,7 +1135,8 @@ def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None
             progress(frac, f"תיק {_STATS['case_idx']}/{len(cases)}: {cnum}")
         try:
             _process_case(page, case, downloads_dir, by_client=True,
-                          should_cancel=lambda: _cancel() or _cancel(cnum))
+                          should_cancel=lambda: _cancel() or _cancel(cnum),
+                          on_case_done=on_case_done)
             ok += 1
             if cnum in _by_id:
                 _by_id[cnum]["status"] = "done"

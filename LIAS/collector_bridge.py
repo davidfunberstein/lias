@@ -43,6 +43,33 @@ from .jobs import handler, JobContext
 #     playwright מותקן; משימות דפדפן ייכשלו עם הודעה ברורה במקום להפיל הכל.
 
 
+def import_one_case(case_dir: Path, portal: str = "", case_number: str = "") -> int:
+    """Import a SINGLE finished case into SQLite and tell the UI to refresh.
+
+    Downloads used to reach the dashboard only when the whole job ended, because
+    the import ran once at the very end. A run over 20 cases therefore showed
+    nothing for its entire duration. Each case is now imported the moment it is
+    finished, so the dashboard fills in live."""
+    from .migrate_csv import _find_manifest_dirs, _import_manifest
+    downloads_root = config.COURT_DOCS_DIR / "downloads"
+    n = 0
+    try:
+        for d, csv_path in _find_manifest_dirs(Path(case_dir)):
+            docs, _ = _import_manifest(d, csv_path, downloads_root)
+            n += docs
+    except Exception as exc:
+        print(f"[import_one_case] {case_number}: {exc}")
+        return 0
+    if n:
+        try:
+            jobs.broadcast({"type": "case_imported", "portal": portal,
+                            "case": case_number, "docs": n,
+                            "message": f"{case_number}: {n} מסמכים נוספו לדשבורד"})
+        except Exception:
+            pass
+    return n
+
+
 def _reimport_folder(case_dir: Path) -> int:
     """Refresh SQLite from a folder's CSVs after a legacy sync run.
     רענון SQLite מקבצי ה-CSV של תיקייה אחרי ריצת סנכרון ישנה."""
@@ -472,7 +499,8 @@ def eca_sync(payload: dict, ctx: JobContext) -> str:
         cases = payload.get("cases") or None
         return run_eca_download(page, config.COURT_DOCS_DIR, cases_filter=cases,
                                 progress=ctx.progress, job_id=ctx.job_id,
-                                should_cancel=lambda case=None: _is_case_cancelled(ctx.job_id, case))
+                                should_cancel=lambda case=None: _is_case_cancelled(ctx.job_id, case),
+                                on_case_done=lambda d, num: import_one_case(d, "ECA", num))
 
     try:
         result = _run_portal(ctx, "eca_sync", _run, timeout=3600)
