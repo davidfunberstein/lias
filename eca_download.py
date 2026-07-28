@@ -650,11 +650,22 @@ def _download_doc(page, row_loc, btn_id: str, save_path: Path) -> str:
         try:
             with page.expect_download(timeout=6000) as dl_info:
                 btn.click()
-            dl_info.value.save_as(str(save_path))
-            _log(f"      ✓ {save_path.name}")
+            dl = dl_info.value
+            # save_as() blocks until the transfer completes and takes NO timeout,
+            # so a stalled file used to hang the whole run with nothing in the log
+            # to say which document was stuck. Name it first, then bound the wait
+            # by checking the download actually finished before copying it.
+            _log(f"      ↓ מוריד: {save_path.name}")
+            _t0 = time.time()
+            fail = dl.failure()            # returns None once the transfer ended
+            if fail:
+                _log(f"      ⚠ ההורדה נכשלה ({fail}) — מדלג: {save_path.name}")
+                return "fail"
+            dl.save_as(str(save_path))
+            _log(f"      ✓ {save_path.name} ({time.time()-_t0:.1f}s)")
             return "ok"
-        except Exception:
-            pass
+        except Exception as _e:
+            _log(f"      ⚠ נתיב ההורדה הישיר נכשל ({str(_e)[:60]}) — מנסה דרך ה-API")
 
         # Wait for the API response that carries the document
         deadline = time.time() + 12

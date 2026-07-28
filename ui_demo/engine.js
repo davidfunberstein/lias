@@ -151,15 +151,18 @@ async function refreshPortalLock(){
     const b=$('plat-'+p); if(!b) return;
     const blocked = !!running && running!==p;
     b.disabled = blocked;
-    b.style.opacity = blocked ? '.4' : '';
-    b.style.cursor  = blocked ? 'not-allowed' : '';
-    b.title = blocked ? `לא זמין — כרגע רצה פעולה ב${PORTAL_LABELS[running]||running}` : '';
+    b.style.opacity       = blocked ? '.45' : '';
+    b.style.filter        = blocked ? 'grayscale(1)' : '';
+    b.style.pointerEvents = blocked ? 'none' : '';
+    b.style.cursor        = blocked ? 'not-allowed' : '';
+    b.title = blocked ? `לא זמין — מתבצעת כעת פעולה ב${PORTAL_LABELS[running]||running}` : '';
   });
   if(note){
     if(running){
       note.style.display='block';
-      note.innerHTML = `🔒 כרגע רצה <b>${PORTAL_LABELS[running]||running}</b> — `
-        + `שאר הפורטלים חסומים עד לסיום. אי אפשר להוריד או לבקש תיקים במקביל.`;
+      note.innerHTML = `🔒 מתבצעת כעת פעולה ב<b>${PORTAL_LABELS[running]||running}</b>. `
+        + `שאר הפורטלים חסומים עד שהיא תסתיים — לא ניתן להוריד או לבקש תיקים `
+        + `משני פורטלים במקביל.`;
     } else note.style.display='none';
   }
 }
@@ -574,9 +577,29 @@ async function runBdrBatch(client_filter, cases, sub_cases){
 let _ecaCases = [];
 try{ const _s=localStorage.getItem('ecaCasesAll'); if(_s) _ecaCases=JSON.parse(_s)||[]; }catch(_){}
 /* cases already sent to download — shown as ✓ הורד with the box cleared */
-let _ecaHandled = new Set();
-try{ const _h=localStorage.getItem('ecaHandled'); if(_h) _ecaHandled=new Set(JSON.parse(_h)||[]); }catch(_){}
-function _saveEcaHandled(){ try{ localStorage.setItem('ecaHandled', JSON.stringify([..._ecaHandled])); }catch(_){}}
+/* "Already downloaded" is decided by the SERVER, not by the browser.
+   These sets used to be persisted in localStorage, so after reset_all.sh wiped
+   every document the picker still showed the first case as "✓ הורד" — stale
+   client state outliving the data it described. They are now session-only
+   optimistic marks ("just sent to download"); the authoritative answer comes
+   from /api/cases/all, which reads the documents actually on disk. */
+let _ecaHandled = new Set();          // sent during THIS session only
+function _saveEcaHandled(){ /* intentionally not persisted — see above */ }
+let _serverDownloaded = new Set(), _serverDlAt = 0;
+async function refreshDownloadedSet(force){
+  if(!force && Date.now()-_serverDlAt < 8000) return _serverDownloaded;
+  try{
+    const d = await (await fetch('/api/proxy/cases/all')).json();
+    _serverDownloaded = new Set((d.cases||[])
+      .filter(c=>c.downloaded).map(c=>String(c.number)));
+    _serverDlAt = Date.now();
+  }catch(_){}
+  return _serverDownloaded;
+}
+function _isDownloaded(num, sessionSet){
+  const n=String(num);
+  return _serverDownloaded.has(n) || (sessionSet && sessionSet.has(num));
+}
 async function ecaConnectAndList(){
   if(!await ensureNoPortalRunning()) return;
   toast('מתחבר להוצאה לפועל ושולף תיקים…');
@@ -604,6 +627,9 @@ function _ecaPartiesLine(c){
        + ` &nbsp;•&nbsp; <span style="opacity:.7">${other}:</span> <b>${name||'—'}</b>`;
 }
 function showEcaCases(cases){
+  // ask the server what is really downloaded, then repaint with the truth
+  if(!showEcaCases._busy){ showEcaCases._busy=1;
+    refreshDownloadedSet().then(()=>{ showEcaCases._busy=0; showEcaCases([]); }); }
   // Cumulative + sorted (open on top, newest first), like NET.
   _ecaCases = _mergeCasesList(_ecaCases, cases||[]);
   try{ localStorage.setItem('ecaCasesAll', JSON.stringify(_ecaCases)); }catch(_){}
@@ -627,7 +653,7 @@ function showEcaCases(cases){
     ${_pickerSearchBox('eca-q','🔎 סינון: מספר תיק / צד / סוג…')}
     <div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
       ${list.map((c,i)=>{
-        const done=_ecaHandled.has(c.number);
+        const done=_isDownloaded(c.number,_ecaHandled);
         return `<label data-searchrow="eca-q" data-hay="${_rowHay(c)}"
           style="display:flex;gap:8px;align-items:center;padding:7px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;cursor:pointer${done?';opacity:.72':''}">
         <input type="checkbox" class="eca-cb" data-i="${i}" ${done?'':'checked'}>
@@ -919,8 +945,7 @@ function _applyScopeChoice(){
 /* ── BDR case picker — same contract/behaviour as the ECA one ── */
 let _bdrCases = [];
 try{ const _s=localStorage.getItem('bdrCasesAll'); if(_s) _bdrCases=JSON.parse(_s)||[]; }catch(_){}
-let _bdrHandled = new Set();
-try{ const _h=localStorage.getItem('bdrHandled'); if(_h) _bdrHandled=new Set(JSON.parse(_h)||[]); }catch(_){}
+let _bdrHandled = new Set();   // session-only, same rationale as _ecaHandled
 /* status chip — open (green) / closed + date (grey) */
 /* ── picker search ─────────────────────────────────────────────────────────
    With dozens of cases the list was unusable without scrolling. One search box
@@ -974,6 +999,8 @@ function _statusChip(status, closeDate, openDate){
     white-space:nowrap">● פתוח${d?' · מ-'+d:''}</span>`;
 }
 function showBdrCases(cases){
+  if(!showBdrCases._busy){ showBdrCases._busy=1;
+    refreshDownloadedSet().then(()=>{ showBdrCases._busy=0; showBdrCases([]); }); }
   _bdrCases = _mergeCasesList(_bdrCases, cases||[]);
   try{ localStorage.setItem('bdrCasesAll', JSON.stringify(_bdrCases)); }catch(_){}
   const picker=$('sync-case-picker'); if(!picker) return;
@@ -1003,7 +1030,7 @@ function showBdrCases(cases){
     ${_pickerSearchBox('bdr-q','🔎 סינון: מספר תיק / צד / ערכאה / תת-תיק…')}
     <div style="max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">
       ${list.map((c,i)=>{
-        const done=_bdrHandled.has(c.number);
+        const done=_isDownloaded(c.number,_bdrHandled);
         const subs=c.sub_cases||[];
         return `<div data-searchrow="bdr-q" data-hay="${_rowHay(c)}"
           style="border:1px solid rgba(255,255,255,.14);border-radius:9px;padding:7px 10px${done?';opacity:.75':''}">
@@ -1074,7 +1101,6 @@ function runBdrSelected(){
   });
   if(!picked.size && !subs.length){ toast('לא סומן אף תיק', true); return; }
   picked.forEach(n=>_bdrHandled.add(n));
-  try{ localStorage.setItem('bdrHandled', JSON.stringify([..._bdrHandled])); }catch(_){}
   runBdrBatch('', [...picked], subs);
   const picker=$('sync-case-picker'); if(picker) picker.style.display='none';
 }
