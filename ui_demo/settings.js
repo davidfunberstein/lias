@@ -38,7 +38,12 @@ async function openSettings(){
   setTab(_tab);
   try{
     const s = await (await fetch('/api/govil/status')).json();
-    $('gov-status').innerHTML = s.configured
+    // A blocked Keychain is not the same as "not configured yet" — showing the
+    // latter sent users to re-enter details that could never be saved.
+    $('gov-status').innerHTML = s.blocked
+      ? `<div style="color:var(--danger);font-weight:700">⛔ הגישה ל-Keychain חסומה</div>
+         <div class="note" style="white-space:pre-line;text-align:right">${(s.error||'')}</div>`
+      : s.configured
       ? '<span style="color:var(--accent-strong)">אישורי gov.il מוגדרים ✓</span>'
       : '<span style="color:var(--warn)">אישורי gov.il עדיין לא הוגדרו</span>';
   }catch(e){ $('gov-status').textContent=''; }
