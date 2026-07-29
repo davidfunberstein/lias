@@ -49,27 +49,42 @@ if [ "$PULL" = "1" ] && [ -d .git ]; then
     || echo "  ⚠ לא הצלחתי למשוך (אין רשת או יש התנגשות) — ממשיך עם הגרסה המקומית"
 fi
 
-# ── 2. איתור פייתון מתאים ─────────────────────────────────────
-PY=""
-for cand in python3.12 python3.11 python3.10 python3.9 python3 python; do
-  if command -v "$cand" >/dev/null 2>&1; then
-    VER=$("$cand" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo "0.0")
-    MAJ=${VER%%.*}; MIN=${VER##*.}
-    if [ "$MAJ" -ge 3 ] && [ "$MIN" -ge 9 ]; then PY="$cand"; break; fi
+# ── 2. סביבה מבודדת וקבועה (venv) ─────────────────────────────
+# כל התקלות בהתקנה נבעו מאותו שורש: "איזה פייתון רץ היום". מעבר בין
+# פייתון של המערכת לזה של Homebrew הפיל את httpx, ובנוסף גרם ל-macOS
+# לשאול שוב ושוב על הקיטצ׳ן — פריט Keychain מאשר בינארי מסוים, ובינארי
+# אחר נחשב אפליקציה זרה. venv קבוע בתוך הפרויקט פותר את שניהם: אותו
+# מפרש בכל הרצה, אותן ספריות, ואישור Keychain אחד שנשאר תקף.
+VENV=".venv"
+PREFERRED="python3.12 python3.11 python3.10 python3.9 python3 python"
+
+if [ ! -x "$VENV/bin/python" ]; then
+  BASE=""
+  for cand in $PREFERRED; do
+    command -v "$cand" >/dev/null 2>&1 || continue
+    V=$("$cand" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo "0.0")
+    MAJ=${V%%.*}; MIN=${V##*.}
+    # 3.14+ נמנע: ל-Playwright יש שם באגים ידועים (קריסות, '_ssock')
+    if [ "$MAJ" -ge 3 ] && [ "$MIN" -ge 9 ] && [ "$MIN" -lt 14 ]; then BASE="$cand"; break; fi
+  done
+  if [ -z "$BASE" ]; then
+    for cand in $PREFERRED; do
+      command -v "$cand" >/dev/null 2>&1 && { BASE="$cand"; break; }
+    done
+    [ -n "$BASE" ] && echo "  ⚠ נמצא רק Python חדש מאוד — ייתכנו קריסות דפדפן. מומלץ להתקין 3.12."
   fi
-done
-if [ -z "$PY" ]; then
-  echo "✗ לא נמצא Python 3.9 ומעלה."
-  echo "  התקן מ: https://www.python.org/downloads/  ואז הרץ שוב את הפקודה."
-  exit 1
+  if [ -z "$BASE" ]; then
+    echo "✗ לא נמצא Python 3.9 ומעלה."
+    echo "  התקן מ: https://www.python.org/downloads/  ואז הרץ שוב."
+    exit 1
+  fi
+  echo "→ יוצר סביבה מבודדת (פעם אחת) עם $BASE…"
+  "$BASE" -m venv "$VENV" || { echo "✗ יצירת ה-venv נכשלה"; exit 1; }
+  REINSTALL=1
 fi
-PYVER=$("$PY" -c 'import sys;print(sys.version.split()[0])')
-echo "→ פייתון: $PY ($PYVER)"
-case "$PYVER" in
-  3.14*|3.15*)
-    echo "  ⚠ Python $PYVER חדש מאוד — ל-Playwright יש בו באגים ידועים"
-    echo "    (קריסות דפדפן, '_ssock'). מומלץ Python 3.12." ;;
-esac
+
+PY="$VENV/bin/python"
+echo "→ פייתון: $("$PY" -c 'import sys;print(sys.version.split()[0])') (סביבה מבודדת)"
 
 # ── 3. ספריות ─────────────────────────────────────────────────
 NEED=0
