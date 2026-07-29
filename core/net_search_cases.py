@@ -491,6 +491,7 @@ def run_bulk_download_from_date_search(
     session_settings: dict,
     logger: "Logger | None" = None,
     years_back: int = 10,
+    on_case_done: "Callable[[Path, str], None] | None" = None,
 ) -> None:
     """Full flow: search by date → extract cases → download each one.
 
@@ -698,6 +699,12 @@ def run_bulk_download_from_date_search(
             total_ok += 1
         else:
             total_fail += 1
+
+        if on_case_done:
+            try:
+                on_case_done(case_dir, case_num)
+            except Exception as _cb_err:
+                _log(f"  on_case_done callback error: {_cb_err}", "warn")
 
         _log(f"  Done: {dl_ok} downloaded, {dl_fail} failed.")
 
