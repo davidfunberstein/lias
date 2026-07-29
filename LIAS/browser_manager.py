@@ -147,7 +147,8 @@ class BrowserManager:
         """Clean closure — guarantee #3 / סגירה נקייה — הבטחה 3."""
         self._stop.set()
         self._cmd_q.put(BrowserCommand(name="__quit__", fn=lambda p: None))
-        self._thread.join(timeout=20)
+        if self._thread.is_alive():
+            self._thread.join(timeout=20)
 
     def show(self) -> None:
         """Relaunch as visible (non-headless). Interrupts any running job."""
@@ -160,16 +161,13 @@ class BrowserManager:
         self._headless = False
         self._generation += 1            # invalidate every existing loop NOW
         old_watchdog = self._watchdog
-        self.shutdown()
-        # CRITICAL: wait for the OLD watchdog to actually exit before clearing
-        # _stop. Otherwise it keeps running next to the new one — two watchdogs
-        # relaunching Chrome on the SAME profile → SingletonLock crash-loop
-        # that floods the terminal.
-        try:
-            if old_watchdog and old_watchdog.is_alive():
-                old_watchdog.join(timeout=10)
-        except Exception:
-            pass
+        if self._thread.is_alive() or (self._watchdog and self._watchdog.is_alive()):
+            self.shutdown()
+            try:
+                if old_watchdog and old_watchdog.is_alive():
+                    old_watchdog.join(timeout=10)
+            except Exception:
+                pass
         self._stop.clear()
         self._alive.clear()
         self._relaunch_count = 0

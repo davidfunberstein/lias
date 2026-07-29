@@ -816,17 +816,27 @@ class BdrBatchRunner:
     def _select_status_and_search(self, option_index: int, label: str) -> bool:
         """Pick status option #option_index from the dropdown, click 'אתר',
         and return True only if group rows are actually visible afterwards."""
-        try:
-            self._log(f"בוחר '{label}' מהתפריט...")
-            btn = self.page.locator(SEL_DROPDOWN_BTN)
-            btn.wait_for(timeout=10000)
-            btn.click(force=True)
-            time.sleep(1)
-            opt_sel = SEL_OPTION_HAKOL.replace("LBI0T0", f"LBI{option_index}T0")
-            self.page.locator(opt_sel).click(force=True)
-            time.sleep(0.5)
-        except Exception as e:
-            self._log(f"שגיאה בתפריט ({label}): {e}", "warn")
+        for _attempt in (1, 2):
+            try:
+                self._log(f"בוחר '{label}' מהתפריט...")
+                btn = self.page.locator(SEL_DROPDOWN_BTN)
+                btn.wait_for(timeout=10000)
+                btn.click(force=True)
+                time.sleep(1)
+                opt_sel = SEL_OPTION_HAKOL.replace("LBI0T0", f"LBI{option_index}T0")
+                self.page.locator(opt_sel).click(force=True)
+                time.sleep(0.5)
+                break
+            except Exception as e:
+                self._log(f"שגיאה בתפריט ({label}): {e}", "warn")
+                if _attempt == 1:
+                    self._log("קוטע ניווט תקוע וחוזר לרשימת התיקים...", "warn")
+                    try:
+                        self.page.goto(BDR_FILES_URL,
+                                       wait_until="domcontentloaded", timeout=20000)
+                        time.sleep(2)
+                    except Exception as e2:
+                        self._log(f"ניווט חזרה נכשל: {e2}", "warn")
         try:
             self._log("לוחץ 'אתר'...")
             self.page.locator(SEL_SEARCH_BTN).click(force=True)

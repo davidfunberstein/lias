@@ -816,7 +816,8 @@ def net_download_all(payload: dict, ctx: JobContext) -> str:
         run_bulk_download_from_date_search(
             page=page, root_output_dir=config.COURT_DOCS_DIR,
             session_settings={**SESSION_SETTINGS, "download_related_cases": False},
-            logger=None, years_back=years_back)
+            logger=None, years_back=years_back,
+            on_case_done=lambda d, num: import_one_case(d, "NET", num))
         return "download-all done"
 
     _run_portal(ctx, "net_download_all", _run, timeout=14400)
@@ -918,6 +919,11 @@ def net_sync_selected(payload: dict, ctx: JobContext) -> str:
                     continue
                 run_net_download(page, output_dir=config.COURT_DOCS_DIR)
                 done += 1
+                _dl = config.COURT_DOCS_DIR / "downloads"
+                _matches = [d for d in _dl.iterdir()
+                            if d.is_dir() and cn in d.name] if _dl.is_dir() else []
+                if _matches:
+                    import_one_case(_matches[0], "NET", cn)
                 jobs.broadcast({"type": "job", "job_id": ctx.job_id,
                                 "message": f"✓ תיק {ident} סונכרן ({i}/{total})"})
             except Exception as exc:
@@ -1180,6 +1186,17 @@ def bdr_batch(payload: dict, ctx: JobContext) -> str:
             ensure_logged_in(page, "BDR")
         except Exception as e:
             print(f"[bdr_batch] login step: {e}")
+        try:
+            if page.is_closed():
+                live = [p for p in page.context.pages if not p.is_closed()]
+                page = live[0] if live else page.context.new_page()
+                print("[bdr_batch] הטאב נסגר בהזדהות — ממשיך בטאב חי")
+                try:
+                    ensure_logged_in(page, "BDR")
+                except Exception as e:
+                    print(f"[bdr_batch] login retry: {e}")
+        except Exception as e:
+            print(f"[bdr_batch] page recovery failed: {e}")
         from core.download import SESSION_SETTINGS
         # user_mode follows the SETTING (עו״ד מייצג / גורם פרטי) — not a
         # hardcoded 'lawyer'. In private mode the gov.il login uses the
