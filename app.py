@@ -120,14 +120,14 @@ def _cached_status(key: str, fn):
 
 def _govil_status() -> dict:
     def _read() -> dict:
-        try:
-            import keyring
-            has_id = bool(keyring.get_password(KEYRING_SERVICE, "id_number")
-                          or keyring.get_password(KEYRING_SERVICE, "id"))
-            has_pw = bool(keyring.get_password(KEYRING_SERVICE, "password"))
-            return {"ok": True, "configured": has_id and has_pw}
-        except Exception as exc:
-            return {"ok": False, "configured": False, "error": str(exc)}
+        from core import keychain
+        has_id = bool(keychain.get_password(KEYRING_SERVICE, "id_number")
+                      or keychain.get_password(KEYRING_SERVICE, "id"))
+        has_pw = bool(keychain.get_password(KEYRING_SERVICE, "password"))
+        if keychain.is_blocked():
+            return {"ok": False, "configured": False, "blocked": True,
+                    "error": keychain.REMEDY}
+        return {"ok": True, "configured": has_id and has_pw}
     return _cached_status("govil", _read)
 
 
@@ -140,19 +140,18 @@ def _govil_save(payload: dict) -> dict:
     silently replaced a working password with a broken one. Now an empty field
     means "leave it as it is", so one value can never clobber the other."""
     try:
-        import keyring
+        from core import keychain
         gid = (payload.get("id") or "").strip()
         pw = payload.get("password") or ""
         if not gid and not pw:
             return {"ok": False, "error": "לא הוזן דבר — מלא ת.ז. או סיסמה"}
         if gid:
-            keyring.set_password(KEYRING_SERVICE, "id_number", gid)
-            try:
-                keyring.delete_password(KEYRING_SERVICE, "id")   # legacy key
-            except Exception:
-                pass
+            if not keychain.set_password(KEYRING_SERVICE, "id_number", gid):
+                return {"ok": False, "blocked": True, "error": keychain.REMEDY}
+            keychain.delete_password(KEYRING_SERVICE, "id")      # legacy key
         if pw:
-            keyring.set_password(KEYRING_SERVICE, "password", pw)
+            if not keychain.set_password(KEYRING_SERVICE, "password", pw):
+                return {"ok": False, "blocked": True, "error": keychain.REMEDY}
         _status_cache.pop("govil", None)          # reflect the change at once
         saved = [n for n, v in (("ת.ז.", gid), ("סיסמה", pw)) if v]
         return {"ok": True, "configured": True, "saved": saved,
@@ -178,8 +177,8 @@ def _email_status_read() -> dict:
             if (cfg.get("imap_password") or "").strip():
                 has_pw = True
         if not has_pw and address:
-            import keyring
-            has_pw = bool(keyring.get_password("gov-il-connect-email", address))
+            from core import keychain
+            has_pw = bool(keychain.get_password("gov-il-connect-email", address))
     except Exception:
         pass
     return {"ok": True, "configured": bool(address and has_pw), "address": address}
@@ -213,8 +212,9 @@ def _email_save(payload: dict) -> dict:
                     "otp_regex": cfg.get("otp_regex", r"\b(\d{6})\b")})
         open(cfg_path, "w", encoding="utf-8").write(json.dumps(cfg, ensure_ascii=False, indent=2))
         if app_pw:
-            import keyring
-            keyring.set_password("gov-il-connect-email", address, app_pw)
+            from core import keychain
+            if not keychain.set_password("gov-il-connect-email", address, app_pw):
+                return {"ok": False, "blocked": True, "error": keychain.REMEDY}
         _status_cache.pop("email", None)
         return {"ok": True, "configured": True, "host": host}
     except Exception as exc:

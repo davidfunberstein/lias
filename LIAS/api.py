@@ -778,12 +778,9 @@ def _govil_creds_exist() -> bool:
         ts, val = _creds_exist_cache[0]
         if _t.time() - ts < 300.0:
             return val
-    try:
-        import keyring
-        val = bool(keyring.get_password("gov-il-connect", "id_number")
-                   and keyring.get_password("gov-il-connect", "password"))
-    except Exception:
-        val = False
+    from core import keychain
+    val = bool(keychain.get_password("gov-il-connect", "id_number")
+               and keychain.get_password("gov-il-connect", "password"))
     _creds_exist_cache[:] = [(_t.time(), val)]
     return val
 
