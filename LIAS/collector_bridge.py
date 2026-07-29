@@ -552,9 +552,25 @@ def open_portal(payload: dict, ctx: JobContext) -> str:
 # It is an RLock so a handler that runs several portal commands in sequence on
 # its own thread is unaffected; only *other* jobs are held out.
 _PORTAL_BUSY = threading.RLock()
-_PORTAL_BUSY_WHO: dict = {"label": "", "since": 0.0}
+_PORTAL_BUSY_WHO: dict = {"label": "", "since": 0.0, "portal": "", "job": None,
+                          "cmd": ""}
 
 PORTAL_LABELS_HE = {"NET": 'נט המשפט', "BDR": 'בית הדין הרבני', "ECA": 'הוצאה לפועל'}
+
+
+def portal_busy_detail() -> dict:
+    """Who holds the portal lock, and for how long — for the UI and the log.
+
+    A stuck holder was completely invisible: the log showed the browser
+    starting and then only "portal is busy" for every later click, with nothing
+    naming the operation that never finished."""
+    import time as _t
+    since = _PORTAL_BUSY_WHO.get("since") or 0.0
+    return {"label": _PORTAL_BUSY_WHO.get("label", ""),
+            "portal": _PORTAL_BUSY_WHO.get("portal", ""),
+            "job": _PORTAL_BUSY_WHO.get("job"),
+            "cmd": _PORTAL_BUSY_WHO.get("cmd", ""),
+            "held_sec": int(_t.time() - since) if since else 0}
 
 
 def portal_busy_with() -> str:
@@ -575,22 +591,42 @@ def _run_portal(ctx: JobContext, name: str, fn, timeout: int):
     import time as _t
     from .browser_manager import BrowserDead
 
-    # Refuse to run in parallel with another portal — fail fast with a clear
-    # message instead of queueing silently for an unknown amount of time.
-    if not _PORTAL_BUSY.acquire(timeout=2):
+    portal = name.split("_")[0].upper()
+    label = PORTAL_LABELS_HE.get(portal, name)
+
+    # The lock exists to stop two portals sharing one gov.il identity and one
+    # OTP mailbox. It was applied to same-portal work too, with a 2s deadline —
+    # so clicking "download" while that portal's own listing was still starting
+    # its browser threw the user's case selection away. Two operations on the
+    # SAME portal cannot conflict; they only need to take turns.
+    same_portal = (_PORTAL_BUSY_WHO.get("portal") == portal)
+    wait = min(timeout, 3600) if same_portal else 2
+
+    if not _PORTAL_BUSY.acquire(timeout=wait):
         busy = _PORTAL_BUSY_WHO.get("label") or "פורטל אחר"
-        mins = int((_t.time() - (_PORTAL_BUSY_WHO.get("since") or _t.time())) // 60)
+        held = _t.time() - (_PORTAL_BUSY_WHO.get("since") or _t.time())
+        mins = int(held // 60)
+        who = _PORTAL_BUSY_WHO.get("cmd") or ""
+        job = _PORTAL_BUSY_WHO.get("job")
+        detail = (f" (משימה {job}: {who}, כבר {mins} דקות)" if job and mins
+                  else f" ({who})" if who else "")
+        if same_portal:
+            raise RuntimeError(
+                f"הפעולה הקודמת ב{busy}{detail} עדיין רצה ולא הסתיימה. "
+                f"פתח את חלון המשימות ⏱ ועצור אותה, או הפעל מחדש את המנוע.")
         raise RuntimeError(
-            f"כרגע רצה פעולה ב{busy}"
-            + (f" (כבר {mins} דקות)" if mins else "")
+            f"כרגע רצה פעולה ב{busy}{detail}"
             + ". אי אפשר להוריד או לבקש תיקים משני פורטלים במקביל — "
               "המתן לסיום ואז הפעל שוב.")
-    _PORTAL_BUSY_WHO.update(label=PORTAL_LABELS_HE.get(name.split("_")[0].upper(), name),
-                            since=_t.time())
+
+    if same_portal and _PORTAL_BUSY_WHO.get("since"):
+        ctx.progress(0.02, f"ממתין לסיום הפעולה הקודמת ב{label}…")
+    _PORTAL_BUSY_WHO.update(label=label, portal=portal, since=_t.time(),
+                            job=getattr(ctx, "job_id", None), cmd=name)
     try:
         return _run_portal_locked(ctx, name, fn, timeout)
     finally:
-        _PORTAL_BUSY_WHO.update(label="", since=0.0)
+        _PORTAL_BUSY_WHO.update(label="", portal="", since=0.0, job=None, cmd="")
         _PORTAL_BUSY.release()
 
 
