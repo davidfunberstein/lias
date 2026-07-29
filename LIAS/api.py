@@ -756,14 +756,36 @@ def get_settings():
     }
 
 
+_creds_exist_cache: list = []          # [(timestamp, value)] — one entry
+
+
+def _invalidate_creds_cache() -> None:
+    _creds_exist_cache.clear()
+
+
 def _govil_creds_exist() -> bool:
-    """Reports only WHETHER credentials exist — never the values."""
+    """Reports only WHETHER credentials exist — never the values.
+
+    Cached, because this sits on GET /api/settings, which the sync screen calls
+    on every render. The dashboard auto-refreshes every 10s and its data changes
+    constantly during a download, so the screen re-rendered continuously and
+    each render did two keychain reads. Every read can raise the macOS "allow
+    access?" prompt when the running Python is not on the item's ACL — which is
+    why prompts appeared to pop up nonstop. The answer only changes when we
+    write, so writes clear the cache."""
+    import time as _t
+    if _creds_exist_cache:
+        ts, val = _creds_exist_cache[0]
+        if _t.time() - ts < 300.0:
+            return val
     try:
         import keyring
-        return bool(keyring.get_password("gov-il-connect", "id_number")
-                    and keyring.get_password("gov-il-connect", "password"))
+        val = bool(keyring.get_password("gov-il-connect", "id_number")
+                   and keyring.get_password("gov-il-connect", "password"))
     except Exception:
-        return False
+        val = False
+    _creds_exist_cache[:] = [(_t.time(), val)]
+    return val
 
 
 def _totp_exists() -> bool:
@@ -850,6 +872,7 @@ def save_settings(req: SettingsUpdate):
                 keyring.set_password("gov-il-connect", "id_number", req.govil_id.strip())
             if req.govil_password:
                 keyring.set_password("gov-il-connect", "password", req.govil_password)
+            _invalidate_creds_cache()      # next read reflects the new state
         except Exception as exc:
             return {"ok": False, "error": f"keychain: {exc}",
                     "court_docs_dir_effective": str(config.COURT_DOCS_DIR)}
