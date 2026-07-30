@@ -1145,9 +1145,6 @@ async function runNet(){
   const s = window._settings || {};
   const scope = _syncScopeChoice || s.net_scope || 'selected';
   if(scope==='all'){
-    const t={open_client:'כל התיקים של לקוחות שיש להם תיק פתוח',
-             open:'רק תיקים פתוחים', all:'כל התיקים כולל סגורים'}[_syncAllMode];
-    if(!confirm(`להוריד מנט המשפט — ${t}?`)) return;
     act('net_download_all','הורדת כל תיקי נט');
   } else {
     startNetDownload();   // show list → pick

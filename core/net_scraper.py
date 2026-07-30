@@ -181,14 +181,43 @@ class NetScraper:
                     found = txt.count() > 0 and txt.first.is_visible(timeout=300)
                 if not found:
                     continue
-                # Step 1: try to close via אישור / X
+                # Step 1: try to close via scoped button inside the popup
                 dismissed = False
-                close = ctx.locator(self._MODAL_CLOSE_SEL).first
-                if close.count() > 0:
+                # Try scoped close (button inside the popup container)
+                popup_close = marker.first.locator(
+                    "button, input[type='button'], a.modal_close2, "
+                    "a.modal_ReturnMessageClose, a#returnFocus"
+                ).first
+                if popup_close.count() > 0:
                     try:
-                        close.click()
+                        popup_close.click(force=True)
                         time.sleep(0.5)
-                        dismissed = not (marker.count() > 0 and marker.first.is_visible(timeout=300))
+                        dismissed = not (marker.count() > 0 and marker.first.is_visible(timeout=500))
+                    except Exception:
+                        pass
+                # Fallback: page-level close selectors
+                if not dismissed:
+                    close = ctx.locator(self._MODAL_CLOSE_SEL).first
+                    if close.count() > 0:
+                        try:
+                            close.click(force=True)
+                            time.sleep(0.5)
+                            dismissed = not (marker.count() > 0 and marker.first.is_visible(timeout=500))
+                        except Exception:
+                            pass
+                # JS fallback: click any visible אישור button
+                if not dismissed:
+                    try:
+                        ctx.evaluate("""() => {
+                            const btns = [...document.querySelectorAll(
+                                'button, input[type="button"], a.modal_close2')];
+                            const ok = btns.find(b =>
+                                (b.textContent||b.value||'').includes('אישור') &&
+                                b.offsetParent !== null);
+                            if (ok) ok.click();
+                        }""")
+                        time.sleep(0.5)
+                        dismissed = not (marker.count() > 0 and marker.first.is_visible(timeout=500))
                     except Exception:
                         pass
                 # Step 2: modal still stuck → reload the page to clear the overlay
