@@ -594,13 +594,15 @@ def _run_portal(ctx: JobContext, name: str, fn, timeout: int):
     portal = name.split("_")[0].upper()
     label = PORTAL_LABELS_HE.get(portal, name)
 
-    # The lock exists to stop two portals sharing one gov.il identity and one
-    # OTP mailbox. It was applied to same-portal work too, with a 2s deadline —
-    # so clicking "download" while that portal's own listing was still starting
-    # its browser threw the user's case selection away. Two operations on the
-    # SAME portal cannot conflict; they only need to take turns.
     same_portal = (_PORTAL_BUSY_WHO.get("portal") == portal)
-    wait = min(timeout, 3600) if same_portal else 2
+    wait = min(timeout, 3600)
+
+    if not same_portal and _PORTAL_BUSY_WHO.get("portal"):
+        busy = PORTAL_LABELS_HE.get(_PORTAL_BUSY_WHO["portal"],
+                                     _PORTAL_BUSY_WHO.get("label", ""))
+        ctx.progress(0.01, f"ממתין לסיום הורדה מ{busy} — {label} בתור…")
+        jobs.broadcast({"type": "job", "job_id": getattr(ctx, 'job_id', 0),
+                        "message": f"{label} בתור — ממתין לסיום פעולה ב{busy}"})
 
     if not _PORTAL_BUSY.acquire(timeout=wait):
         busy = _PORTAL_BUSY_WHO.get("label") or "פורטל אחר"
@@ -610,14 +612,9 @@ def _run_portal(ctx: JobContext, name: str, fn, timeout: int):
         job = _PORTAL_BUSY_WHO.get("job")
         detail = (f" (משימה {job}: {who}, כבר {mins} דקות)" if job and mins
                   else f" ({who})" if who else "")
-        if same_portal:
-            raise RuntimeError(
-                f"הפעולה הקודמת ב{busy}{detail} עדיין רצה ולא הסתיימה. "
-                f"פתח את חלון המשימות ⏱ ועצור אותה, או הפעל מחדש את המנוע.")
         raise RuntimeError(
-            f"כרגע רצה פעולה ב{busy}{detail}"
-            + ". אי אפשר להוריד או לבקש תיקים משני פורטלים במקביל — "
-              "המתן לסיום ואז הפעל שוב.")
+            f"הפעולה ב{busy}{detail} עדיין רצה ולא הסתיימה. "
+            f"פתח את חלון המשימות ⏱ ועצור אותה, או הפעל מחדש את המנוע.")
 
     if same_portal and _PORTAL_BUSY_WHO.get("since"):
         ctx.progress(0.02, f"ממתין לסיום הפעולה הקודמת ב{label}…")
@@ -1178,6 +1175,27 @@ def bdr_batch(payload: dict, ctx: JobContext) -> str:
     if bdr is None:
         raise RuntimeError("no browser attached")
     ctx.progress(0.05, "starting BDR batch")
+    _cancel_flags[ctx.job_id] = False
+    _cancel_cases[ctx.job_id] = set()
+
+    import time as _bdr_t
+    _bdr_start = _bdr_t.time()
+
+    def _bdr_broadcast(st):
+        elapsed = _bdr_t.time() - _bdr_start
+        speed = st["docs_downloaded"] / elapsed * 60 if elapsed > 10 else 0
+        remaining = st["total"] - st["done"] - st["failed"] - st["skipped"]
+        jobs.broadcast({"type": "download_stats", "portal": "BDR",
+                        "done": st["done"], "total": st["total"],
+                        "failed": st["failed"],
+                        "docs_downloaded": st["docs_downloaded"],
+                        "current_case": st["current_case"],
+                        "current_name": st.get("current_name", ""),
+                        "speed_per_min": round(speed, 1),
+                        "elapsed_sec": round(elapsed),
+                        "remaining": remaining,
+                        "cases_detail": st.get("cases_detail", []),
+                        "job_id": ctx.job_id})
 
     def _run(page):
         from core.bdr_batch import BdrBatchRunner
@@ -1198,9 +1216,6 @@ def bdr_batch(payload: dict, ctx: JobContext) -> str:
         except Exception as e:
             print(f"[bdr_batch] page recovery failed: {e}")
         from core.download import SESSION_SETTINGS
-        # user_mode follows the SETTING (עו״ד מייצג / גורם פרטי) — not a
-        # hardcoded 'lawyer'. In private mode the gov.il login uses the
-        # credentials configured in Settings, exactly like NET/ECA.
         run_settings = {**SESSION_SETTINGS,
                         "force_rerun": payload.get("force_rerun", False),
                         "client_filter": payload.get("client_filter", ""),
@@ -1209,7 +1224,12 @@ def bdr_batch(payload: dict, ctx: JobContext) -> str:
                         "user_mode": (payload.get("user_mode")
                                       or SESSION_SETTINGS.get("user_mode")
                                       or "private")}
-        batch = BdrBatchRunner(page, logger=None)
+        batch = BdrBatchRunner(
+            page, logger=None,
+            on_case_done=lambda d, num: import_one_case(d, "BDR", num),
+            progress_cb=_bdr_broadcast,
+            should_cancel=lambda case=None: _is_case_cancelled(ctx.job_id, case),
+        )
         batch.run(run_settings, config.COURT_DOCS_DIR)
         return "bdr batch done"
 

@@ -37,6 +37,35 @@ def _parse_display_id(display_id: str) -> tuple[str, str] | None:
     return None
 
 
+def _save_net_case_info(case_dir: Path, case_info: dict, raw_case_name: str) -> None:
+    info_path = case_dir / "case_info.json"
+    if info_path.exists():
+        return
+    case_name = case_info.get("CaseName", "")
+    parties = []
+    if case_name:
+        parts = re.split(r"\s+נ['׳’]\s+", case_name)
+        if len(parts) == 2:
+            parties = [{"name": parts[0].strip(), "role": "תובע"},
+                       {"name": parts[1].strip(), "role": "נתבע"}]
+        elif case_name.strip():
+            parties = [{"name": case_name.strip()}]
+    info = {
+        "portal": "NET",
+        "case_id": case_info.get("CaseDisplayIdentifier", ""),
+        "case_type": case_info.get("CaseTypeShortName", ""),
+        "full_name": raw_case_name,
+        "parties": parties,
+        "court": case_info.get("CourtName", ""),
+        "location": case_info.get("CourtName", ""),
+        "status": case_info.get("CaseStatusName", ""),
+    }
+    try:
+        info_path.write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 # JS run in the page: find a menu <a>/<button> by its visible Hebrew label
 # (text or alt) and fire the REAL __doPostBack target parsed out of its
 # href/onclick. This is resilient to the portal renaming its ASP.NET naming
@@ -602,6 +631,8 @@ def run_bulk_download_from_date_search(
             case_dir_name = re.sub(r'[\\/*?:"<>|]', "", f"{display_id} — {case_name_hint}").strip()
         case_dir = downloads_dir / case_dir_name
         case_dir.mkdir(parents=True, exist_ok=True)
+
+        _save_net_case_info(case_dir, case_info, raw_case_name)
 
         manifest = ManifestManager(
             get_summary_csv_path(case_dir),

@@ -566,6 +566,23 @@ def run_net_download(page: Page, output_dir: Path | None = None) -> None:
     if _logger:
         _logger.info(f"Target directory: {case_dir.absolute()}")
 
+    _ci_path = case_dir / "case_info.json"
+    if not _ci_path.exists() and (parties_full or parties):
+        _ci_parties = ([{"name": p.get("name", ""), "role": p.get("role", "")}
+                        for p in parties_full if p.get("name")]
+                       if parties_full else [{"name": n} for n in parties if n])
+        _ci_data = {
+            "portal": "NET", "case_id": safe_case_folder,
+            "full_name": raw_case_name, "parties": _ci_parties,
+            "location": (case_meta or {}).get("court", ""),
+        }
+        try:
+            import json as _json
+            _ci_path.write_text(_json.dumps(_ci_data, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+        except Exception:
+            pass
+
     # 5. Load or create manifest, then sync with disk
     manifest = ManifestManager(
         get_summary_csv_path(case_dir),

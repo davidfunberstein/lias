@@ -147,6 +147,23 @@ def parties_location_from_path(local_path: str) -> tuple:
         tail = body[-1].rsplit(" - ", 1)[-1].strip() if " - " in body[-1] else ""
         if tail and not re.search(r"\d", tail) and len(tail) <= 20:
             location = tail
+    if not parties:
+        try:
+            import json as _json
+            from LIAS.config import COURT_DOCS_DIR as _DOCS
+            _case_dir = _DOCS / __import__("pathlib").Path(local_path).parent
+            for _anc in (_case_dir, _case_dir.parent, _case_dir.parent.parent):
+                _ci = _anc / "case_info.json"
+                if _ci.exists():
+                    _info = _json.loads(_ci.read_text(encoding="utf-8"))
+                    for _pr in _info.get("parties", []):
+                        _nm = (_pr.get("name") or "").strip()
+                        if _nm:
+                            parties.append(_nm)
+                    location = location or _info.get("location") or _info.get("court") or ""
+                    break
+        except Exception:
+            pass
     return parties, location
 
 
@@ -163,6 +180,19 @@ def _case_cards(rows: list[dict]) -> list[dict]:
         })
         if not c["parties"] and r.get("local_path"):
             c["parties"], c["location"] = parties_location_from_path(r["local_path"])
+        if "portal_status" not in c and r.get("local_path"):
+            try:
+                import json as _json2
+                from LIAS.config import COURT_DOCS_DIR as _DOCS2
+                _cd = _DOCS2 / __import__("pathlib").Path(r["local_path"]).parent
+                for _a in (_cd, _cd.parent, _cd.parent.parent):
+                    _cp = _a / "case_info.json"
+                    if _cp.exists():
+                        c["portal_status"] = _json2.loads(
+                            _cp.read_text(encoding="utf-8")).get("status", "")
+                        break
+            except Exception:
+                pass
         c["docs"] += 1
         if (r.get("download_status") or "").upper() in ("ERROR", "FAILED") \
                 or "Failed" in (r.get("download_status") or ""):

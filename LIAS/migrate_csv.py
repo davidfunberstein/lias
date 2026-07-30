@@ -87,6 +87,26 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
     # EN: hierarchy = client / [case] / [sub_case]; flat folders are their own case.
     # HE: היררכיה = לקוח / [תיק] / [תת-תיק]; תיקייה שטוחה היא תיק בפני עצמו.
     client_name = parts[0]
+    # When the folder is a bare case number (no client subfolder), try to
+    # pull actual party names from case_info.json so the UI shows them.
+    if len(parts) == 1 or (len(parts) >= 1 and not any(
+            c in parts[0] for c in ("נ'", "נ׳", " - "))):
+        try:
+            import json as _json
+            _ci = case_dir / "case_info.json"
+            if not _ci.exists():
+                for _p in (case_dir.parent, case_dir.parent.parent):
+                    if (_p / "case_info.json").exists():
+                        _ci = _p / "case_info.json"; break
+            if _ci.exists():
+                _info = _json.loads(_ci.read_text(encoding="utf-8"))
+                _parties = _info.get("parties", [])
+                if len(_parties) >= 2:
+                    client_name = " נ' ".join(p.get("name", "") for p in _parties[:2])
+                elif _parties:
+                    client_name = _parties[0].get("name", client_name)
+        except Exception:
+            pass
     # ECA folders are client/"הוצאה לפועל"/case-number/... — drop the portal
     # segment so the case number is the REAL number, not the literal
     # "הוצאה לפועל" (which would collide across clients and merge them).

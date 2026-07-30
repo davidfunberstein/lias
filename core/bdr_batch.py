@@ -475,15 +475,20 @@ def _ask_client_dir(parties: list[str], downloads_base: Path,
 
 class BdrBatchRunner:
 
-    def __init__(self, page: Page, logger: "Logger | None" = None) -> None:
+    def __init__(self, page: Page, logger: "Logger | None" = None,
+                 on_case_done: "Callable[[Path, str], None] | None" = None,
+                 progress_cb: "Callable[[dict], None] | None" = None,
+                 should_cancel: "Callable[[str | None], bool] | None" = None) -> None:
         self.page = page
         self.logger = logger
-        # Populated during run() — maps case_number → BdrCase (for path building)
+        self._on_case_done = on_case_done
+        self._progress_cb = progress_cb
+        self._should_cancel = should_cancel
         self._case_data: dict[str, "BdrCase"] = {}
-        # Maps sub_id → SubCase (for summary)
         self._sub_cases: dict[str, "SubCase"] = {}
-        # Maps sub_id → absolute case_dir Path (populated in _process_sub_case)
         self._case_dirs: dict[str, Path] = {}
+        self._stats = {"done": 0, "total": 0, "failed": 0, "skipped": 0,
+                       "docs_downloaded": 0, "current_case": "", "current_name": ""}
 
     def _log(self, msg: str, level: str = "info") -> None:
         prefixed = f"[BDR Batch] {msg}"
@@ -491,6 +496,19 @@ class BdrBatchRunner:
             getattr(self.logger, level)(prefixed)
         else:
             print(prefixed)
+
+    def _fire_progress(self) -> None:
+        if self._progress_cb:
+            try:
+                self._progress_cb(dict(self._stats))
+            except Exception:
+                pass
+
+    def _set_case_status(self, sub_id: str, status: str) -> None:
+        for c in self._stats.get("cases_detail", []):
+            if c["id"] == sub_id:
+                c["status"] = status
+                break
 
     # ── Public entry ──────────────────────────────────────────────────────────
 
@@ -728,17 +746,38 @@ class BdrBatchRunner:
         except (OSError, ValueError):
             pass  # SIGTERM may not be settable on all platforms
 
+        self._stats["total"] = len(all_sub_cases)
+        self._stats["cases_detail"] = [
+            {"id": sc.sub_id, "name": sc.procedure, "court": sc.court,
+             "status": "pending"} for sc in all_sub_cases]
+        self._fire_progress()
+
         try:
-            for sc in all_sub_cases:
-                # Skip cases that succeeded in a previous run
+            for idx, sc in enumerate(all_sub_cases):
+                if self._should_cancel and self._should_cancel(None):
+                    self._log("הופסק על ידי המשתמש")
+                    break
+                if self._should_cancel and self._should_cancel(sc.sub_id):
+                    self._log(f"תיק {sc.sub_id} נדלג לבקשת המשתמש")
+                    self._stats["skipped"] += 1
+                    self._set_case_status(sc.sub_id, "skipped")
+                    continue
                 prev_status = session_progress._rows.get(sc.sub_id, {}).get("סטטוס", "")
                 if prev_status in ("הצלחה", "הצלחה חלקית"):
                     self._log(f"דולג (כבר הושלם): {sc.sub_id}")
+                    self._stats["skipped"] += 1
+                    self._set_case_status(sc.sub_id, "done")
                     continue
                 cd = sc_couple.get(sc.sub_id)
                 if not cd:
                     self._log(f"אין תיקיית זוג עבור {sc.sub_id} — מדלג.", "warn")
+                    self._stats["skipped"] += 1
+                    self._set_case_status(sc.sub_id, "skipped")
                     continue
+                self._stats["current_case"] = sc.sub_id
+                self._stats["current_name"] = sc.procedure
+                self._set_case_status(sc.sub_id, "downloading")
+                self._fire_progress()
                 self._process_sub_case(
                     sc, cd, session_settings, session_progress,
                     root_output_dir=root_output_dir,
@@ -1085,6 +1124,19 @@ class BdrBatchRunner:
             f"  {sc.sub_id} — {len(downloaded)} חדשים, {len(re_downloaded)} מחדש, "
             f"{len(failed)} נכשלו | hash={portal_hash}"
         )
+
+        self._stats["done"] += 1
+        self._stats["docs_downloaded"] += len(downloaded) + len(re_downloaded)
+        if failed:
+            self._stats["failed"] += 1
+        self._set_case_status(sc.sub_id, "failed" if failed and not downloaded else "done")
+        self._fire_progress()
+
+        if self._on_case_done:
+            try:
+                self._on_case_done(case_dir, sc.sub_id)
+            except Exception as _cb_err:
+                self._log(f"  on_case_done callback error: {_cb_err}", "warn")
 
         # ── Write parent-level sub-case summary ───────────────────────────────
         # e.g. 1355021 - פתח תקוה / parent_summary — 1355021 - פתח תקוה.csv
