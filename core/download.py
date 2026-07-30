@@ -227,6 +227,14 @@ def extract_case_folder_name(full_case_name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", s)[:40].strip()
 
 
+def _normalize_party(name: str) -> str:
+    """Strip legal suffixes like ואח', בע"מ, etc. from a party name."""
+    s = name.strip()
+    s = re.sub(r"\s+ואח['׳’]?\s*$", "", s)
+    s = re.sub(r"\s+בע[\"״]מ\s*$", "", s)
+    return s.strip()
+
+
 def resolve_smart_paths(
     choices: list[str],
     formatted_case_name: str,
@@ -245,6 +253,8 @@ def resolve_smart_paths(
 
     downloads_base = ROOT_OUTPUT_DIR / "downloads"
     downloads_base.mkdir(parents=True, exist_ok=True)
+
+    choices = [_normalize_party(c) for c in choices]
 
     cleaned_choices = [c.strip() for c in choices if c and c.strip()]
     final_party_dir: Path | None = None
@@ -271,27 +281,6 @@ def resolve_smart_paths(
                 if safe_full.exists():
                     return safe_full
 
-    # ── Phase 1: Folder matching ALL parties (couple folder) ─────────────────
-    if len(cleaned_choices) >= 2:
-        all_words = []
-        for side in cleaned_choices:
-            all_words.extend(
-                [w for w in re.findall(r"[א-ת]{2,}", side) if len(w) > 1]
-            )
-        if all_words:
-            for existing_dir in downloads_base.iterdir():
-                if existing_dir.is_dir():
-                    clean_dir = existing_dir.name.replace("_", " ")
-                    if all(w in clean_dir for w in all_words):
-                        final_party_dir = existing_dir
-                        if _logger:
-                            _logger.info(
-                                f"[Smart Path] All-parties match: '{final_party_dir.name}'"
-                            )
-                        break
-
-    # ── Phase 2: Single-party match — exclude folders with foreign names ─────
-    # "Foreign" = Hebrew words in folder that belong to NONE of the current parties
     _STOP_HE = {
         "של", "כן", "את", "עם", "לא", "הם", "אל", "על", "כי",
         "בית", "דין", "נייר", "משפט", "תיק",
@@ -299,15 +288,40 @@ def resolve_smart_paths(
         "הסדרי", "כריכה", "אפוטרופוס", "מינוי", "גיטין", "סידורי",
         "פתח", "תקוה", "ירושלים", "תלאביב", "גדול", "קטן", "רחובות",
         "נתניה", "חיפה", "אשדוד", "בת", "ים", "רמת", "גן",
+        "ואח", "בע",
     }
-    if not final_party_dir:
-        # Build the set of all Hebrew words that belong to this case's parties
-        all_our_he_words: set[str] = set()
-        for side in cleaned_choices:
-            all_our_he_words.update(
-                w for w in re.findall(r"[א-ת]{2,}", side) if len(w) > 1
-            )
+    all_our_he_words: set[str] = set()
+    for side in cleaned_choices:
+        all_our_he_words.update(
+            w for w in re.findall(r"[א-ת]{2,}", side) if len(w) > 1
+        )
 
+    # ── Phase 1: Folder matching ALL parties (couple folder) ─────────────────
+    if len(cleaned_choices) >= 2:
+        all_words = list(all_our_he_words)
+        if all_words:
+            for existing_dir in downloads_base.iterdir():
+                if existing_dir.is_dir():
+                    clean_dir = existing_dir.name.replace("_", " ")
+                    if not all(w in clean_dir for w in all_words):
+                        continue
+                    folder_he = {
+                        w for w in re.findall(r"[א-ת]{2,}", clean_dir)
+                        if len(w) > 1
+                    }
+                    foreign = folder_he - all_our_he_words - _STOP_HE
+                    if foreign:
+                        continue
+                    final_party_dir = existing_dir
+                    if _logger:
+                        _logger.info(
+                            f"[Smart Path] All-parties match: '{final_party_dir.name}'"
+                        )
+                    break
+
+    # ── Phase 2: Single-party match — exclude folders with foreign names ─────
+    # "Foreign" = Hebrew words in folder that belong to NONE of the current parties
+    if not final_party_dir:
         for side in cleaned_choices:
             party_he_words = [
                 w for w in re.findall(r"[א-ת]{2,}", side) if len(w) > 1
@@ -1039,3 +1053,85 @@ def run_download(page: Page, connection_type: any, output_dir: Path | None = Non
         run_bdr_download(page, output_dir)
     elif connection_type.name == "NET":
         run_net_download(page, output_dir)
+
+
+# ---------------------------------------------------------------------------
+# Folder reorganization — group cases by party names
+# ---------------------------------------------------------------------------
+
+def _party_key(names: list[str]) -> str:
+    """Canonical key for a set of parties, order-independent."""
+    normed = sorted(set(_normalize_party(n) for n in names if n.strip()))
+    return " | ".join(normed)
+
+
+def reorganize_downloads(logger=None) -> dict:
+    """Move flat case folders into party-grouped parent folders.
+
+    Batch approach: reads ALL case_info.json first, groups by normalized
+    party set, then moves each group under a single parent folder."""
+    import json as _json, shutil
+
+    downloads = ROOT_OUTPUT_DIR / "downloads"
+    if not downloads.exists():
+        return {"moved": 0, "skipped": 0, "errors": []}
+
+    # Phase 1: collect case info from flat case dirs
+    groups: dict[str, list[tuple[Path, list[str]]]] = {}
+    skipped = 0
+    for case_dir in sorted(downloads.iterdir()):
+        if not case_dir.is_dir() or case_dir.parent != downloads:
+            continue
+        ci_path = case_dir / "case_info.json"
+        if not ci_path.exists():
+            skipped += 1
+            continue
+        try:
+            info = _json.loads(ci_path.read_text(encoding="utf-8"))
+        except Exception:
+            skipped += 1
+            continue
+        parties_raw = info.get("parties", [])
+        names = [p.get("name", "").strip() for p in parties_raw if p.get("name", "").strip()]
+        if not names:
+            skipped += 1
+            continue
+        key = _party_key(names)
+        groups.setdefault(key, []).append((case_dir, names))
+
+    # Phase 2: for each group, choose a folder name and move
+    moved = 0
+    errors: list[str] = []
+    for key, cases in groups.items():
+        if len(cases) < 1:
+            continue
+        names = [_normalize_party(n) for n in cases[0][1]]
+        if len(names) >= 2:
+            folder_name = " - ".join(names[:2])
+        else:
+            folder_name = names[0] if names else "General"
+        safe_folder = re.sub(r'[\\/*?:"<>|]', "-", folder_name).strip()
+        parent = downloads / safe_folder
+        parent.mkdir(parents=True, exist_ok=True)
+        for case_dir, _ in cases:
+            dest = parent / case_dir.name
+            if dest.exists():
+                for item in case_dir.iterdir():
+                    d = dest / item.name
+                    if not d.exists():
+                        shutil.move(str(item), str(d))
+                try:
+                    case_dir.rmdir()
+                except OSError:
+                    pass
+            else:
+                try:
+                    shutil.move(str(case_dir), str(dest))
+                except Exception as e:
+                    errors.append(f"{case_dir.name}: {e}")
+                    continue
+            if logger:
+                logger.info(f"[Reorg] {case_dir.name} → {safe_folder}/{case_dir.name}")
+            moved += 1
+
+    return {"moved": moved, "skipped": skipped, "errors": errors}

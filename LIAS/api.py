@@ -664,6 +664,17 @@ def act_net_download_all(years_back: int = 20):
     return {"job_id": jobs.submit("net_download_all", {"years_back": years_back})}
 
 
+@app.post("/api/actions/reorganize_folders")
+def act_reorganize_folders():
+    """Move flat case folders into party-grouped parent folders, then re-import."""
+    from core.download import reorganize_downloads
+    result = reorganize_downloads()
+    if result.get("moved"):
+        from LIAS.migrate_csv import migrate
+        migrate()
+    return result
+
+
 @app.post("/api/actions/delete_case")
 def act_delete_case(sub_case_id: int):
     return {"job_id": jobs.submit("delete_case", {"sub_case_id": sub_case_id})}

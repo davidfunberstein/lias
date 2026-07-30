@@ -536,7 +536,7 @@ def run_bulk_download_from_date_search(
     from core.net_scraper import NetScraper
     from core.manifest import ManifestManager, get_summary_csv_path
     from core.sync_history import SyncHistory, compute_net_hash, dates_from_net_metadata
-    from core.download import extract_case_folder_name, _append_net_to_global_summary
+    from core.download import extract_case_folder_name, resolve_smart_paths, _append_net_to_global_summary
 
     today = datetime.now()
     from_dt = today - timedelta(days=years_back * 365)
@@ -629,8 +629,21 @@ def run_bulk_download_from_date_search(
         case_dir_name = extract_case_folder_name(raw_case_name)
         if not case_dir_name:
             case_dir_name = re.sub(r'[\\/*?:"<>|]', "", f"{display_id} — {case_name_hint}").strip()
-        case_dir = downloads_dir / case_dir_name
-        case_dir.mkdir(parents=True, exist_ok=True)
+        # Group under party folder using resolve_smart_paths
+        _cn = case_info.get("CaseName", "")
+        _parties_list = []
+        if _cn:
+            _parts = re.split(r"\s+נ['׳’]\s+", _cn)
+            _parties_list = [p.strip() for p in _parts if p.strip()]
+        if _parties_list:
+            try:
+                case_dir = resolve_smart_paths(_parties_list, case_dir_name, lawyer_mode=True)
+            except Exception:
+                case_dir = downloads_dir / case_dir_name
+                case_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            case_dir = downloads_dir / case_dir_name
+            case_dir.mkdir(parents=True, exist_ok=True)
 
         _save_net_case_info(case_dir, case_info, raw_case_name)
 
