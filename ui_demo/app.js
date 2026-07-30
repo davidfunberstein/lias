@@ -510,6 +510,18 @@ async function refresh(force){
     }
     if(!D || route.v==='home' || route.v==='sync'){
       D = await (await fetch('/api/dashboard')).json();
+      // Merge portal-derived case status into localStorage so all views pick it up
+      try {
+        const sm = caseStatusMap();
+        let changed = false;
+        for (const c of (D.case_cards || [])) {
+          if (c.portal_status && !sm[c.sub_case_id]) {
+            sm[c.sub_case_id] = /סגור|closed/i.test(c.portal_status) ? 'closed' : 'open';
+            changed = true;
+          }
+        }
+        if (changed) localStorage.setItem('lias_case_status', JSON.stringify(sm));
+      } catch(_) {}
     }
     if(!isPro(curUser()) && !route.id && D?.clients?.length && !C){
       C = await (await fetch(`/api/client/${D.clients[0].client_id}`)).json();

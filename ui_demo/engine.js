@@ -112,19 +112,24 @@ async function startEngine(){
 const PORTAL_JOB_KINDS = ['net_smart_download','net_download_all','net_sync_selected',
   'bdr_batch','bdr_sync_current','bdr_list','eca_sync','eca_list','net_list'];
 const PORTAL_JOB_LABEL = {net:'נט המשפט', bdr:'בית הדין הרבני', eca:'הוצאה לפועל'};
-async function portalBusy(){
+async function portalBusy(forPortal){
   try{
     const jobs = await (await fetch('/api/jobs?limit=25')).json();
-    const running = (jobs||[]).find(j=>['RUNNING','PENDING'].includes(j.state)
+    const running = (jobs||[]).filter(j=>['RUNNING','PENDING'].includes(j.state)
                                        && PORTAL_JOB_KINDS.includes(j.kind));
-    return running ? (PORTAL_JOB_LABEL[(running.kind||'').split('_')[0]]||running.kind) : '';
+    if(forPortal){
+      const mine = running.find(j=>(j.kind||'').split('_')[0].toUpperCase()===forPortal);
+      return mine ? (PORTAL_JOB_LABEL[(mine.kind||'').split('_')[0]]||mine.kind) : '';
+    }
+    const first = running[0];
+    return first ? (PORTAL_JOB_LABEL[(first.kind||'').split('_')[0]]||first.kind) : '';
   }catch(_){ return ''; }
 }
-async function ensureNoPortalRunning(){
-  const busy = await portalBusy();
+async function ensureNoPortalRunning(portal){
+  const p = (portal||'').toUpperCase();
+  const busy = await portalBusy(p);
   if(busy){
-    toast(`כרגע רצה פעולה ב${busy} — אי אפשר לעבוד על שני פורטלים במקביל. `
-          +`המתן לסיום ואז נסה שוב.`, true);
+    toast(`כרגע רצה פעולה ב${busy} — המתן לסיום ואז נסה שוב.`, true);
     return false;
   }
   return true;
@@ -138,31 +143,30 @@ async function ensureNoPortalRunning(){
 let _portalLockTimer=null, _portalLockBusy='';
 async function refreshPortalLock(){
   const bar=$('sync-platforms'); if(!bar) return;   // not on the sync screen
-  let running='';
+  let runningPortals=new Set();
   try{
     const jobs = await (await fetch('/api/jobs?limit=25')).json();
-    const j = (jobs||[]).find(x=>['RUNNING','PENDING'].includes(x.state)
-                                 && PORTAL_JOB_KINDS.includes(x.kind));
-    running = j ? (j.kind||'').split('_')[0].toUpperCase() : '';
-  }catch(_){ running=''; }
-  _portalLockBusy = running;
+    (jobs||[]).filter(x=>['RUNNING','PENDING'].includes(x.state)
+                                 && PORTAL_JOB_KINDS.includes(x.kind))
+              .forEach(j=>runningPortals.add((j.kind||'').split('_')[0].toUpperCase()));
+  }catch(_){}
+  _portalLockBusy = [...runningPortals].join(',');
   const note=$('portal-lock-note');
   ['NET','BDR','ECA'].forEach(p=>{
     const b=$('plat-'+p); if(!b) return;
-    const blocked = !!running && running!==p;
+    const blocked = runningPortals.has(p);
     b.disabled = blocked;
     b.style.opacity       = blocked ? '.45' : '';
     b.style.filter        = blocked ? 'grayscale(1)' : '';
     b.style.pointerEvents = blocked ? 'none' : '';
     b.style.cursor        = blocked ? 'not-allowed' : '';
-    b.title = blocked ? `לא זמין — מתבצעת כעת פעולה ב${PORTAL_LABELS[running]||running}` : '';
+    b.title = blocked ? `פעולה רצה כעת — המתן לסיום` : '';
   });
   if(note){
-    if(running){
+    if(runningPortals.size){
+      const labels = [...runningPortals].map(p=>PORTAL_LABELS[p]||p).join(' + ');
       note.style.display='block';
-      note.innerHTML = `🔒 מתבצעת כעת פעולה ב<b>${PORTAL_LABELS[running]||running}</b>. `
-        + `שאר הפורטלים חסומים עד שהיא תסתיים — לא ניתן להוריד או לבקש תיקים `
-        + `משני פורטלים במקביל.`;
+      note.innerHTML = `🔒 מתבצעת כעת פעולה ב<b>${labels}</b>. פורטלים אחרים זמינים להורדה במקביל.`;
     } else note.style.display='none';
   }
 }
@@ -584,7 +588,7 @@ let _realBrowserVisible=false;
    IDENTICAL flow to NET and ECA — no client-name prompt, nothing configurable
    on this screen (scope + user-mode come from Settings ⚙). */
 async function bdrConnectAndList(){
-  if(!await ensureNoPortalRunning()) return;
+  if(!await ensureNoPortalRunning('BDR')) return;
   toast('מתחבר לבית הדין הרבני ושולף תיקים…');
   logEvent('→ התחברות והצגת תיקי בד"ר');
   const picker=$('sync-case-picker');
@@ -593,7 +597,7 @@ async function bdrConnectAndList(){
   act('bdr_list','חיבור והצגת תיקי בד"ר');
 }
 async function runBdrBatch(client_filter, cases, sub_cases){
-  if(!await ensureNoPortalRunning()) return;
+  if(!await ensureNoPortalRunning('BDR')) return;
   client_filter = client_filter || '';
   const n = (cases||[]).length, m = (sub_cases||[]).length;
   toast(n||m ? `מוריד ${n?n+' תיקים':''}${n&&m?' · ':''}${m?m+' תת-תיקים':''}…`
@@ -637,7 +641,7 @@ function _isDownloaded(num, sessionSet){
   return _serverDownloaded.has(n) || (sessionSet && sessionSet.has(num));
 }
 async function ecaConnectAndList(){
-  if(!await ensureNoPortalRunning()) return;
+  if(!await ensureNoPortalRunning('ECA')) return;
   toast('מתחבר להוצאה לפועל ושולף תיקים…');
   logEvent('→ התחברות והצגת תיקי הוצל"פ');
   const picker=$('sync-case-picker');
@@ -709,7 +713,7 @@ function _selectAllEca(v){ document.querySelectorAll('.eca-cb').forEach(cb=>cb.c
 async function runEcaSelected(){
   const picked = [...document.querySelectorAll('.eca-cb:checked')].map(cb=>_ecaCases[+cb.dataset.i].number);
   if(!picked.length){ toast('לא סומן אף תיק', true); return; }
-  if(!await ensureNoPortalRunning()) return;
+  if(!await ensureNoPortalRunning('ECA')) return;
   const all = picked.length===_ecaCases.length;
   toast(all?'מוריד את כל תיקי ההוצל"פ…':`מוריד ${picked.length} תיקי הוצל"פ…`);
   logEvent('→ הורדת הוצל"פ ('+(all?'הכל':picked.join(', '))+')');
@@ -1141,7 +1145,7 @@ function runBdrSelected(){
   const picker=$('sync-case-picker'); if(picker) picker.style.display='none';
 }
 async function runNet(){
-  if(!await ensureNoPortalRunning()) return;
+  if(!await ensureNoPortalRunning('NET')) return;
   const s = window._settings || {};
   const scope = _syncScopeChoice || s.net_scope || 'selected';
   if(scope==='all'){
@@ -1161,7 +1165,7 @@ async function checkCaseByNumber(portal){
   if(portal==='NET'){ openNetCase(true); return; }
   const num=($('nc-num')?.value||'').trim();
   if(!num){ toast('נא להזין מספר תיק', true); return; }
-  if(!await ensureNoPortalRunning()) return;
+  if(!await ensureNoPortalRunning(portal)) return;
   if(portal==='ECA'){
     // ONE request. This used to fire act('eca_sync') (no body → download every
     // case) and immediately a second eca_sync for this case; the first grabbed
@@ -1200,7 +1204,7 @@ function showLoginRetry(kind, err){
   document.body.appendChild(d);
 }
 async function startNetDownload(){
-  if(!await ensureNoPortalRunning()) return;
+  if(!await ensureNoPortalRunning('NET')) return;
   toast('מתחבר לנט המשפט ומחפש תיקים…');
   act('net_list_cases','חיפוש תיקים בנט');
 }
@@ -1243,7 +1247,7 @@ function _confirmNetCases(){
   _startSmartDownload(mode, selected);
 }
 async function _startSmartDownload(mode, cases){
-  if(!await ensureNoPortalRunning()) return;
+  if(!await ensureNoPortalRunning('NET')) return;
   if(!D?.live){
     const ok = await startEngine();
     if(!ok){ toast('המנוע לא עלה — לא ניתן להוריד', true); return; }
@@ -1435,7 +1439,7 @@ function ncCount(){
 async function syncPickedCases(){
   const picked = [...document.querySelectorAll('.nc-pick:checked')].map(el=>window._netCases[+el.dataset.i]);
   if(!picked.length){ toast('לא סומן אף תיק', true); return; }
-  if(!await ensureNoPortalRunning()) return;
+  if(!await ensureNoPortalRunning('NET')) return;
   const items = [];
   for(const c of picked){
     const did = (c.CaseDisplayIdentifier||c.display_id||'').trim();

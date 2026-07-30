@@ -551,7 +551,13 @@ def open_portal(payload: dict, ctx: JobContext) -> str:
 # other. So every portal-bound command takes this lock — downloads AND listings.
 # It is an RLock so a handler that runs several portal commands in sequence on
 # its own thread is unaffected; only *other* jobs are held out.
-_PORTAL_BUSY = threading.RLock()
+_PORTAL_LOCKS = {
+    "NET": threading.RLock(),
+    "BDR": threading.RLock(),
+    "ECA": threading.RLock(),
+}
+_PORTAL_BUSY_ALL: dict[str, dict] = {}
+_PORTAL_BUSY = threading.RLock()  # kept for portal_busy_with compat
 _PORTAL_BUSY_WHO: dict = {"label": "", "since": 0.0, "portal": "", "job": None,
                           "cmd": ""}
 
@@ -559,24 +565,34 @@ PORTAL_LABELS_HE = {"NET": 'נט המשפט', "BDR": 'בית הדין הרבני
 
 
 def portal_busy_detail() -> dict:
-    """Who holds the portal lock, and for how long — for the UI and the log.
-
-    A stuck holder was completely invisible: the log showed the browser
-    starting and then only "portal is busy" for every later click, with nothing
-    naming the operation that never finished."""
+    """Who holds portal locks, and for how long — for the UI and the log."""
     import time as _t
-    since = _PORTAL_BUSY_WHO.get("since") or 0.0
-    return {"label": _PORTAL_BUSY_WHO.get("label", ""),
-            "portal": _PORTAL_BUSY_WHO.get("portal", ""),
-            "job": _PORTAL_BUSY_WHO.get("job"),
-            "cmd": _PORTAL_BUSY_WHO.get("cmd", ""),
-            "held_sec": int(_t.time() - since) if since else 0}
+    if _PORTAL_BUSY_ALL:
+        items = []
+        for p, info in _PORTAL_BUSY_ALL.items():
+            since = info.get("since") or 0.0
+            items.append({"label": info.get("label", ""),
+                          "portal": p,
+                          "job": info.get("job"),
+                          "cmd": info.get("cmd", ""),
+                          "held_sec": int(_t.time() - since) if since else 0})
+        first = items[0]
+        first["concurrent"] = items
+        return first
+    return {"label": "", "portal": "", "job": None, "cmd": "", "held_sec": 0}
 
 
 def portal_busy_with() -> str:
-    """Label of the portal operation currently running ('' when nothing runs).
-    Read by the UI so it can grey out the other portals' sync buttons."""
-    return _PORTAL_BUSY_WHO.get("label", "")
+    """Labels of portal operations currently running.
+    Read by the UI so it can grey out busy portals' sync buttons."""
+    if not _PORTAL_BUSY_ALL:
+        return ""
+    return ", ".join(info.get("label", "") for info in _PORTAL_BUSY_ALL.values())
+
+
+def portal_busy_portals() -> list[str]:
+    """List of portal names currently busy (e.g. ['NET', 'BDR'])."""
+    return list(_PORTAL_BUSY_ALL.keys())
 
 
 def _run_portal(ctx: JobContext, name: str, fn, timeout: int):
@@ -593,38 +609,36 @@ def _run_portal(ctx: JobContext, name: str, fn, timeout: int):
 
     portal = name.split("_")[0].upper()
     label = PORTAL_LABELS_HE.get(portal, name)
+    lock = _PORTAL_LOCKS.get(portal, _PORTAL_LOCKS.get("NET"))
 
-    same_portal = (_PORTAL_BUSY_WHO.get("portal") == portal)
+    prev = _PORTAL_BUSY_ALL.get(portal)
+    if prev:
+        ctx.progress(0.02, f"ממתין לסיום הפעולה הקודמת ב{label}…")
+
     wait = min(timeout, 3600)
-
-    if not same_portal and _PORTAL_BUSY_WHO.get("portal"):
-        busy = PORTAL_LABELS_HE.get(_PORTAL_BUSY_WHO["portal"],
-                                     _PORTAL_BUSY_WHO.get("label", ""))
-        ctx.progress(0.01, f"ממתין לסיום הורדה מ{busy} — {label} בתור…")
-        jobs.broadcast({"type": "job", "job_id": getattr(ctx, 'job_id', 0),
-                        "message": f"{label} בתור — ממתין לסיום פעולה ב{busy}"})
-
-    if not _PORTAL_BUSY.acquire(timeout=wait):
-        busy = _PORTAL_BUSY_WHO.get("label") or "פורטל אחר"
-        held = _t.time() - (_PORTAL_BUSY_WHO.get("since") or _t.time())
+    if not lock.acquire(timeout=wait):
+        prev = _PORTAL_BUSY_ALL.get(portal, {})
+        who = prev.get("cmd", "")
+        job = prev.get("job")
+        held = _t.time() - (prev.get("since") or _t.time())
         mins = int(held // 60)
-        who = _PORTAL_BUSY_WHO.get("cmd") or ""
-        job = _PORTAL_BUSY_WHO.get("job")
         detail = (f" (משימה {job}: {who}, כבר {mins} דקות)" if job and mins
                   else f" ({who})" if who else "")
         raise RuntimeError(
-            f"הפעולה ב{busy}{detail} עדיין רצה ולא הסתיימה. "
+            f"הפעולה ב{label}{detail} עדיין רצה ולא הסתיימה. "
             f"פתח את חלון המשימות ⏱ ועצור אותה, או הפעל מחדש את המנוע.")
 
-    if same_portal and _PORTAL_BUSY_WHO.get("since"):
-        ctx.progress(0.02, f"ממתין לסיום הפעולה הקודמת ב{label}…")
-    _PORTAL_BUSY_WHO.update(label=label, portal=portal, since=_t.time(),
-                            job=getattr(ctx, "job_id", None), cmd=name)
+    info = {"label": label, "portal": portal, "since": _t.time(),
+            "job": getattr(ctx, "job_id", None), "cmd": name}
+    _PORTAL_BUSY_ALL[portal] = info
+    _PORTAL_BUSY_WHO.update(**info)
     try:
         return _run_portal_locked(ctx, name, fn, timeout)
     finally:
-        _PORTAL_BUSY_WHO.update(label="", portal="", since=0.0, job=None, cmd="")
-        _PORTAL_BUSY.release()
+        _PORTAL_BUSY_ALL.pop(portal, None)
+        if _PORTAL_BUSY_WHO.get("portal") == portal:
+            _PORTAL_BUSY_WHO.update(label="", portal="", since=0.0, job=None, cmd="")
+        lock.release()
 
 
 def _run_portal_locked(ctx: JobContext, name: str, fn, timeout: int):
