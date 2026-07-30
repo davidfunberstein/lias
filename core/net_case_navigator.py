@@ -178,12 +178,15 @@ def navigate_to_case_by_number(
                 except Exception:
                     time.sleep(3)
 
-            # Open "my cases" page so the case locator header becomes visible
-            try:
-                from core.net_search_cases import navigate_to_my_cases
-                navigate_to_my_cases(page)
-            except Exception as nav_exc:
-                _log(f"  Could not navigate to my-cases: {nav_exc}")
+            # The header search should be available on PersonalAreaPage already.
+            # Only fall back to the heavy "התיקים שלי" if fields still missing.
+            time.sleep(1.5)
+            if not _locator_fields_ready():
+                try:
+                    from core.net_search_cases import navigate_to_my_cases
+                    navigate_to_my_cases(page)
+                except Exception as nav_exc:
+                    _log(f"  Could not navigate to my-cases: {nav_exc}")
 
         # Re-resolve selectors (secured portal uses 'header_' prefix)
         my_sel  = _resolve_sel(_BASE_MY)

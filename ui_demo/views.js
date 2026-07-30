@@ -436,7 +436,7 @@ function renderCase(){
     <div class="sub" style="margin-top:6px">${K?`לקוח: <b>${(D?.clients||[]).find(c=>c.client_id===K.client_id)?.display_name||'—'}</b>
       · ערכאה: <b>${K.arkaa}</b> · פורטל: <b>${K.portal}</b>
       · מסמך ראשון: <b>${K.first_date||'—'}</b> · מסמך אחרון: <b>${K.last_date||'—'}</b>
-      ${K.last_sync?` · 🔄 סונכרן מול הפורטל: <b>${(K.last_sync.at||'').replace('T',' ').slice(0,16)}</b>${K.last_sync.new?` (+${K.last_sync.new} חדשים)`:''}`:' · <span style="opacity:.6">טרם סונכרן ישירות</span>'}
+      ${K.last_sync?` · 🔄 סונכרן מול הפורטל: <b>${(K.last_sync.at||'').replace('T',' ').slice(0,16)}</b>${K.last_sync.new?` (+${K.last_sync.new} מסמכים חדשים)`:''}`:' · <span style="opacity:.6">טרם סונכרן ישירות</span>'}
       · סה״כ: <b>${nf.format(K.total)}</b> מסמכים
       (${['בקשה','תגובה','החלטה','פסק דין','פרוטוקול'].map(g=>`${g}: ${K.stats?.[g]??0}`).join(' · ')})`:''}</div></div>
   <div class="grid">

@@ -63,6 +63,7 @@ class NetScraper:
     def __init__(self, page: Page, logger: "Logger | None" = None) -> None:
         self.page = page
         self.logger = logger
+        self._page_was_reloaded = False
         # Native JS alert/confirm dialogs block Playwright clicks entirely —
         # auto-accept them so an unavailable-document alert never hangs the run.
         try:
@@ -193,6 +194,7 @@ class NetScraper:
                 # Step 2: modal still stuck → reload the page to clear the overlay
                 if not dismissed:
                     self._log("Popup stuck after אישור — reloading page to clear overlay.", "warn")
+                    self._page_was_reloaded = True
                     try:
                         self.page.reload(wait_until="domcontentloaded", timeout=20000)
                         time.sleep(2)
@@ -461,13 +463,16 @@ class NetScraper:
                                 self._log(f"Attachment download error for {doc_id}: {_ae}", "warn")
 
                     except _DocumentNotAvailable:
-                        # Popup was already dismissed by _check_unavailable_popup above
                         status = "Missing"
                         record = {**base_record, "שם קובץ מקורי (מהשרת)": target_filename, "סטטוס הורדה": status}
                         manifest.upsert(record)
                         failed.append(record)
                         self._log(f"[{global_num}] MISSING (מסמך אינו זמין) → {target_filename}", "warn")
                         print(f"  ⚠ מסמך אינו זמין: {target_filename}")
+                        if self._page_was_reloaded:
+                            self._log("Page was reloaded — stopping this page, will re-navigate.", "warn")
+                            self._page_was_reloaded = False
+                            return processed + 1, downloaded, failed
 
                     except Exception as e:
                         # Check for popup that may have appeared after the download timeout
