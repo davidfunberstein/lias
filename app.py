@@ -600,7 +600,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(raw or b"{}")
         except ValueError:
             payload = {}
-        if path == "/api/govil/save":
+        if path == "/api/govil/logout":
+            import json as _jgl
+            code, body, _ = engine_inproc.request(
+                "POST", "/api/actions/govil_logout", _jgl.dumps({}).encode())
+            self._send(code, body, "application/json")
+        elif path == "/api/govil/save":
             self._json(_govil_save(payload))
         elif path == "/api/email/save":
             self._json(_email_save(payload))

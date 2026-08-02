@@ -82,6 +82,14 @@ async function openSettings(){
   setTimeout(refreshSetupMarks, 1200);
 }
 function _syncNetRelated(){ /* scope now lives on the sync screen */ }
+async function govilLogout(){
+  if(!confirm('לנתק את הסשן מ-gov.il?\nבפעם הבאה שתריץ הורדה המערכת תבקש להתחבר מחדש.')) return;
+  try{
+    const r = await fetch('/api/govil/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    if(r.ok) toast('ניתוק מ-gov.il — הכניסה הבאה תהיה מחדש ✓');
+    else toast('שגיאה בניתוק', true);
+  }catch(e){ toast('שגיאה: '+e.message, true); }
+}
 function toggleEmailBox(){
   const box=$('email-box'); if(!box) return;
   box.style.display = ($('g-otp')?.value==='sms') ? 'none' : 'block';

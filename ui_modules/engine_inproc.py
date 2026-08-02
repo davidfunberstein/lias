@@ -123,7 +123,7 @@ def start() -> dict:
         _state.update(started=True, starting=False, client=client,
                       browser=browser, bdr=bdr_browser, eca=eca_browser,
                       pool=pool, err="")
-        print("[engine] in-process engine up — port 8400 is GONE")
+        print("[engine] in-process engine up")
         return {"ok": True, "starting": True}
     except Exception as exc:  # pragma: no cover
         # A missing dependency cannot fix itself, but request() calls start()

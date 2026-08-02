@@ -516,6 +516,35 @@ def eca_sync(payload: dict, ctx: JobContext) -> str:
     return f"{result} · {n} מסמכים בדשבורד"
 
 
+@handler("govil_logout")
+def govil_logout(payload: dict, ctx: JobContext) -> str:
+    """Clear gov.il session cookies so the next login prompt appears fresh.
+    Navigates to the gov.il logout URL and then clears all gov.il cookies from
+    the persistent profile so stored credentials are not reused automatically.
+    """
+    browser = ctx.browser
+    if browser is None:
+        raise RuntimeError("no browser attached")
+
+    def _do_logout(page):
+        try:
+            page.goto("https://login.gov.il/nidp/app/logout", wait_until="domcontentloaded", timeout=15000)
+        except Exception:
+            pass
+        try:
+            ctx_obj = page.context
+            all_cookies = ctx_obj.cookies()
+            govil_cookies = [c for c in all_cookies if "gov.il" in c.get("domain", "")]
+            if govil_cookies:
+                ctx_obj.clear_cookies()
+        except Exception as e:
+            print(f"[govil_logout] cookie clear: {e}")
+        return "logged out"
+
+    _run_portal(ctx, "govil_logout", _do_logout, timeout=30)
+    return "ניתוק מ-gov.il הושלם — ההתחברות הבאה תבקש פרטים מחדש"
+
+
 @handler("open_portal")
 def open_portal(payload: dict, ctx: JobContext) -> str:
     """Open the court portal in a visible Playwright browser with auto-login."""

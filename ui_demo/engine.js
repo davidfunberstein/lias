@@ -163,7 +163,11 @@ function _applyPortalLock(jobs){
     if(anyBusy){
       const labels = [...runningPortals].map(p=>PORTAL_LABELS[p]||p).join(' + ');
       note.style.display='block';
-      note.innerHTML = `🔒 מתבצעת כעת פעולה ב<b>${labels}</b>. יש להמתין לסיום לפני הורדה מפורטל אחר.`;
+      note.innerHTML = `🔒 מתבצעת כעת פעולה ב<b>${labels}</b>. יש להמתין לסיום לפני הורדה מפורטל אחר.`
+        + `&ensp;<button id="browser-toggle" onclick="toggleRealBrowser()" `
+        + `style="font-size:12px;padding:3px 10px;border-radius:8px;cursor:pointer;`
+        + `background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.35);color:inherit">`
+        + (_realBrowserVisible?'🙈 הסתר דפדפן':'🖥 הצג דפדפן')+'</button>';
     } else note.style.display='none';
   }
 }
@@ -370,6 +374,24 @@ function openNetCase(sync){
 
 /* ─── live engine events (SSE) ─── */
 let _es=null, _esTimer=null, _logBuf=[];
+function _showDoneBanner(msg){
+  // Prominent "session finished" banner — auto-dismisses after 8s
+  let b=document.getElementById('done-banner');
+  if(b) b.remove();
+  b=document.createElement('div'); b.id='done-banner';
+  b.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);'
+    +'z-index:9999;background:#1a7a4a;color:#fff;padding:14px 28px;border-radius:14px;'
+    +'font-size:16px;font-weight:700;box-shadow:0 4px 24px rgba(0,0,0,.4);'
+    +'display:flex;align-items:center;gap:12px;max-width:90vw;cursor:pointer';
+  b.innerHTML=`<span style="font-size:22px">✅</span><span>${msg}</span>`
+    +`<button onclick="document.getElementById('done-banner')?.remove()" `
+    +`style="background:rgba(255,255,255,.25);border:none;color:#fff;border-radius:8px;`
+    +`padding:2px 10px;cursor:pointer;margin-right:4px;font-size:13px">✕</button>`;
+  b.onclick=e=>{ if(e.target.tagName!=='BUTTON') b.remove(); };
+  document.body.appendChild(b);
+  setTimeout(()=>b.isConnected&&b.remove(), 8000);
+  try{ new Audio('data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAA==').play(); }catch(_){}
+}
 function logEvent(txt){
   _logBuf.unshift(new Date().toLocaleTimeString('he-IL')+'  '+txt);
   if(_logBuf.length>200) _logBuf.pop();
@@ -411,8 +433,9 @@ function connectEngineSSE(){
       }, 2000);
     }
     if(e.type==='portal_done'){
-      logEvent(`✅ ${e.message||((e.label||'')+' — ההורדה הסתיימה')}`);
-      toast(e.message||`הורדת ${e.label||''} הסתיימה ✓`);
+      const msg = e.message||`הורדת ${e.label||''} הסתיימה ✓`;
+      logEvent(`✅ ${msg}`);
+      _showDoneBanner(msg);
     }
     if(e.type==='job'){
       $('otp-box')?.remove();
@@ -706,6 +729,21 @@ function showEcaCases(cases){
   try{ localStorage.setItem('ecaCasesAll', JSON.stringify(_ecaCases)); }catch(_){}
   const picker=$('sync-case-picker'); if(!picker) return;
   if(!_ecaCases.length){ picker.style.display='none'; toast('לא נמצאו תיקי הוצל"פ', true); return; }
+  // In "download all" mode — show read-only progress list, no picker
+  if(_syncScopeChoice==='all'){
+    picker.style.display='block';
+    picker.innerHTML=`<div style="padding:8px 12px;background:rgba(47,125,246,.1);border-radius:10px;font-size:13px">
+      <b>מוריד ${_ecaCases.length} תיקי הוצל"פ</b> — אין צורך בבחירה
+      <div style="margin-top:6px;max-height:180px;overflow-y:auto">
+        ${_ecaCases.map(c=>`<div style="padding:3px 0;opacity:.8">· ${c.number||''} ${c.type||''}</div>`).join('')}
+      </div></div>`;
+    return;
+  }
+  // Remember ticks before re-render so a refreshDownloadedSet() callback
+  // doesn't wipe the user's selection.
+  const _wasChecked = new Set(
+    [...document.querySelectorAll('.eca-cb:checked')].map(cb=>cb.dataset.i));
+  const _hadPicker = picker.innerHTML.includes('eca-cb');
   // NOTE: the checkboxes carry data-i indexes into _ecaCases, so _ecaCases must
   // BE the rendered (filtered) list — otherwise a filtered picker downloads the
   // wrong cases. The unfiltered set stays in localStorage for the next open.
@@ -731,7 +769,7 @@ function showEcaCases(cases){
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:13px">${c.number}
             <span style="font-weight:400;opacity:.7">· ${c.type||''}</span>
-            ${_caseIsOpen(c)?'':' <span style="font-size:10px;opacity:.5">· סגור</span>'}
+            ${_statusChip(c.status||c.CaseStatusName, c.close_date, c.open_date)}
             ${done?' <span style="font-size:10px;color:var(--accent-strong,#7fb3ff)">· ✓ הורד</span>':''}</div>
           <div style="font-size:11.5px;opacity:.85;line-height:1.5">${_ecaPartiesLine(c)}</div>
         </div>
@@ -739,6 +777,11 @@ function showEcaCases(cases){
       </label>`;}).join('')}
     </div>
     <button class="btn-accent" style="width:100%;margin-top:10px;padding:12px" onclick="runEcaSelected()">⬇ הורד את המסומנים</button>`;
+  // restore ticks after re-render (only when picker already existed — first
+  // render keeps its default of "everything not yet downloaded")
+  if(_hadPicker){
+    document.querySelectorAll('.eca-cb').forEach(cb=>{ cb.checked=_wasChecked.has(cb.dataset.i); });
+  }
 }
 function _selectAllEca(v){ document.querySelectorAll('.eca-cb').forEach(cb=>cb.checked=v); }
 async function runEcaSelected(){
@@ -1164,12 +1207,19 @@ function _bdrSelectAll(v){
 }
 function _bdrSelectOpen(){
   document.querySelectorAll('.bdr-cb').forEach(cb=>{
-    const c=_bdrCases[+cb.dataset.i]; cb.checked = (c && c.status!=='סגור');
+    const c=_bdrCases[+cb.dataset.i];
+    cb.checked = !!(c && !_isCaseClosed(c));
   });
   document.querySelectorAll('.bdr-sub-cb').forEach(cb=>{
     const c=_bdrCases[+cb.dataset.i]; const s=(c&&c.sub_cases||[])[+cb.dataset.j];
-    cb.checked = !!(s && s.status!=='סגור');
+    cb.checked = !!(s && !_isCaseClosed(s));
   });
+}
+function _isCaseClosed(c){
+  if(!c) return false;
+  if(c.status==='סגור') return true;
+  // close_date present = closed (consistent with _statusChip)
+  return !!(c.close_date||'').trim();
 }
 /* checking a whole case checks all of its sub-cases */
 function _bdrToggleWhole(i, checked){
