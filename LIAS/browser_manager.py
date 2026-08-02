@@ -328,11 +328,13 @@ class BrowserManager:
                             self._log(f"[browser] restore failed / שחזור נכשל: {e}")
                     self._alive.set()
                     self._last_pong = time.time()
-                    self._serve(page)         # blocks until dead/quit / חוסם עד מוות/סגירה
                     try:
-                        ctx.close()
-                    except Exception:
-                        pass
+                        self._serve(page)     # blocks until dead/quit / חוסם עד מוות/סגירה
+                    finally:
+                        try:
+                            ctx.close()       # always close context on exit / סגירה תמיד
+                        except Exception:
+                            pass
                 if self._stop.is_set():
                     return
             except Exception as _exc:
