@@ -80,6 +80,25 @@ def _detect_portal(case_dir: Path) -> str:
     return "NET"
 
 
+import re as _re
+
+def is_me(name: str, lawyer_words: set[str]) -> bool:
+    nw = set(_re.findall(r"[א-ת]{2,}", name))
+    return bool(nw) and nw.issubset(lawyer_words)
+
+
+def pick_client(normed_names: list[str], lawyer_words: set[str]) -> str | None:
+    if lawyer_words and len(normed_names) >= 2:
+        others = [n for n in normed_names if not is_me(n, lawyer_words)]
+        if others:
+            return " נ' ".join(sorted(set(others)))
+    if len(normed_names) >= 2:
+        return " נ' ".join(sorted(set(normed_names)))
+    if normed_names:
+        return normed_names[0]
+    return None
+
+
 def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tuple[int, int]:
     """Import one folder / ייבוא תיקייה אחת. Returns (docs, runs)."""
     rel = case_dir.relative_to(downloads_root)
@@ -88,7 +107,7 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
     # HE: היררכיה = לקוח / [תיק] / [תת-תיק]; תיקייה שטוחה היא תיק בפני עצמו.
     client_name = parts[0]
 
-    import json as _json, re as _re
+    import json as _json
     from core.download import _normalize_party
 
     _ln = ""
@@ -102,19 +121,10 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
     _ln_last = _ln.split()[-1] if _ln else ""
 
     def _is_me(name):
-        nw = set(_re.findall(r"[א-ת]{2,}", name))
-        return bool(nw) and nw.issubset(_ln_words)
+        return is_me(name, _ln_words)
 
     def _pick_client(normed_names):
-        if _ln_words and len(normed_names) >= 2:
-            others = [n for n in normed_names if not _is_me(n)]
-            if others:
-                return " נ' ".join(sorted(set(others)))
-        if len(normed_names) >= 2:
-            return " נ' ".join(sorted(set(normed_names)))
-        if normed_names:
-            return normed_names[0]
-        return None
+        return pick_client(normed_names, _ln_words)
 
     try:
         _ci = case_dir / "case_info.json"
