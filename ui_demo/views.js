@@ -218,8 +218,12 @@ function fillClient(){
   };
   const card = c=>{
     const dec=(c.groups['החלטה']||0)+(c.groups['פסק דין']||0);
-    const who = (c.parties&&c.parties.length>=2)? c.parties.join(' נ׳ ') : '';
-    const where = [c.arkaa, c.location].filter(Boolean).join(' · ');
+    let who = (c.parties&&c.parties.length>=2)? c.parties.join(' נ׳ ') : '';
+    if(!who && c.case_title){
+      const m = c.case_title.match(/:\s*(.+)/);
+      if(m) who = m[1].trim();
+    }
+    const where = [c.court || c.arkaa, c.location].filter(Boolean).join(' · ');
     const fav = isFav(c.sub_case_id);
     return `<div class="card ${_caseView==='rows'?'c12 crow':'c4'} clicky ccard" onclick="go('case',${c.sub_case_id})">
       <div class="head"><b>${c.sub_number}</b>${freshChip(c)}
@@ -251,7 +255,12 @@ function fillClient(){
   // Hierarchical, collapsible layout: ערכאה → תיק ראשי → תתי-תיקים.
   // Everything starts CLOSED; whatever the user opens is remembered
   // (localStorage via _det) so returning to the dashboard keeps the context.
-  const mainNum = c => ((c.sub_number||'').match(/^(\d+)/)||[])[1] || 'אחר';
+  const mainNum = c => {
+    const sn = c.sub_number || '';
+    const d = sn.match(/^(\d+)/);
+    if(d) return d[1];
+    return sn;
+  };
   $('case-cards').innerHTML = Object.entries(byArkaa)
     .sort((a,b)=>(_arkaaOrder[a[0]]||99)-(_arkaaOrder[b[0]]||99))
     .map(([ark,arr])=>{
@@ -262,13 +271,19 @@ function fillClient(){
         .sort((a,b)=>b[1].reduce((s,c)=>s+c.docs,0)-a[1].reduce((s,c)=>s+c.docs,0))
         .map(([mn,list])=>{
           const md = list.reduce((s,c)=>s+(c.docs||0),0);
-          const gWho=(list.find(x=>x.parties&&x.parties.length>=2)||{}).parties;
-          const gLoc=(list.find(x=>x.location)||{}).location||'';
+          let gWho=(list.find(x=>x.parties&&x.parties.length>=2)||{}).parties;
+          if(!gWho){
+            const gt=(list.find(x=>x.case_title)||{}).case_title||'';
+            const gm=gt.match(/:\s*(.+)/);
+            if(gm) gWho=[gm[1].trim()];
+          }
+          const gCourt=(list.find(x=>x.court)||{}).court||'';
+          const gLoc=(list.find(x=>x.location)||{}).location||gCourt;
           return `<details ${_det('dash:'+ark+':'+mn)} style="margin:8px 0;border:1px solid var(--line);border-radius:10px;padding:6px 12px">
             <summary style="cursor:pointer;font-weight:700;font-size:13.5px;padding:5px 0">
               📁 תיק ${mn}
-              ${gWho?`<span style="font-weight:600;font-size:12.5px"> · ${gWho.join(' נ׳ ')}</span>`:''}
-              ${gLoc?`<span style="font-weight:400;opacity:.7;font-size:12px"> · 📍 ${gLoc}</span>`:''}
+              ${gWho?`<span style="font-weight:600;font-size:12.5px"> · ${Array.isArray(gWho)?gWho.join(' נ׳ '):gWho}</span>`:''}
+              ${gLoc?`<span style="font-weight:400;opacity:.7;font-size:12px"> · ${gLoc}</span>`:''}
               <span style="font-weight:400;opacity:.6;font-size:12px">· ${list.length} תתי-תיקים · ${nf.format(md)} מסמכים</span>
             </summary>
             <div class="grid" style="margin-top:8px">${list.sort((a,b)=>(b.docs||0)-(a.docs||0)).map(card).join('')}</div>

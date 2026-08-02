@@ -582,21 +582,38 @@ def run_net_download(page: Page, output_dir: Path | None = None) -> None:
         _logger.info(f"Target directory: {case_dir.absolute()}")
 
     _ci_path = case_dir / "case_info.json"
-    if not _ci_path.exists() and (parties_full or parties):
+    if parties_full or parties:
+        import json as _json
         _ci_parties = ([{"name": p.get("name", ""), "role": p.get("role", "")}
                         for p in parties_full if p.get("name")]
                        if parties_full else [{"name": n} for n in parties if n])
-        _ci_data = {
-            "portal": "NET", "case_id": safe_case_folder,
-            "full_name": raw_case_name, "parties": _ci_parties,
-            "location": (case_meta or {}).get("court", ""),
-        }
-        try:
-            import json as _json
-            _ci_path.write_text(_json.dumps(_ci_data, ensure_ascii=False, indent=2),
-                                encoding="utf-8")
-        except Exception:
-            pass
+        _ci_data: dict = {}
+        if _ci_path.exists():
+            try:
+                _ci_data = _json.loads(_ci_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        _old_parties = _ci_data.get("parties", [])
+        _better = (len(_ci_parties) > len(_old_parties)
+                   or (not _ci_data)
+                   or any(p.get("role") for p in _ci_parties)
+                   and not any(p.get("role") for p in _old_parties))
+        if _better or not _ci_path.exists():
+            _ci_data.update({
+                "portal": "NET", "case_id": safe_case_folder,
+                "full_name": raw_case_name, "parties": _ci_parties,
+                "court": (case_meta or {}).get("court", ""),
+                "location": (case_meta or {}).get("court", ""),
+            })
+            if case_meta and case_meta.get("case_type"):
+                _ci_data["case_type"] = case_meta["case_type"]
+            if case_meta and case_meta.get("status"):
+                _ci_data["status"] = case_meta["status"]
+            try:
+                _ci_path.write_text(_json.dumps(_ci_data, ensure_ascii=False, indent=2),
+                                    encoding="utf-8")
+            except Exception:
+                pass
 
     # 5. Load or create manifest, then sync with disk
     manifest = ManifestManager(

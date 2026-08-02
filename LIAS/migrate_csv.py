@@ -126,6 +126,9 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
     def _pick_client(normed_names):
         return pick_client(normed_names, _ln_words)
 
+    _court = ""
+    _title = ""
+
     try:
         _ci = case_dir / "case_info.json"
         if not _ci.exists():
@@ -134,6 +137,8 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
                     _ci = _p / "case_info.json"; break
         if _ci.exists():
             _info = _json.loads(_ci.read_text(encoding="utf-8"))
+            _court = _info.get("court", "")
+            _title = _info.get("full_name", "")
             _parties = _info.get("parties", [])
             if _parties:
                 _normed = [_normalize_party(p.get("name", "")) for p in _parties if p.get("name")]
@@ -159,12 +164,15 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
     case_number = parts[1] if len(parts) > 1 else parts[0]
     sub_number = parts[-1]
 
-    if _ln_last and _ln_last in set(_re.findall(r"[א-ת]{2,}", client_name)):
-        client_name = _ln
+    if _ln_last:
+        _all_words = set(_re.findall(r"[א-ת]{2,}", client_name))
+        _folder_words = set(_re.findall(r"[א-ת]{2,}", parts[0]))
+        if _ln_last in _all_words or _ln_last in _folder_words:
+            client_name = _ln
 
     portal = _detect_portal(case_dir)
     client_id = db.upsert_client(client_name)
-    case_id = db.upsert_case(client_id, portal, case_number)
+    case_id = db.upsert_case(client_id, portal, case_number, court=_court, title=_title)
     sub_case_id = db.upsert_sub_case(case_id, sub_number)
 
     n_docs = 0

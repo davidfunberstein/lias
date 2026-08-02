@@ -105,7 +105,8 @@ def _doc_rows(con, sub_case_id: int | None = None, client_id: int | None = None)
     sql = """SELECT d.document_id, d.logical_name, d.physical_name, d.doc_type,
                     d.submitter_est, d.submission_date, d.download_status,
                     d.pages, d.local_path, s.sub_case_id, s.sub_number,
-                    ca.portal, ca.client_id, cl.display_name AS client_name
+                    ca.portal, ca.client_id, ca.court, ca.title AS case_title,
+                    cl.display_name AS client_name
              FROM documents d
              JOIN sub_cases s  ON s.sub_case_id = d.sub_case_id
              JOIN cases ca     ON ca.case_id    = s.case_id
@@ -174,7 +175,9 @@ def _case_cards(rows: list[dict]) -> list[dict]:
         c = by.setdefault(r["sub_case_id"], {
             "sub_case_id": r["sub_case_id"], "sub_number": r["sub_number"],
             "portal": r["portal"], "client_id": r["client_id"],
-            "arkaa": _arkaa(r["portal"], r["sub_number"]),
+            "arkaa": _arkaa(r["portal"], r["sub_number"], r.get("court") or ""),
+            "court": r.get("court") or "",
+            "case_title": r.get("case_title") or "",
             "docs": 0, "errors": 0, "groups": {g: 0 for g in GROUPS}, "other": 0,
             "first": None, "last": None, "parties": [], "location": "",
         })

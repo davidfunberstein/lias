@@ -889,6 +889,99 @@ def save_settings(req: SettingsUpdate):
     return {"ok": True, "court_docs_dir_effective": str(config.COURT_DOCS_DIR),
             "govil_configured": _govil_creds_exist()}
 
+# --- Query API ---------------------------------------------------------------
+
+@app.get("/api/query")
+def query(q: str = "", portal: str = "", court: str = "",
+          client: str = "", limit: int = 100):
+    """General search across clients, cases and documents.
+
+    GET /api/query?q=פונברשטיין  — free-text search
+    GET /api/query?portal=NET    — filter by portal
+    GET /api/query?court=שלום    — filter by court
+    GET /api/query?client=דוד    — filter by client name
+    """
+    conn = db.get_conn()
+    sql = """SELECT d.document_id, d.logical_name, d.doc_type,
+                    d.submission_date, d.download_status, d.pages,
+                    s.sub_case_id, s.sub_number,
+                    ca.case_number, ca.portal, ca.court, ca.title,
+                    cl.display_name AS client_name, cl.client_id
+             FROM documents d
+             JOIN sub_cases s  ON s.sub_case_id = d.sub_case_id
+             JOIN cases ca     ON ca.case_id    = s.case_id
+             LEFT JOIN clients cl ON cl.client_id = ca.client_id
+             WHERE 1=1"""
+    args: list = []
+    if q:
+        sql += """ AND (d.logical_name LIKE ? OR d.doc_type LIKE ?
+                   OR s.sub_number LIKE ? OR ca.title LIKE ?
+                   OR cl.display_name LIKE ?)"""
+        p = f"%{q}%"
+        args += [p, p, p, p, p]
+    if portal:
+        sql += " AND ca.portal = ?"
+        args.append(portal.upper())
+    if court:
+        sql += " AND ca.court LIKE ?"
+        args.append(f"%{court}%")
+    if client:
+        sql += " AND cl.display_name LIKE ?"
+        args.append(f"%{client}%")
+    sql += f" ORDER BY d.submission_date DESC LIMIT ?"
+    args.append(min(limit, 500))
+    rows = [dict(r) for r in conn.execute(sql, args)]
+    cases_sql = """SELECT DISTINCT ca.case_number, ca.portal, ca.court, ca.title,
+                          cl.display_name AS client_name
+                   FROM cases ca
+                   LEFT JOIN clients cl ON cl.client_id = ca.client_id
+                   WHERE 1=1"""
+    c_args: list = []
+    if q:
+        c_args += [f"%{q}%", f"%{q}%", f"%{q}%"]
+        cases_sql += " AND (ca.case_number LIKE ? OR ca.title LIKE ? OR cl.display_name LIKE ?)"
+    if portal:
+        cases_sql += " AND ca.portal = ?"
+        c_args.append(portal.upper())
+    if court:
+        cases_sql += " AND ca.court LIKE ?"
+        c_args.append(f"%{court}%")
+    if client:
+        cases_sql += " AND cl.display_name LIKE ?"
+        c_args.append(f"%{client}%")
+    case_rows = [dict(r) for r in conn.execute(cases_sql, c_args)]
+    return {"documents": rows, "cases": case_rows,
+            "total_docs": len(rows), "total_cases": len(case_rows)}
+
+
+@app.get("/api/stats")
+def stats():
+    """System statistics — overview of all data in the DB."""
+    conn = db.get_conn()
+    r = conn.execute("""
+        SELECT COUNT(DISTINCT cl.client_id) AS clients,
+               COUNT(DISTINCT ca.case_id) AS cases,
+               COUNT(DISTINCT s.sub_case_id) AS sub_cases,
+               COUNT(d.document_id) AS documents,
+               COALESCE(SUM(d.pages), 0) AS pages,
+               SUM(CASE WHEN d.download_status='COMPLETED' THEN 1 ELSE 0 END) AS completed,
+               SUM(CASE WHEN d.download_status IN ('ERROR','MISSING') THEN 1 ELSE 0 END) AS errors
+        FROM clients cl
+        LEFT JOIN cases ca ON ca.client_id = cl.client_id
+        LEFT JOIN sub_cases s ON s.case_id = ca.case_id
+        LEFT JOIN documents d ON d.sub_case_id = s.sub_case_id
+    """).fetchone()
+    portals = [dict(p) for p in conn.execute("""
+        SELECT ca.portal, COUNT(DISTINCT ca.case_id) AS cases,
+               COUNT(d.document_id) AS documents
+        FROM cases ca
+        LEFT JOIN sub_cases s ON s.case_id = ca.case_id
+        LEFT JOIN documents d ON d.sub_case_id = s.sub_case_id
+        GROUP BY ca.portal
+    """)]
+    return {"summary": dict(r), "by_portal": portals}
+
+
 # --- AI chat -----------------------------------------------------------------
 
 class AiAskRequest(BaseModel):

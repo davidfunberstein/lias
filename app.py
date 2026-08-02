@@ -376,7 +376,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/proxy/bdr/cases":
             code, body, _ct = engine_inproc.request("GET", "/api/bdr/cases")
             self._send(code, body, "application/json; charset=utf-8")
-        elif path.startswith("/api/doc_pdf/") or path in (
+        elif path.startswith("/api/doc_pdf/") or path.startswith("/api/query") \
+                or path.startswith("/api/stats") \
+                or path in (
                 "/api/browser/screenshot", "/api/browser/status", "/api/log",
                 "/api/jobs"):
             code, body, ct = engine_inproc.request("GET", self.path)
