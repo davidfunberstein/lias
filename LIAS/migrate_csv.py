@@ -99,6 +99,7 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
     except Exception:
         pass
     _ln_words = set(_re.findall(r"[א-ת]{2,}", _ln)) if _ln else set()
+    _ln_last = _ln.split()[-1] if _ln else ""
 
     def _is_me(name):
         nw = set(_re.findall(r"[א-ת]{2,}", name))
@@ -147,6 +148,9 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
         del parts[1]
     case_number = parts[1] if len(parts) > 1 else parts[0]
     sub_number = parts[-1]
+
+    if _ln_last and _ln_last in set(_re.findall(r"[א-ת]{2,}", client_name)):
+        client_name = _ln
 
     portal = _detect_portal(case_dir)
     client_id = db.upsert_client(client_name)
