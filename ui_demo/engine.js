@@ -126,8 +126,7 @@ async function portalBusy(forPortal){
   }catch(_){ return ''; }
 }
 async function ensureNoPortalRunning(portal){
-  const p = (portal||'').toUpperCase();
-  const busy = await portalBusy(p);
+  const busy = await portalBusy();
   if(busy){
     toast(`כרגע רצה פעולה ב${busy} — המתן לסיום ואז נסה שוב.`, true);
     return false;
@@ -152,21 +151,23 @@ async function refreshPortalLock(){
   }catch(_){}
   _portalLockBusy = [...runningPortals].join(',');
   const note=$('portal-lock-note');
+  const anyBusy = runningPortals.size > 0;
   ['NET','BDR','ECA'].forEach(p=>{
     const b=$('plat-'+p); if(!b) return;
-    const blocked = runningPortals.has(p);
-    b.disabled = blocked;
+    const blocked = anyBusy && !runningPortals.has(p);
+    const running = runningPortals.has(p);
+    b.disabled = anyBusy;
     b.style.opacity       = blocked ? '.45' : '';
     b.style.filter        = blocked ? 'grayscale(1)' : '';
     b.style.pointerEvents = blocked ? 'none' : '';
-    b.style.cursor        = blocked ? 'not-allowed' : '';
+    b.style.cursor        = anyBusy && !running ? 'not-allowed' : '';
     b.title = blocked ? `פעולה רצה כעת — המתן לסיום` : '';
   });
   if(note){
-    if(runningPortals.size){
+    if(anyBusy){
       const labels = [...runningPortals].map(p=>PORTAL_LABELS[p]||p).join(' + ');
       note.style.display='block';
-      note.innerHTML = `🔒 מתבצעת כעת פעולה ב<b>${labels}</b>. פורטלים אחרים זמינים להורדה במקביל.`;
+      note.innerHTML = `🔒 מתבצעת כעת פעולה ב<b>${labels}</b>. יש להמתין לסיום לפני הורדה מפורטל אחר.`;
     } else note.style.display='none';
   }
 }

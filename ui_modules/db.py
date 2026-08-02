@@ -172,7 +172,8 @@ def parties_location_from_path(local_path: str) -> tuple:
 
 def _find_case_info(sub_number: str, portal: str) -> dict | None:
     """Find case_info.json on disk by matching sub_number against folder names.
-    For BDR cases without a JSON, synthesize parties from the folder structure."""
+    For BDR cases without a JSON, synthesize parties from the folder structure
+    and read close_date from batch_progress CSVs."""
     try:
         import json as _json
         from LIAS.config import COURT_DOCS_DIR as _DOCS
@@ -186,6 +187,7 @@ def _find_case_info(sub_number: str, portal: str) -> dict | None:
             folder = ci.parent.name
             if sn in folder or (sn_key and sn_key in folder):
                 return _json.loads(ci.read_text(encoding="utf-8"))
+        result: dict | None = None
         if sn_key:
             for d in downloads.rglob(f"*{sn_key}*"):
                 if not d.is_dir():
@@ -194,7 +196,26 @@ def _find_case_info(sub_number: str, portal: str) -> dict | None:
                 if " - " in parent:
                     names = [p.strip() for p in parent.split(" - ") if p.strip()]
                     if len(names) >= 2:
-                        return {"parties": [{"name": n} for n in names]}
+                        result = {"parties": [{"name": n} for n in names]}
+                        break
+        bdr_id = sn_key.replace("-", "/") if sn_key and re.match(r"^\d+-\d+$", sn_key) else ""
+        if bdr_id:
+            import csv as _csv
+            for bp in downloads.glob("batch_progress*"):
+                if not bp.is_file():
+                    continue
+                try:
+                    with open(bp, encoding="utf-8-sig") as f:
+                        for row in _csv.DictReader(f):
+                            if row.get("מזהה תיק", "") == bdr_id:
+                                cd = (row.get("תאריך סגירה") or "").strip()
+                                if result is None:
+                                    result = {}
+                                result["status"] = "סגור" if cd else "פתוח"
+                                break
+                except Exception:
+                    pass
+        return result
     except Exception:
         pass
     return None
