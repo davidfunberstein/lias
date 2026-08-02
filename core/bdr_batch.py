@@ -505,6 +505,16 @@ class BdrBatchRunner:
             except Exception:
                 pass
 
+    def _sleep(self, seconds: float) -> bool:
+        """Interruptible sleep. Returns True if cancelled during the wait."""
+        import time as _t
+        deadline = _t.time() + seconds
+        while _t.time() < deadline:
+            if self._should_cancel and self._should_cancel(None):
+                return True
+            _t.sleep(min(0.25, deadline - _t.time()))
+        return False
+
     def _set_case_status(self, sub_id: str, status: str) -> None:
         for c in self._stats.get("cases_detail", []):
             if c["id"] == sub_id:
@@ -535,7 +545,7 @@ class BdrBatchRunner:
         except Exception:
             self._log("לא נמצאו שורות תיקים — האם המשתמש מחובר?", "error")
             return
-        time.sleep(1)
+        self._sleep(1)
 
         # ── Step 2: extract group rows via JS ─────────────────────────
         raw_groups = self.page.evaluate(_JS_EXTRACT_GROUP_ROWS)
@@ -873,10 +883,10 @@ class BdrBatchRunner:
                 btn = self.page.locator(SEL_DROPDOWN_BTN)
                 btn.wait_for(timeout=10000)
                 btn.click(force=True)
-                time.sleep(1)
+                self._sleep(1)
                 opt_sel = SEL_OPTION_HAKOL.replace("LBI0T0", f"LBI{option_index}T0")
                 self.page.locator(opt_sel).click(force=True)
-                time.sleep(0.5)
+                self._sleep(0.5)
                 break
             except Exception as e:
                 self._log(f"שגיאה בתפריט ({label}): {e}", "warn")
@@ -888,13 +898,13 @@ class BdrBatchRunner:
                     try:
                         self.page.goto(BDR_FILES_URL,
                                        wait_until="domcontentloaded", timeout=20000)
-                        time.sleep(2)
+                        self._sleep(2)
                     except Exception as e2:
                         self._log(f"ניווט חזרה נכשל: {e2}", "warn")
         try:
             self._log("לוחץ 'אתר'...")
             self.page.locator(SEL_SEARCH_BTN).click(force=True)
-            time.sleep(4)
+            self._sleep(4)
         except Exception as e:
             self._log(f"שגיאה ב'אתר': {e}", "error")
         try:
@@ -931,7 +941,7 @@ class BdrBatchRunner:
                 f"tr[id*='DXDataRow'][id*='{GRID_ID}'], tr[id*='DXDataRow']",
                 timeout=10000
             )
-            time.sleep(1.5)
+            self._sleep(1.5)
             return True
         except Exception as e:
             self._log(f"  שגיאה בהרחבה של שורה {row_index}: {e}", "warn")
@@ -940,7 +950,7 @@ class BdrBatchRunner:
     def _goto_files_list(self) -> None:
         self._log("מנווט לרשימת התיקים...")
         self.page.goto(BDR_FILES_URL, wait_until="domcontentloaded")
-        time.sleep(2)
+        self._sleep(2)
 
     def _open_sub_case(self, sc: SubCase) -> bool:
         """Navigate into a sub-case using its openFileDetails JS call."""
@@ -950,7 +960,7 @@ class BdrBatchRunner:
                 self._log(f"  JS navigate: {sc.sub_id}...")
                 self.page.evaluate(call_match.group(1))
                 self.page.wait_for_load_state("domcontentloaded")
-                time.sleep(3)
+                self._sleep(3)
                 return True
             # Fallback: click the link by text
             link = self.page.locator(f"a:text-is('{sc.sub_id},')").first
@@ -958,7 +968,7 @@ class BdrBatchRunner:
                 link = self.page.get_by_text(sc.sub_id, exact=False).first
             link.click(force=True)
             self.page.wait_for_load_state("domcontentloaded")
-            time.sleep(3)
+            self._sleep(3)
             return True
         except Exception as e:
             self._log(f"  ניווט נכשל ({sc.sub_id}): {e}", "error")
@@ -1045,7 +1055,7 @@ class BdrBatchRunner:
             self.page.wait_for_selector("tr[id*='DXGroupRow']", timeout=15000)
         except Exception:
             pass
-        time.sleep(1)
+        self._sleep(1)
 
         # Re-query the live DOM index — the page reloaded so groups collapsed
         # and indices reset; sc.group_row_index may be stale from discovery.
@@ -1070,7 +1080,7 @@ class BdrBatchRunner:
         nav.click_documents_tab()
         try:
             self.page.wait_for_selector("tr[id*='DXDataRow']", timeout=20000)
-            time.sleep(1)
+            self._sleep(1)
         except Exception:
             progress.mark_skipped(sc.sub_id, "טבלת מסמכים לא נטענה")
             self._log("  טבלת מסמכים לא נטענה — מדלג.", "warn")

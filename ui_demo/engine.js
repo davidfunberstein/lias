@@ -517,13 +517,14 @@ function toggleTasksWin(forceOpen){
   _pollState();
 }
 function stopAllDownloads(){
-  document.querySelectorAll('[data-stopjob]').forEach(b=>{});
-  // cancel every active download job
+  // Immediate visual feedback
+  const btn = document.querySelector('[onclick="stopAllDownloads()"]');
+  if(btn){ btn.textContent='⏳ עוצר…'; btn.disabled=true; }
   (window._activeJobs||[]).forEach(j=>{
     if(['net_smart_download','net_download_all','bdr_batch','eca_sync'].includes(j.kind))
       fetch('/api/proxy/actions/cancel_download?job_id='+j.job_id,{method:'POST'});
   });
-  toast('נשלחה הוראת עצירה לכל ההורדות — ייעצרו אחרי התיק הנוכחי');
+  toast('הוראת עצירה נשלחה — עוצר תוך שנייה-שתיים');
 }
 function stopJob(jobId){
   fetch('/api/proxy/actions/cancel_download?job_id='+jobId,{method:'POST'});
@@ -1592,3 +1593,13 @@ function refreshFab(){
 
 // Start the unified state poller once the page is ready
 document.addEventListener('DOMContentLoaded', _startStatePoller);
+
+// Esc closes any open floating panel or modal
+document.addEventListener('keydown', e=>{
+  if(e.key!=='Escape') return;
+  if($('logwin'))   { toggleLogWin(); return; }
+  if($('taskswin')) { toggleTasksWin(); return; }
+  if($('bwin'))     { toggleBrowserWin(); return; }
+  if($('otp-box'))  { $('otp-box').remove(); return; }
+  if(typeof closeSettings==='function' && $('settings')?.style.display!=='none') closeSettings();
+});
