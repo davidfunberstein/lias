@@ -27,8 +27,8 @@ function renderLawyer(){
     </div>
     <div class="card c4 clicky" onclick="openDrawer('cases')">
       <div class="kpi-top"><h3>תיקים <span class="qtip" data-tip="כל התיקים שהורדו מהפורטלים, מכל הערכאות.">?</span></h3><div class="kpi-arrow">↗</div></div>
-      <div class="kpi-num">${k?nf.format(k.sub_cases):'…'}</div>
-      <div class="kpi-sub">${k?`${D.arkaa.length} ערכאות · NET + BDR`:''}</div>
+      <div class="kpi-num">${k?nf.format(D.case_cards?.length||k.sub_cases):'…'}</div>
+      <div class="kpi-sub" id="kpi-cases-sub">${k?`${D.arkaa.length} ערכאות · NET + BDR`:''}</div>
       <div class="kpi-viz" id="viz-cases"></div>
     </div>
     <div class="card c4">
@@ -56,6 +56,7 @@ function renderLawyer(){
         <option value="submitter">לפי מגיש</option>
         <option value="doctype">לפי סוג מסמך</option>
         <option value="portal">לפי פורטל</option>
+        <option value="status">לפי סטטוס (פתוח/סגור)</option>
       </select></div>
       <div class="hbar" id="bd-bars"></div></div>
     <div class="card c8"><div class="kpi-top"><div><h2>מסמכים אחרונים</h2>
@@ -81,6 +82,12 @@ function fillLawyer(){
   const k=D.kpis;
   miniBars($('viz-clients'), D.clients.map(c=>c.docs), false);
   miniBars($('viz-cases'), D.case_cards.map(c=>c.docs), false);
+  const _sm = caseStatusMap();
+  const _nOpen = D.case_cards.filter(c=>_sm[c.sub_case_id]!=='closed').length;
+  const _nClosed = D.case_cards.filter(c=>_sm[c.sub_case_id]==='closed').length;
+  const _sub = $('kpi-cases-sub');
+  if(_sub) _sub.innerHTML = `<span class="pill ok" style="font-size:11px">${_nOpen} פתוחים</span> `
+    + `<span class="pill err" style="font-size:11px">${_nClosed} סגורים</span>`;
   const pct = k.total_docs? Math.round(k.completed/k.total_docs*100):0;
   $('meter').innerHTML = `<i style="width:${pct}%;background:var(--accent)"></i>
     <i style="width:${k.total_docs?k.errors/k.total_docs*100:0}%;background:var(--danger)"></i>`;
@@ -130,9 +137,18 @@ function fillBreakdown(){
       on:()=>openDocList('מסמכים — '+t.label, {group:t.label==='אחר'?'':t.label})}));
   else if(dim==='portal'){
     const p={};
-    D.case_cards.forEach(c=>{const k=c.arkaa==='בית דין רבני'?'בתי דין רבניים':'נט המשפט';
+    D.case_cards.forEach(c=>{const k=c.arkaa?.includes('רבני')?'בתי דין רבניים':'נט המשפט';
       (p[k]=p[k]||{c:0,d:0}).c++; p[k].d+=c.docs;});
     rows = Object.entries(p).map(([label,v])=>({label, n:v.d, sub:`${v.c} תיקים`, on:null}));
+  } else if(dim==='status'){
+    const sm=caseStatusMap();
+    const g={open:{c:0,d:0},closed:{c:0,d:0}};
+    D.case_cards.forEach(c=>{const k=sm[c.sub_case_id]==='closed'?'closed':'open';
+      g[k].c++; g[k].d+=c.docs;});
+    rows = [
+      {label:'פתוח', n:g.open.d, sub:`${g.open.c} תיקים`, on:null},
+      {label:'סגור', n:g.closed.d, sub:`${g.closed.c} תיקים`, on:null},
+    ];
   }
   const max=Math.max(...rows.map(r=>r.n),1);
   window._bdRows = rows;
@@ -248,7 +264,7 @@ function fillClient(){
     : '';
   const byArkaa = {};
   C.case_cards.forEach(c=>{ (byArkaa[c.arkaa]=byArkaa[c.arkaa]||[]).push(c); });
-  const _arkaaOrder = {'בית דין רבני הגדול':1, 'בית דין רבני':2, 'בית דין רבני אזורי':3,
+  const _arkaaOrder = {'בית דין רבני גדול':1, 'בית דין רבני אזורי':2,
     'בית משפט עליון':4, 'בית משפט מחוזי':5, 'בית משפט לענייני משפחה':6,
     'בית משפט שלום':7, 'בית משפט':8, 'הוצאה לפועל':9};
   const _arkaaIcon = a => a.includes('רבני')?'🕍': a.includes('הוצאה')?'⚖️':'🏛️';
@@ -414,7 +430,7 @@ async function deleteCase(){
 }
 async function openCaseInPortal(){
   if(!K) return;
-  const portal = K.portal || (K.arkaa==='הוצאה לפועל'?'ECA':K.arkaa==='בית דין רבני'?'BDR':'NET');
+  const portal = K.portal || (K.arkaa==='הוצאה לפועל'?'ECA':K.arkaa?.includes('רבני')?'BDR':'NET');
   toast('פותח את התיק בפורטל…');
   await act(`open_case_view?portal=${portal}&case_number=${encodeURIComponent(K.sub_number||'')}`,
             `פתיחת תיק ${K.sub_number} בפורטל`);

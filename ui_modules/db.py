@@ -69,7 +69,9 @@ def _arkaa(portal: str, sub_number: str, court: str = "") -> str:
     court = (court or "").strip()
     if court:
         if "רבני" in court:
-            return "בית דין רבני"
+            if "גדול" in court:
+                return "בית דין רבני גדול"
+            return "בית דין רבני אזורי"
         if "הוצאה" in court or "הוצל" in court:
             return "הוצאה לפועל"
         if "עבודה" in court:
@@ -87,7 +89,7 @@ def _arkaa(portal: str, sub_number: str, court: str = "") -> str:
     if portal == "ECA":
         return "הוצאה לפועל"
     if portal == "BDR" or re.match(r"^\d{6,7}-\d+(\D|$)", s):
-        return "בית דין רבני"
+        return "בית דין רבני אזורי"
     if s.startswith("בל "):
         return "בית הדין לעבודה"
     if s.startswith(("תאדמ", "תא ", 'ת"א')):
@@ -168,6 +170,36 @@ def parties_location_from_path(local_path: str) -> tuple:
     return parties, location
 
 
+def _find_case_info(sub_number: str, portal: str) -> dict | None:
+    """Find case_info.json on disk by matching sub_number against folder names.
+    For BDR cases without a JSON, synthesize parties from the folder structure."""
+    try:
+        import json as _json
+        from LIAS.config import COURT_DOCS_DIR as _DOCS
+        downloads = _DOCS / "downloads"
+        if not downloads.exists():
+            return None
+        sn = (sub_number or "").strip()
+        m = re.match(r"[\w\-]+-\d+", sn)
+        sn_key = m.group(0) if m else re.sub(r"[^\d\-]", "", sn).strip("-")
+        for ci in downloads.rglob("case_info.json"):
+            folder = ci.parent.name
+            if sn in folder or (sn_key and sn_key in folder):
+                return _json.loads(ci.read_text(encoding="utf-8"))
+        if sn_key:
+            for d in downloads.rglob(f"*{sn_key}*"):
+                if not d.is_dir():
+                    continue
+                parent = d.parent.name
+                if " - " in parent:
+                    names = [p.strip() for p in parent.split(" - ") if p.strip()]
+                    if len(names) >= 2:
+                        return {"parties": [{"name": n} for n in names]}
+    except Exception:
+        pass
+    return None
+
+
 def _case_cards(rows: list[dict]) -> list[dict]:
     """Aggregate docs into one card per sub-case."""
     by: dict[int, dict] = {}
@@ -210,7 +242,43 @@ def _case_cards(rows: list[dict]) -> list[dict]:
             iso = dt.strftime("%Y-%m-%d")
             c["first"] = min(c["first"] or iso, iso)
             c["last"] = max(c["last"] or iso, iso)
-    return sorted(by.values(), key=lambda c: c["last"] or "", reverse=True)
+    for c in by.values():
+        if not c["parties"] or "portal_status" not in c:
+            ci = _find_case_info(c["sub_number"], c["portal"])
+            if ci:
+                if not c["parties"]:
+                    c["parties"] = [p.get("name", "") for p in ci.get("parties", [])
+                                    if p.get("name")]
+                if "portal_status" not in c:
+                    c["portal_status"] = ci.get("status", "")
+    merged: dict[str, dict] = {}
+    for c in by.values():
+        sn = c["sub_number"]
+        m = re.match(r"(\d{6,7}-\d+)\s", sn)
+        key = (c["client_id"], m.group(1)) if m else (c["client_id"], sn)
+        if key in merged:
+            dst = merged[key]
+            dst["docs"] += c["docs"]
+            dst["errors"] += c["errors"]
+            for g in GROUPS:
+                dst["groups"][g] = dst["groups"].get(g, 0) + c["groups"].get(g, 0)
+            dst["other"] += c["other"]
+            if c["first"]:
+                dst["first"] = min(dst["first"] or c["first"], c["first"])
+            if c["last"]:
+                dst["last"] = max(dst["last"] or c["last"], c["last"])
+            if not dst["parties"] and c["parties"]:
+                dst["parties"] = c["parties"]
+            if not dst.get("portal_status") and c.get("portal_status"):
+                dst["portal_status"] = c["portal_status"]
+            if not dst["location"] and c["location"]:
+                dst["location"] = c["location"]
+        else:
+            if m:
+                topic = re.sub(r"^\d{6,7}-\d+\s*", "", sn).rsplit(" - ", 1)[0].strip()
+                c["sub_number"] = m.group(1) + (" " + topic if topic else "")
+            merged[key] = c
+    return sorted(merged.values(), key=lambda c: c["last"] or "", reverse=True)
 
 
 def _activity(rows: list[dict], by: str = "case") -> dict:

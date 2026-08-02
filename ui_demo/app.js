@@ -272,14 +272,25 @@ function openDrawer(kind, filter){
     const chip = c=> st[c.sub_case_id]==='closed'
       ? '<span class="pill err" style="margin-right:6px">סגור</span>'
       : '<span class="pill ok" style="margin-right:6px">פתוח</span>';
+    const _ln = D?.lawyer_name||'';
+    const _lnWords = _ln ? new Set(_ln.split(/\s+/).filter(w=>w.length>=2)) : null;
+    const _isMe = n => _lnWords && _lnWords.size>0 && n.split(/\s+/).filter(w=>w.length>=2).every(w=>_lnWords.has(w));
     const partyLine = c => {
-      if(c.parties && c.parties.length>=2) return c.parties.join(" נ' ");
-      if(c.case_title){
+      let names = [];
+      if(c.parties && c.parties.length>=2) names = c.parties;
+      else if(c.case_title){
         const m = (c.case_title||'').match(/:\s*(.+)/);
         if(m) return m[1].trim();
       }
-      const m = (c.sub_number||'').match(/נ['']\s*(.+)/);
-      return m ? m[1].trim() : '';
+      if(!names.length){
+        const m = (c.sub_number||'').match(/נ['']\s*(.+)/);
+        return m ? m[1].trim() : '';
+      }
+      if(_lnWords){
+        const others = names.filter(n=>!_isMe(n));
+        if(others.length) return others.join(" נ' ");
+      }
+      return names.join(" נ' ");
     };
     const item = c=>{
       const vs = partyLine(c);
@@ -299,9 +310,9 @@ function openDrawer(kind, filter){
     }
     const courtLabel = c => {
       if(c.arkaa==='הוצאה לפועל') return '⚖️ הוצאה לפועל';
-      if(c.arkaa!=='בית דין רבני')
-        return '🏛 ' + (c.arkaa||'נט המשפט');   // full ערכאה, like the dashboard
-      return /[-\s]גדול\s*$/.test(c.sub_number||'') ? '🕍 ביה״ד הרבני הגדול' : '🕍 ביה״ד רבני אזורי';
+      if(c.arkaa==='בית דין רבני גדול') return '🕍 ביה״ד הרבני הגדול';
+      if(c.arkaa?.includes('רבני')) return '🕍 ביה״ד רבני אזורי';
+      return '🏛 ' + (c.arkaa||'נט המשפט');
     };
     let body = '';
     for(const [client, cases] of Object.entries(byClient)){
@@ -520,9 +531,12 @@ async function refresh(force){
         const sm = caseStatusMap();
         let changed = false;
         for (const c of (D.case_cards || [])) {
-          if (c.portal_status && !sm[c.sub_case_id]) {
-            sm[c.sub_case_id] = /סגור|closed/i.test(c.portal_status) ? 'closed' : 'open';
-            changed = true;
+          if (c.portal_status) {
+            const val = /סגור|closed/i.test(c.portal_status) ? 'closed' : 'open';
+            if (sm[c.sub_case_id] !== val) {
+              sm[c.sub_case_id] = val;
+              changed = true;
+            }
           }
         }
         if (changed) localStorage.setItem('lias_case_status', JSON.stringify(sm));

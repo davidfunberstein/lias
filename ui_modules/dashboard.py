@@ -96,8 +96,18 @@ def dashboard_from_db(con: sqlite3.Connection, full_ui_port: int) -> dict:
         a["cases"] += 1
         a["docs"] += c["docs"]
 
+    _lawyer = ""
+    try:
+        import json as _json
+        _sd = __import__("pathlib").Path(__file__).resolve().parent.parent / "session_defaults.json"
+        if _sd.exists():
+            _lawyer = _json.loads(_sd.read_text("utf-8")).get("lawyer_name", "")
+    except Exception:
+        pass
+
     return {
         "demo_mode": False,
+        "lawyer_name": _lawyer,
         "case_cards": cards,
         "arkaa": sorted(arkaa.values(), key=lambda a: a["docs"], reverse=True),
         "submitters": _submitters(all_rows),
