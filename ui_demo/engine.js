@@ -197,7 +197,20 @@ function _renderLogUI(lines){
   const el=$('logwin-body'); if(!el) return;
   const atBottom = el.scrollTop+el.clientHeight >= el.scrollHeight-40;
   el.style.direction='ltr'; el.style.textAlign='left';
-  let filtered = (lines||[]).filter(l=>!/^INFO:\s+127\.0\.0\.1.*"(GET|POST|PUT|DELETE|OPTIONS) \/api\/(log|health|settings|events|engine\/state)/.test(l));
+  const levelSel = $('lg-level');
+  const minLevel = levelSel?.value || 'INFO';
+  const LEVELS = ['DEBUG','INFO','WARN','ERROR'];
+  const minIdx = LEVELS.indexOf(minLevel);
+  let filtered = (lines||[]).filter(l=>{
+    // Hide HTTP access log noise
+    if(/^\[\d{2}:\d{2}:\d{2}\].*\[INFO\].*"(GET|POST) \/api\/(log|health|settings|events|engine\/state)/.test(l)) return false;
+    if(/^INFO:\s+127\.0\.0\.1.*"(GET|POST|PUT|DELETE|OPTIONS) \/api\/(log|health|settings|events)/.test(l)) return false;
+    if(minLevel==='ALL') return true;
+    // Filter by level
+    const m = l.match(/\[(DEBUG|INFO|WARN|ERROR)\]/);
+    if(m) return LEVELS.indexOf(m[1]) >= minIdx;
+    return minIdx <= 1; // lines without level tag — show at INFO+
+  });
   if(_logTab==='drive'){
     filtered = filtered.filter(l=>/drive|google|upload|gdrive|cloud/i.test(l));
   } else if(_logTab==='transcription'){
@@ -206,11 +219,12 @@ function _renderLogUI(lines){
   const esc = t=>t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
   const paint = l=>{
     const e=esc(l);
-    if(/✗|שגיא|ERROR|Error|Traceback|failed|FAILED|Exception/.test(l))
-      return `<span style="color:#ff8a80">${e}</span>`;
-    if(/✓|Success|הושלם|הצליח|COMPLETED/.test(l))
+    if(/\[ERROR\]|✗|שגיא|Traceback|failed|FAILED|Exception/.test(l))
+      return `<span style="color:#ff8a80;display:block">${e}</span>`;
+    if(/\[WARN\]|⚠|warn/.test(l)) return `<span style="color:#ffd54f">${e}</span>`;
+    if(/✓|הושלם|הצליח|COMPLETED|\[OK\]/.test(l))
       return `<span style="color:#69f0ae">${e}</span>`;
-    if(/⚠|warn|WARN/.test(l)) return `<span style="color:#ffd54f">${e}</span>`;
+    if(/\[DEBUG\]/.test(l)) return `<span style="opacity:.5">${e}</span>`;
     return e;
   };
   const html = filtered.slice(-500).map(paint).join('\n')
@@ -469,6 +483,14 @@ function toggleLogWin(){
       <button class="fv-btn log-tab-btn" id="lg-t-drive" style="border-color:#2a352c;color:#c8e6c9" onclick="setLogTab('drive')">Drive</button>
       <button class="fv-btn log-tab-btn" id="lg-t-transcription" style="border-color:#2a352c;color:#c8e6c9" onclick="setLogTab('transcription')">תמלול</button>
       <button class="fv-btn log-tab-btn" id="lg-t-events" style="border-color:#2a352c;color:#c8e6c9" onclick="setLogTab('events')">אירועים</button>
+      <select id="lg-level" onchange="_pollState()" title="סינון לפי רמה"
+        style="font-size:10.5px;border:1px solid #2a352c;background:#0E1B29;color:#c8e6c9;
+               border-radius:6px;padding:2px 4px;cursor:pointer">
+        <option value="INFO">INFO+</option>
+        <option value="WARN">WARN+</option>
+        <option value="ERROR">ERROR</option>
+        <option value="ALL">הכל</option>
+      </select>
       <button class="fv-btn" style="border-color:#2a352c;color:#c8e6c9" onclick="copyLog()" title="העתק את הלוג ללוח">📋</button>
       <button class="fv-btn" style="border-color:#2a352c;color:#c8e6c9" onclick="downloadLog()" title="הורד כקובץ טקסט">⬇</button>
       <button class="fv-btn" style="border-color:#2a352c;color:#c8e6c9" onclick="maximizeLogWin()" title="הגדל/הקטן">⛶</button>
