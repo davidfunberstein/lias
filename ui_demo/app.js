@@ -355,11 +355,12 @@ function render(){
   if(route.v==='case') renderCase();
   else if(route.v==='sync') renderSync();
   else if(route.v==='transcribe') renderTranscribe();
+  else if(route.v==='docs') renderDocs();
   else if(route.v==='client' || !isPro(u)) renderClient();
   else renderLawyer();
   document.querySelectorAll('.nav button').forEach(b=>{
     b.classList.toggle('active', b.dataset.nav===route.v ||
-      (!['sync','transcribe'].includes(route.v) && b.dataset.nav==='home'));
+      (!['sync','transcribe','docs'].includes(route.v) && b.dataset.nav==='home'));
   });
 }
 

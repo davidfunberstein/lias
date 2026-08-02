@@ -532,6 +532,91 @@ function fillCase(){
 }
 function setFilter(k,v){ caseFilters[k]=v; refresh(true); }
 
+/* ─── documents / raw tables tab ─── */
+let _rawData = null;
+let _rawTab = 'clients';
+async function renderDocs(){
+  $('crumbs').innerHTML='';
+  $('view').innerHTML = `
+  <div class="hello"><div class="small">נתונים גולמיים מכל הטבלאות במערכת</div><h1>מסמכים</h1></div>
+  <div class="grid">
+    <div class="card c12">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <button class="fv-btn ${_rawTab==='clients'?'active':''}" onclick="_rawTab='clients';_fillRawTable()">לקוחות</button>
+        <button class="fv-btn ${_rawTab==='cases'?'active':''}" onclick="_rawTab='cases';_fillRawTable()">תיקים</button>
+        <button class="fv-btn ${_rawTab==='syncs'?'active':''}" onclick="_rawTab='syncs';_fillRawTable()">סנכרונים</button>
+        <span style="flex:1"></span>
+        <button class="btn-accent" style="font-size:13px;padding:6px 16px" onclick="_reorganizeFolders()">📁 סדר תיקיות לפי צדדים</button>
+      </div>
+      <div id="raw-table" style="overflow-x:auto"></div>
+    </div>
+  </div>`;
+  if(!_rawData){
+    $('raw-table').innerHTML='<div class="empty">טוען נתונים…</div>';
+    try{
+      const r = await fetch('/api/raw_tables');
+      _rawData = await r.json();
+    }catch(e){ $('raw-table').innerHTML='<div class="empty">שגיאה בטעינה</div>'; return; }
+  }
+  _fillRawTable();
+}
+function _fillRawTable(){
+  document.querySelectorAll('#view .fv-btn').forEach(b=>{
+    b.classList.toggle('active', b.textContent.includes(
+      _rawTab==='clients'?'לקוחות':_rawTab==='cases'?'תיקים':'סנכרונים'));
+  });
+  const el=$('raw-table'); if(!el||!_rawData) return;
+  if(_rawTab==='clients'){
+    el.innerHTML=`<table><thead><tr>
+      <th>#</th><th>לקוח</th><th>תיקים</th><th>תתי-תיק</th>
+      <th>מסמכים</th><th>עמודים</th><th>הושלם</th><th>ממתין</th><th>שגיאות</th>
+    </tr></thead><tbody>${_rawData.clients.map((c,i)=>`<tr class="rowlink" onclick="go('client',${c.client_id})">
+      <td>${i+1}</td><td><b>${c.display_name}</b></td><td>${c.cases}</td><td>${c.sub_cases}</td>
+      <td>${nf.format(c.docs)}</td><td>${nf.format(c.pages)}</td>
+      <td>${pill('COMPLETED')} ${c.completed}</td>
+      <td>${c.pending?pill('PENDING')+' '+c.pending:''}</td>
+      <td>${c.errors?pill('ERROR')+' '+c.errors:''}</td>
+    </tr>`).join('')}</tbody></table>`;
+  } else if(_rawTab==='cases'){
+    el.innerHTML=`<table><thead><tr>
+      <th>#</th><th>מספר תיק</th><th>לקוח</th><th>פורטל</th>
+      <th>מסמכים</th><th>עמודים</th><th>הושלם</th><th>ממתין</th><th>שגיאות</th>
+      <th>מסמך ראשון</th><th>מסמך אחרון</th>
+    </tr></thead><tbody>${_rawData.cases.map((c,i)=>`<tr class="rowlink" onclick="go('case',${c.sub_case_id})">
+      <td>${i+1}</td><td><b>${c.sub_number}</b></td><td>${c.client_name||'—'}</td><td>${c.portal}</td>
+      <td>${nf.format(c.docs)}</td><td>${nf.format(c.pages)}</td>
+      <td>${pill('COMPLETED')} ${c.completed}</td>
+      <td>${c.pending?pill('PENDING')+' '+c.pending:''}</td>
+      <td>${c.errors?pill('ERROR')+' '+c.errors:''}</td>
+      <td>${c.first_date||'—'}</td><td>${c.last_date||'—'}</td>
+    </tr>`).join('')}</tbody></table>`;
+  } else {
+    el.innerHTML=`<table><thead><tr>
+      <th>#</th><th>תיק</th><th>פורטל</th><th>תאריך</th>
+      <th>בפורטל</th><th>הורדו</th><th>מחדש</th><th>נכשלו</th><th>שינוי</th>
+    </tr></thead><tbody>${(_rawData.syncs||[]).map((s,i)=>`<tr>
+      <td>${i+1}</td><td><b>${s.sub_number||'—'}</b></td><td>${s.portal}</td>
+      <td style="direction:ltr;text-align:right">${(s.started_at||'').replace('T',' ').slice(0,16)}</td>
+      <td>${s.total_in_portal}</td><td>${s.downloaded_new}</td><td>${s.re_downloaded}</td>
+      <td>${s.failed?'<span style="color:var(--danger)">'+s.failed+'</span>':0}</td>
+      <td>${s.hash_changed||'—'}</td>
+    </tr>`).join('')}</tbody></table>`;
+  }
+}
+async function _reorganizeFolders(){
+  if(!confirm('לסדר את כל תיקיות ההורדה מחדש לפי שמות הצדדים?')) return;
+  $('raw-table').innerHTML='<div class="empty">מסדר תיקיות… אנא המתן</div>';
+  try{
+    const r = await fetch('/api/proxy/actions/reorganize_folders',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}'});
+    const d = await r.json();
+    _rawData=null;
+    await renderDocs();
+    toast(d.moved ? `הועברו ${d.moved} תיקיות, הנתונים עודכנו` : 'לא נדרשו שינויים');
+    refresh(true);
+  }catch(e){ toast('שגיאה: '+e.message); }
+}
+
 /* ─── transcription tab ─── */
 let _trPollTimer=null;
 function renderTranscribe(){

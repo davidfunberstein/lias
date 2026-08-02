@@ -73,6 +73,51 @@ def _do_full_ui_alive():
 def _do_build_dashboard():
     return build_dashboard(DB_PATH, FULL_UI_PORT)
 
+def _raw_tables():
+    con = _connect(DB_PATH)
+    if con is None:
+        return {"clients": [], "cases": [], "documents": []}
+    try:
+        clients = [dict(r) for r in con.execute("""
+            SELECT c.client_id, c.display_name,
+                   COUNT(DISTINCT ca.case_id) AS cases,
+                   COUNT(DISTINCT s.sub_case_id) AS sub_cases,
+                   COUNT(d.document_id) AS docs,
+                   COALESCE(SUM(d.pages), 0) AS pages,
+                   SUM(CASE WHEN d.download_status='COMPLETED' THEN 1 ELSE 0 END) AS completed,
+                   SUM(CASE WHEN d.download_status='PENDING' THEN 1 ELSE 0 END) AS pending,
+                   SUM(CASE WHEN d.download_status IN ('ERROR','MISSING') THEN 1 ELSE 0 END) AS errors
+            FROM clients c
+            LEFT JOIN cases ca ON ca.client_id = c.client_id
+            LEFT JOIN sub_cases s ON s.case_id = ca.case_id
+            LEFT JOIN documents d ON d.sub_case_id = s.sub_case_id
+            GROUP BY c.client_id ORDER BY c.display_name""")]
+        cases = [dict(r) for r in con.execute("""
+            SELECT s.sub_case_id, s.sub_number, ca.case_number, ca.portal,
+                   cl.display_name AS client_name, cl.client_id,
+                   COUNT(d.document_id) AS docs,
+                   COALESCE(SUM(d.pages), 0) AS pages,
+                   SUM(CASE WHEN d.download_status='COMPLETED' THEN 1 ELSE 0 END) AS completed,
+                   SUM(CASE WHEN d.download_status='PENDING' THEN 1 ELSE 0 END) AS pending,
+                   SUM(CASE WHEN d.download_status IN ('ERROR','MISSING') THEN 1 ELSE 0 END) AS errors,
+                   MIN(d.submission_date) AS first_date,
+                   MAX(d.submission_date) AS last_date
+            FROM sub_cases s
+            JOIN cases ca ON ca.case_id = s.case_id
+            LEFT JOIN clients cl ON cl.client_id = ca.client_id
+            LEFT JOIN documents d ON d.sub_case_id = s.sub_case_id
+            GROUP BY s.sub_case_id ORDER BY cl.display_name, s.sub_number""")]
+        syncs = [dict(r) for r in con.execute("""
+            SELECT sr.run_id, sr.portal, s.sub_number, sr.started_at,
+                   sr.total_in_portal, sr.downloaded_new, sr.re_downloaded,
+                   sr.failed, sr.hash_changed
+            FROM sync_runs sr
+            JOIN sub_cases s ON s.sub_case_id = sr.sub_case_id
+            ORDER BY sr.run_id DESC LIMIT 50""")]
+    finally:
+        con.close()
+    return {"clients": clients, "cases": cases, "syncs": syncs}
+
 def _do_start_engine():
     return engine_inproc.start()
 
@@ -380,6 +425,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, fh.read(), mime)
             else:
                 self._send(404, b"not found", "text/plain")
+        elif path == "/api/raw_tables":
+            self._json(_raw_tables())
         elif path == "/api/dashboard":
             self._json(_do_build_dashboard())
         elif path == "/api/transcriptions":
