@@ -71,7 +71,7 @@ async function _showViewer(id, name){
     if(h.ok) ct = h.headers.get('Content-Type')||'';
     else if(h.status===404){
       fb.style.display='grid';
-      fb.textContent = 'הקובץ לא נמצא בדיסק — ייתכן שעדיין לא הורד';
+      fb.textContent = 'המסמך חסר בדיסק — ייתכן שהוסר או לא הורד';
       return;
     }
   }catch(e){}

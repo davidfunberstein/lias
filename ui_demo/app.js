@@ -196,7 +196,7 @@ const GROUP_COLORS = {'בקשה':'#2F7DF6','תגובה':'#7EB1FA','החלטה':'
 
 function pill(state){
   const m = {COMPLETED:['ok','הושלם'], ERROR:['err','שגיאה'], PENDING:['pend','ממתין'],
-             RUNNING:['run','רץ עכשיו'], IN_PROGRESS:['run','בתהליך'], CANCELLED:['pend','בוטל']};
+             MISSING:['err','חסר'], RUNNING:['run','רץ עכשיו'], IN_PROGRESS:['run','בתהליך'], CANCELLED:['pend','בוטל']};
   const [c,t] = m[state] || ['gray', state||'—'];
   return `<span class="pill ${c}">${t}</span>`;
 }

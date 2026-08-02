@@ -228,10 +228,11 @@ def extract_case_folder_name(full_case_name: str) -> str:
 
 
 def _normalize_party(name: str) -> str:
-    """Strip legal suffixes like ואח', בע"מ, etc. from a party name."""
+    """Strip legal suffixes like ואח’, בע"מ, etc. and collapse whitespace."""
     s = name.strip()
-    s = re.sub(r"\s+ואח['׳’]?\s*$", "", s)
-    s = re.sub(r"\s+בע[\"״]מ\s*$", "", s)
+    s = re.sub(r"\s+ואח\W?\s*$", "", s)
+    s = re.sub(r"\s+בע\Wמ\s*$", "", s)
+    s = re.sub(r"\s{2,}", " ", s)
     return s.strip()
 
 

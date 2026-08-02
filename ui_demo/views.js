@@ -26,7 +26,7 @@ function renderLawyer(){
       <div class="kpi-viz" id="viz-clients"></div>
     </div>
     <div class="card c4 clicky" onclick="openDrawer('cases')">
-      <div class="kpi-top"><h3>תיקים פעילים <span class="qtip" data-tip="כל התיקים שהורדו מהפורטלים, מכל הערכאות.">?</span></h3><div class="kpi-arrow">↗</div></div>
+      <div class="kpi-top"><h3>תיקים <span class="qtip" data-tip="כל התיקים שהורדו מהפורטלים, מכל הערכאות.">?</span></h3><div class="kpi-arrow">↗</div></div>
       <div class="kpi-num">${k?nf.format(k.sub_cases):'…'}</div>
       <div class="kpi-sub">${k?`${D.arkaa.length} ערכאות · NET + BDR`:''}</div>
       <div class="kpi-viz" id="viz-cases"></div>

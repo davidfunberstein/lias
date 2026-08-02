@@ -87,26 +87,59 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
     # EN: hierarchy = client / [case] / [sub_case]; flat folders are their own case.
     # HE: היררכיה = לקוח / [תיק] / [תת-תיק]; תיקייה שטוחה היא תיק בפני עצמו.
     client_name = parts[0]
-    # When the folder is a bare case number (no client subfolder), try to
-    # pull actual party names from case_info.json so the UI shows them.
-    if len(parts) == 1 or (len(parts) >= 1 and not any(
-            c in parts[0] for c in ("נ'", "נ׳", " - "))):
-        try:
-            import json as _json
-            _ci = case_dir / "case_info.json"
-            if not _ci.exists():
-                for _p in (case_dir.parent, case_dir.parent.parent):
-                    if (_p / "case_info.json").exists():
-                        _ci = _p / "case_info.json"; break
-            if _ci.exists():
-                _info = _json.loads(_ci.read_text(encoding="utf-8"))
-                _parties = _info.get("parties", [])
-                if len(_parties) >= 2:
-                    client_name = " נ' ".join(p.get("name", "") for p in _parties[:2])
-                elif _parties:
-                    client_name = _parties[0].get("name", client_name)
-        except Exception:
-            pass
+
+    import json as _json, re as _re
+    from core.download import _normalize_party
+
+    _ln = ""
+    try:
+        _sd = config.PROJECT_ROOT / "session_defaults.json"
+        if _sd.exists():
+            _ln = _json.loads(_sd.read_text("utf-8")).get("lawyer_name", "")
+    except Exception:
+        pass
+    _ln_words = set(_re.findall(r"[א-ת]{2,}", _ln)) if _ln else set()
+
+    def _is_me(name):
+        nw = set(_re.findall(r"[א-ת]{2,}", name))
+        return bool(nw) and nw.issubset(_ln_words)
+
+    def _pick_client(normed_names):
+        if _ln_words and len(normed_names) >= 2:
+            others = [n for n in normed_names if not _is_me(n)]
+            if others:
+                return " נ' ".join(sorted(set(others)))
+        if len(normed_names) >= 2:
+            return " נ' ".join(sorted(set(normed_names)))
+        if normed_names:
+            return normed_names[0]
+        return None
+
+    try:
+        _ci = case_dir / "case_info.json"
+        if not _ci.exists():
+            for _p in (case_dir.parent, case_dir.parent.parent):
+                if (_p / "case_info.json").exists():
+                    _ci = _p / "case_info.json"; break
+        if _ci.exists():
+            _info = _json.loads(_ci.read_text(encoding="utf-8"))
+            _parties = _info.get("parties", [])
+            if _parties:
+                _normed = [_normalize_party(p.get("name", "")) for p in _parties if p.get("name")]
+                result = _pick_client(_normed)
+                if result:
+                    client_name = result
+    except Exception:
+        pass
+
+    if _is_me(client_name) or client_name == parts[0]:
+        for part in parts:
+            if " - " in part:
+                folder_parties = [_normalize_party(p) for p in part.split(" - ") if p.strip()]
+                result = _pick_client(folder_parties)
+                if result and not _is_me(result):
+                    client_name = result
+                    break
     # ECA folders are client/"הוצאה לפועל"/case-number/... — drop the portal
     # segment so the case number is the REAL number, not the literal
     # "הוצאה לפועל" (which would collide across clients and merge them).
@@ -153,7 +186,7 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
                 submission_time=(row.get("שעת מסמך") or "").strip(),
                 pages=int(float(row.get("מספר עמודים") or 0)),
                 file_size_kb=int(float(row.get("גודל (KB)") or 0)),
-                download_status=_map_status(row.get("סטטוס הורדה", "")),
+                download_status="COMPLETED" if local.exists() else _map_status(row.get("סטטוס הורדה", "")),
                 local_path=str(local.relative_to(config.COURT_DOCS_DIR)) if local.exists() else "",
                 has_attachments=1 if (row.get("יש נספחים") or "").strip() == "+" else 0,
             )
@@ -194,8 +227,15 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
 
 
 def migrate() -> dict:
-    """Full import / ייבוא מלא."""
+    """Full import / ייבוא מלא. Clears existing data first to avoid duplicates."""
     db.init_db()
+    conn = db.get_conn()
+    for tbl in ("documents", "sync_runs", "snapshots", "sub_cases", "cases", "clients"):
+        try:
+            conn.execute(f"DELETE FROM {tbl}")
+        except Exception:
+            pass
+    conn.commit()
     downloads_root = config.COURT_DOCS_DIR / "downloads"
     if not downloads_root.exists():
         print(f"!! downloads folder not found / תיקיית ההורדות לא נמצאה: {downloads_root}")
