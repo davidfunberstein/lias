@@ -33,9 +33,8 @@ def _court_docs_dir(here: str) -> str:
     return os.path.join(here, "court_documents")
 
 
-def _full_ui_alive(full_ui_port: int = 0) -> bool:
-    """Is the engine running? (in-process since the 8400 merge — the port
-    argument is kept for call-site compatibility and ignored)."""
+def _full_ui_alive() -> bool:
+    """Is the engine running? (in-process)"""
     try:
         from ui_modules import engine_inproc
         return engine_inproc.alive()

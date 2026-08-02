@@ -50,7 +50,6 @@ if not os.path.exists(DB_PATH):
 UI_PATH = os.path.join(HERE, "ui_demo", "index.html")
 PORT = int(os.environ.get("LIAS_DEMO_PORT", "8500"))
 HOST = os.environ.get("LIAS_HOST", "127.0.0.1")
-FULL_UI_PORT = 8400
 KEYRING_SERVICE = "gov-il-connect"
 NOTES_PATH = os.path.join(HERE, "annotations.json")
 TRANSCRIPTIONS_DIR = os.path.join(HERE, "transcriptions")
@@ -71,7 +70,7 @@ def _do_full_ui_alive():
     return engine_inproc.alive()
 
 def _do_build_dashboard():
-    return build_dashboard(DB_PATH, FULL_UI_PORT)
+    return build_dashboard(DB_PATH)
 
 def _raw_tables():
     con = _connect(DB_PATH)
@@ -376,6 +375,20 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/proxy/bdr/cases":
             code, body, _ct = engine_inproc.request("GET", "/api/bdr/cases")
             self._send(code, body, "application/json; charset=utf-8")
+        elif path == "/api/engine/state":
+            # Unified state endpoint — combines jobs + log tail in one round-trip
+            import json as _j
+            jobs_code, jobs_body, _ = engine_inproc.request("GET", "/api/jobs?limit=25")
+            log_code, log_body, _ = engine_inproc.request("GET", "/api/log?lines=200")
+            try:
+                tasks = _j.loads(jobs_body) if jobs_code == 200 else []
+            except Exception:
+                tasks = []
+            try:
+                log_tail = _j.loads(log_body).get("lines", []) if log_code == 200 else []
+            except Exception:
+                log_tail = []
+            self._json({"tasks": tasks, "log_tail": log_tail})
         elif path.startswith("/api/doc_pdf/") or path.startswith("/api/query") \
                 or path.startswith("/api/stats") \
                 or path in (
@@ -814,7 +827,7 @@ def main() -> int:
     if "--no-browser" not in sys.argv:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     threading.Thread(target=_watchdog,
-                     args=(FULL_UI_PORT, _shutting_down_flag,
+                     args=(_shutting_down_flag,
                            _heartbeat_holder, _do_shutdown_all),
                      daemon=True).start()
     if os.environ.get("LIAS_AUTORELOAD", "1") != "0":

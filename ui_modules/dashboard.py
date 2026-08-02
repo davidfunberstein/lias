@@ -15,7 +15,7 @@ HEB_MONTHS = ["ינו", "פבר", "מרץ", "אפר", "מאי", "יונ",
               "יול", "אוג", "ספט", "אוק", "נוב", "דצמ"]
 
 
-def dashboard_from_db(con: sqlite3.Connection, full_ui_port: int) -> dict:
+def dashboard_from_db(con: sqlite3.Connection) -> dict:
     q = con.execute
 
     status = dict(q(
@@ -112,8 +112,7 @@ def dashboard_from_db(con: sqlite3.Connection, full_ui_port: int) -> dict:
         "arkaa": sorted(arkaa.values(), key=lambda a: a["docs"], reverse=True),
         "submitters": _submitters(all_rows),
         "activity": _activity(all_rows, by="client"),
-        "live": _full_ui_alive(full_ui_port),
-        "full_ui_url": f"http://localhost:{full_ui_port}",
+        "live": _full_ui_alive(),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "kpis": {
             "total_docs": total_docs,
@@ -134,7 +133,7 @@ def dashboard_from_db(con: sqlite3.Connection, full_ui_port: int) -> dict:
     }
 
 
-def demo_payload(full_ui_port: int) -> dict:
+def demo_payload() -> dict:
     """Fallback when no DB exists."""
     today = datetime.now()
     monthly = []
@@ -167,8 +166,7 @@ def demo_payload(full_ui_port: int) -> dict:
         "submitters": [{"label": "שטרן ג'רמי", "count": 70},
                        {"label": "ברזיק תומר", "count": 56},
                        {"label": "לא צוין", "count": 227}],
-        "live": _full_ui_alive(full_ui_port),
-        "full_ui_url": f"http://localhost:{full_ui_port}",
+        "live": _full_ui_alive(),
         "generated_at": today.isoformat(timespec="seconds"),
         "kpis": {"total_docs": 445, "completed": 442, "errors": 2, "pending": 1,
                  "clients": 3, "cases": 5, "sub_cases": 9, "pages": 3120},
@@ -510,12 +508,12 @@ def _empty_payload(reason: str) -> dict:
                                               "generated": datetime.now().isoformat(timespec="seconds")}
 
 
-def build_dashboard(db_path: str, full_ui_port: int) -> dict:
+def build_dashboard(db_path: str) -> dict:
     con = _connect(db_path)
     if con is None:
         return _empty_payload("אין עדיין DB — הפעל את המנוע ובצע סנכרון ראשון")
     try:
-        return dashboard_from_db(con, full_ui_port)
+        return dashboard_from_db(con)
     except sqlite3.Error as exc:
         print(f"[warn] DB read failed ({exc})", file=sys.stderr)
         return _empty_payload(f"שגיאת קריאה מה-DB: {exc}")

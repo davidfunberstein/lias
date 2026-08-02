@@ -132,7 +132,7 @@ def _autoreload_watcher(shutting_down_flag: dict) -> None:
             os.execv(sys.executable, argv)
 
 
-def _watchdog(full_ui_port: int, shutting_down_flag: dict,
+def _watchdog(shutting_down_flag: dict,
               heartbeat_holder: dict,
               shutdown_all_fn) -> None:
     """If all UI tabs disappear, shut everything down."""
@@ -162,33 +162,3 @@ def _watchdog(full_ui_port: int, shutting_down_flag: dict,
             return
 
 
-def _proxy_post(path: str, body: bytes, full_ui_port: int) -> tuple[int, bytes]:
-    """Forward an action to the full system."""
-    import urllib.request
-    raw_path, _, query = path.partition("?")
-    if not re.match(r"^actions/[\w/]+$", raw_path):
-        return 403, b'{"error":"forbidden"}'
-    url = f"http://127.0.0.1:{full_ui_port}/api/{quote(raw_path, safe='/')}"
-    if query:
-        url += "?" + query
-    try:
-        req = urllib.request.Request(url, data=body or b"", method="POST",
-                                     headers={"Content-Type": "application/json"} if body else {})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status, resp.read()
-    except Exception as exc:
-        return 502, json.dumps({"error": str(exc)}, ensure_ascii=False).encode()
-
-
-def _proxy_settings(method: str, body: bytes, full_ui_port: int) -> tuple[int, bytes]:
-    """Read/write engine settings."""
-    import urllib.request
-    url = f"http://127.0.0.1:{full_ui_port}/api/settings"
-    try:
-        req = urllib.request.Request(url, data=body if method == "POST" else None,
-                                     method=method,
-                                     headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status, resp.read()
-    except Exception as exc:
-        return 502, json.dumps({"error": str(exc)}, ensure_ascii=False).encode()

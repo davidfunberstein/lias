@@ -139,16 +139,12 @@ async function ensureNoPortalRunning(portal){
    clickable. While one portal runs, the other two are greyed out and disabled,
    and a banner names what is running. Polls the same /api/jobs the guard uses,
    so the button state can never disagree with the engine's lock. */
-let _portalLockTimer=null, _portalLockBusy='';
-async function refreshPortalLock(){
-  const bar=$('sync-platforms'); if(!bar) return;   // not on the sync screen
+let _portalLockBusy='';
+function _applyPortalLock(jobs){
+  const bar=$('sync-platforms'); if(!bar) return;
   let runningPortals=new Set();
-  try{
-    const jobs = await (await fetch('/api/jobs?limit=25')).json();
-    (jobs||[]).filter(x=>['RUNNING','PENDING'].includes(x.state)
-                                 && PORTAL_JOB_KINDS.includes(x.kind))
-              .forEach(j=>runningPortals.add((j.kind||'').split('_')[0].toUpperCase()));
-  }catch(_){}
+  (jobs||[]).filter(x=>['RUNNING','PENDING'].includes(x.state) && PORTAL_JOB_KINDS.includes(x.kind))
+            .forEach(j=>runningPortals.add((j.kind||'').split('_')[0].toUpperCase()));
   _portalLockBusy = [...runningPortals].join(',');
   const note=$('portal-lock-note');
   const anyBusy = runningPortals.size > 0;
@@ -171,10 +167,105 @@ async function refreshPortalLock(){
     } else note.style.display='none';
   }
 }
-function startPortalLockWatch(){
-  clearInterval(_portalLockTimer);
-  refreshPortalLock();
-  _portalLockTimer = setInterval(refreshPortalLock, 3000);
+// Kept for legacy call-sites; now a no-op since the unified poller drives the lock
+function startPortalLockWatch(){ _pollState(); }
+
+/* ─── unified state poller ─────────────────────────────────────────────────
+   Replaces three separate setIntervals (log/3s, tasks/2.5s, portal-lock/3s)
+   with a single 2-second poll that pauses when the tab is hidden. */
+let _stateTimer=null, _engineState={tasks:[], log_tail:[]};
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='visible') _pollState();
+});
+function _startStatePoller(){
+  clearInterval(_stateTimer);
+  _pollState();
+  _stateTimer = setInterval(_pollState, 2000);
+}
+async function _pollState(){
+  if(document.hidden) return;
+  try{
+    const r = await fetch('/api/engine/state');
+    if(!r.ok) return;
+    _engineState = await r.json();
+  }catch(_){ return; }
+  if($('taskswin-body')) _renderTasksUI(_engineState.tasks);
+  if($('logwin-body') && _logTab!=='events') _renderLogUI(_engineState.log_tail);
+  _applyPortalLock(_engineState.tasks);
+}
+function _renderLogUI(lines){
+  const el=$('logwin-body'); if(!el) return;
+  const atBottom = el.scrollTop+el.clientHeight >= el.scrollHeight-40;
+  el.style.direction='ltr'; el.style.textAlign='left';
+  let filtered = (lines||[]).filter(l=>!/^INFO:\s+127\.0\.0\.1.*"(GET|POST|PUT|DELETE|OPTIONS) \/api\/(log|health|settings|events|engine\/state)/.test(l));
+  if(_logTab==='drive'){
+    filtered = filtered.filter(l=>/drive|google|upload|gdrive|cloud/i.test(l));
+  } else if(_logTab==='transcription'){
+    filtered = filtered.filter(l=>/transcri|whisper|תמלול|הקלטה|audio|speech/i.test(l));
+  }
+  const esc = t=>t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const paint = l=>{
+    const e=esc(l);
+    if(/✗|שגיא|ERROR|Error|Traceback|failed|FAILED|Exception/.test(l))
+      return `<span style="color:#ff8a80">${e}</span>`;
+    if(/✓|Success|הושלם|הצליח|COMPLETED/.test(l))
+      return `<span style="color:#69f0ae">${e}</span>`;
+    if(/⚠|warn|WARN/.test(l)) return `<span style="color:#ffd54f">${e}</span>`;
+    return e;
+  };
+  const html = filtered.slice(-500).map(paint).join('\n')
+    || (_logTab==='drive'?'אין לוגים של Drive':_logTab==='transcription'?'אין לוגים של תמלול':'הלוג ריק');
+  el.innerHTML = html;
+  window._logText = filtered.join('\n');
+  if(atBottom) el.scrollTop = el.scrollHeight;
+}
+function _renderTasksUI(jobs){
+  const el=$('taskswin-body'); if(!el) return;
+  const active = (jobs||[]).filter(j=>['RUNNING','PENDING'].includes(j.state));
+  const recent = (jobs||[]).filter(j=>!['RUNNING','PENDING'].includes(j.state)).slice(0,5);
+  window._activeJobs = active;
+  const activePortals = Object.keys(_dlByPortal);
+  const CANCELLABLE = ['net_smart_download','net_download_all','bdr_batch','eca_sync'];
+  const row = j=>`<div style="padding:8px 0;border-bottom:1px solid var(--line)">
+    <div style="display:flex;align-items:center;gap:6px">
+      <b style="flex:1">${JOB_ICONS[j.kind]||'⚙'} ${JOB_LABELS[j.kind]||j.kind}</b>
+      ${pill(j.state)}
+      ${j.state==='RUNNING'&&CANCELLABLE.includes(j.kind)?`<button class="fv-btn" style="font-size:10.5px;padding:3px 8px;color:var(--danger)" onclick="stopJob(${j.job_id})">⏹ עצור</button>`:''}
+    </div>
+    ${j.state==='RUNNING'?`<div style="height:6px;background:var(--line);border-radius:4px;margin:5px 0"><i style="display:block;height:100%;width:${Math.round((j.progress||0)*100)}%;background:var(--accent);border-radius:4px;transition:width .4s"></i></div>`:''}
+    <div style="font-size:11.5px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${j.message||j.error||''}</div>
+  </div>`;
+  el.innerHTML =
+    activePortals.map(p=>{const st=_dlByPortal[p];const docs=st.docs_downloaded||0;
+      const cases = st.cases_detail || [];
+      const casesHtml = cases.length ? `
+        <div style="margin-top:6px;max-height:180px;overflow-y:auto;font-weight:400">
+        ${cases.map(c=>{
+          const s=c.status||'pending';
+          const icon={done:'✓',downloading:'⏳',failed:'✗',skipped:'⏭'}[s]||'·';
+          const canStop = (s==='pending'||s==='downloading');
+          return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;
+                   font-size:12px;border-top:1px solid rgba(127,127,127,.15);
+                   opacity:${s==='done'?'.6':'1'}">
+            <span style="width:14px">${icon}</span>
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+                  white-space:nowrap"><b>${c.id}</b> ${c.name||''}</span>
+            ${canStop ? `<button class="fv-btn" title="עצור רק את התיק הזה"
+                 style="font-size:10.5px;padding:2px 8px;color:var(--danger)"
+                 onclick="stopCase('${p}','${c.id}')">⏹ תיק</button>` : ''}
+          </div>`;}).join('')}
+        </div>` : '';
+      return `<div style="padding:8px 12px;margin-bottom:8px;border-radius:10px;background:var(--accent-soft,#eef4ff);font-weight:600">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="flex:1">⬇ <b>${PORTAL_LABELS[p]||p}</b>: תיק ${st.done||0}/${st.total||0} · ${docs} מסמכים${st.speed_per_min?` · ${st.speed_per_min}/דקה`:''} ${st.failed?` · <span style="color:var(--danger)">${st.failed} כשלו</span>`:''}</span>
+        <button class="fv-btn" style="font-size:10.5px;padding:3px 9px;color:var(--danger)"
+                onclick="stopPortalDownload('${p}')" title="עצור את כל ההורדה של פורטל זה">⏹ פורטל</button>
+      </div>
+      ${casesHtml}
+    </div>`;}).join('')
+    + (active.length? '<div style="font-weight:800;margin:4px 0;color:var(--accent-strong,#1d64d8)">רץ עכשיו / בהמתנה</div>'+active.map(row).join('')
+                    : '<div class="empty" style="padding:16px 0">אין משימות פעילות כרגע</div>')
+    + (recent.length? '<div style="font-weight:800;margin:12px 0 4px;opacity:.7">הסתיימו לאחרונה</div>'+recent.map(row).join('') : '');
 }
 
 async function act(path, label){
@@ -362,10 +453,10 @@ function connectEngineSSE(){
 }
 
 /* ─── log window ─── */
-let _logTimer=null, _logTab='engine';
+let _logTab='engine';
 function toggleLogWin(){
   let w=$('logwin');
-  if(w){ clearInterval(_logTimer); _logTimer=null; w.remove(); return; }
+  if(w){ w.remove(); return; }
   w=document.createElement('div'); w.id='logwin';
   w.style.cssText='position:fixed;bottom:16px;left:16px;width:min(560px,94vw);height:380px;'
     +'background:#0E1B29;color:#c8e6c9;border:1px solid #2a352c;border-radius:14px;'
@@ -387,52 +478,25 @@ function toggleLogWin(){
   document.body.appendChild(w);
   _makeDraggable('logwin','logwin-top');
   setLogTab('engine');
-  _logTimer = setInterval(_refreshLog, 3000);
+  _pollState();
 }
 function setLogTab(t){
-  _logTab=t; _refreshLog();
+  _logTab=t;
   document.querySelectorAll('.log-tab-btn').forEach(b=>b.style.background='transparent');
   const active=$('lg-t-'+t); if(active) active.style.background='rgba(255,255,255,.15)';
-}
-async function _refreshLog(){
-  const el=$('logwin-body'); if(!el) return;
-  const atBottom = el.scrollTop+el.clientHeight >= el.scrollHeight-40;
-  if(_logTab==='events'){
+  if(t==='events'){
+    const el=$('logwin-body'); if(!el) return;
     el.style.direction='rtl'; el.style.textAlign='right';
     el.innerHTML = _logBuf.map(l=>`<div>${l}</div>`).join('') || '<div style="color:#7a8a7d">אין אירועים עדיין</div>';
   } else {
-    el.style.direction='ltr'; el.style.textAlign='left';
-    try{
-      const r = await (await fetch('/api/log?lines=300')).json();
-      let filtered = (r.lines||[]).filter(l=>!/^INFO:\s+127\.0\.0\.1.*"(GET|POST|PUT|DELETE|OPTIONS) \/api\/(log|health|settings|events)/.test(l));
-      if(_logTab==='drive'){
-        filtered = filtered.filter(l=>/drive|google|upload|gdrive|cloud/i.test(l));
-      } else if(_logTab==='transcription'){
-        filtered = filtered.filter(l=>/transcri|whisper|תמלול|הקלטה|audio|speech/i.test(l));
-      }
-      const esc = t=>t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
-      const paint = l=>{
-        const e=esc(l);
-        if(/✗|שגיא|ERROR|Error|Traceback|failed|FAILED|Exception/.test(l))
-          return `<span style="color:#ff8a80">${e}</span>`;
-        if(/✓|Success|הושלם|הצליח|COMPLETED/.test(l))
-          return `<span style="color:#69f0ae">${e}</span>`;
-        if(/⚠|warn|WARN/.test(l)) return `<span style="color:#ffd54f">${e}</span>`;
-        return e;
-      };
-      el.innerHTML = filtered.map(paint).join('\n')
-        || (_logTab==='drive'?'אין לוגים של Drive':_logTab==='transcription'?'אין לוגים של תמלול':'הלוג ריק');
-      window._logText = filtered.join('\n');
-    }catch(e){ el.innerHTML = '<div style="color:#7a8a7d">המנוע כבוי — אין לוג. הפעל את המנוע.</div>'; }
+    _renderLogUI(_engineState.log_tail);
   }
-  if(atBottom) el.scrollTop = el.scrollHeight;
 }
 
 /* ─── tasks balloon: what runs now, what waits, rate, per-job stop ─── */
-let _tasksTimer=null;
 function toggleTasksWin(forceOpen){
   let w=$('taskswin');
-  if(w && !forceOpen){ clearInterval(_tasksTimer); _tasksTimer=null; w.remove();
+  if(w && !forceOpen){ w.remove();
     try{sessionStorage.setItem('tasksWinOpen','0');}catch(_){}
     return; }
   if(w) return;
@@ -450,8 +514,7 @@ function toggleTasksWin(forceOpen){
   document.body.appendChild(w);
   _makeDraggable('taskswin','taskswin-top');
   try{sessionStorage.setItem('tasksWinOpen','1');}catch(_){}
-  _refreshTasks();
-  _tasksTimer=setInterval(_refreshTasks, 2500);
+  _pollState();
 }
 function stopAllDownloads(){
   document.querySelectorAll('[data-stopjob]').forEach(b=>{});
@@ -465,61 +528,6 @@ function stopAllDownloads(){
 function stopJob(jobId){
   fetch('/api/proxy/actions/cancel_download?job_id='+jobId,{method:'POST'});
   toast('נשלחה הוראת עצירה — התיק הנוכחי יסתיים ואז ייעצר');
-}
-async function _refreshTasks(){
-  const el=$('taskswin-body'); if(!el) return;
-  try{
-    const jobs = await (await fetch('/api/jobs?limit=25')).json();
-    const active = (jobs||[]).filter(j=>['RUNNING','PENDING'].includes(j.state));
-    const recent = (jobs||[]).filter(j=>!['RUNNING','PENDING'].includes(j.state)).slice(0,5);
-    window._activeJobs = active;
-    const activePortals = Object.keys(_dlByPortal);
-    const CANCELLABLE = ['net_smart_download','net_download_all','bdr_batch','eca_sync'];
-    const row = j=>`<div style="padding:8px 0;border-bottom:1px solid var(--line)">
-      <div style="display:flex;align-items:center;gap:6px">
-        <b style="flex:1">${JOB_ICONS[j.kind]||'⚙'} ${JOB_LABELS[j.kind]||j.kind}</b>
-        ${pill(j.state)}
-        ${j.state==='RUNNING'&&CANCELLABLE.includes(j.kind)?`<button class="fv-btn" style="font-size:10.5px;padding:3px 8px;color:var(--danger)" onclick="stopJob(${j.job_id})">⏹ עצור</button>`:''}
-      </div>
-      ${j.state==='RUNNING'?`<div style="height:6px;background:var(--line);border-radius:4px;margin:5px 0"><i style="display:block;height:100%;width:${Math.round((j.progress||0)*100)}%;background:var(--accent);border-radius:4px;transition:width .4s"></i></div>`:''}
-      <div style="font-size:11.5px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${j.message||j.error||''}</div>
-    </div>`;
-    el.innerHTML =
-      activePortals.map(p=>{const st=_dlByPortal[p];const docs=st.docs_downloaded||0;
-        // Per-case control lived only in the floating download panel, so during
-        // a run the tasks window — the place you actually watch — could stop
-        // everything but not a single stuck case. The case list is rendered
-        // here too, each row with its own ⏹.
-        const cases = st.cases_detail || [];
-        const casesHtml = cases.length ? `
-          <div style="margin-top:6px;max-height:180px;overflow-y:auto;font-weight:400">
-          ${cases.map(c=>{
-            const s=c.status||'pending';
-            const icon={done:'✓',downloading:'⏳',failed:'✗',skipped:'⏭'}[s]||'·';
-            const canStop = (s==='pending'||s==='downloading');
-            return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;
-                     font-size:12px;border-top:1px solid rgba(127,127,127,.15);
-                     opacity:${s==='done'?'.6':'1'}">
-              <span style="width:14px">${icon}</span>
-              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
-                    white-space:nowrap"><b>${c.id}</b> ${c.name||''}</span>
-              ${canStop ? `<button class="fv-btn" title="עצור רק את התיק הזה"
-                   style="font-size:10.5px;padding:2px 8px;color:var(--danger)"
-                   onclick="stopCase('${p}','${c.id}')">⏹ תיק</button>` : ''}
-            </div>`;}).join('')}
-          </div>` : '';
-        return `<div style="padding:8px 12px;margin-bottom:8px;border-radius:10px;background:var(--accent-soft,#eef4ff);font-weight:600">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="flex:1">⬇ <b>${PORTAL_LABELS[p]||p}</b>: תיק ${st.done||0}/${st.total||0} · ${docs} מסמכים${st.speed_per_min?` · ${st.speed_per_min}/דקה`:''} ${st.failed?` · <span style="color:var(--danger)">${st.failed} כשלו</span>`:''}</span>
-          <button class="fv-btn" style="font-size:10.5px;padding:3px 9px;color:var(--danger)"
-                  onclick="stopPortalDownload('${p}')" title="עצור את כל ההורדה של פורטל זה">⏹ פורטל</button>
-        </div>
-        ${casesHtml}
-      </div>`;}).join('')
-      + (active.length? '<div style="font-weight:800;margin:4px 0;color:var(--accent-strong,#1d64d8)">רץ עכשיו / בהמתנה</div>'+active.map(row).join('')
-                      : '<div class="empty" style="padding:16px 0">אין משימות פעילות כרגע</div>')
-      + (recent.length? '<div style="font-weight:800;margin:12px 0 4px;opacity:.7">הסתיימו לאחרונה</div>'+recent.map(row).join('') : '');
-  }catch(e){ el.innerHTML='<div class="empty">המנוע כבוי — הפעל סנכרון כדי לראות משימות</div>'; }
 }
 
 function copyLog(){
@@ -747,10 +755,12 @@ async function toggleRealBrowser(){
 }
 
 /* legacy screenshot mirror */
-let _shotTimer=null;
+let _shotTimer=null, _shotBlobUrl=null;
 function toggleBrowserWin(){
   let w=$('bwin');
-  if(w){ clearInterval(_shotTimer); _shotTimer=null; w.remove(); return; }
+  if(w){ clearInterval(_shotTimer); _shotTimer=null;
+    if(_shotBlobUrl){ URL.revokeObjectURL(_shotBlobUrl); _shotBlobUrl=null; }
+    w.remove(); return; }
   w=document.createElement('div'); w.id='bwin';
   w.style.cssText='position:fixed;bottom:16px;right:16px;width:min(560px,94vw);'
     +'background:var(--surface,#fff);border:1px solid var(--line,#e5e5e5);border-radius:14px;'
@@ -783,18 +793,21 @@ function toggleBrowserWin(){
       if(!hasFrame) $('bwin-body').innerHTML = '<div style="padding:30px;text-align:center">ברגע שתופעל פעולה בפורטל, המסך יופיע כאן</div>';
       return;
     }
+    if(document.hidden) return;
     try{
       const r = await fetch('/api/browser/screenshot?t='+Date.now());
       if(!r.ok) throw 0;
       const blob = await r.blob();
-      $('bwin-body').innerHTML = `<img style="width:100%;display:block" src="${URL.createObjectURL(blob)}">`;
+      if(_shotBlobUrl) URL.revokeObjectURL(_shotBlobUrl);
+      _shotBlobUrl = URL.createObjectURL(blob);
+      $('bwin-body').innerHTML = `<img style="width:100%;display:block" src="${_shotBlobUrl}">`;
       hasFrame=true;
       setState('🟢 תצוגה חיה');
     }catch(e){
       setState('⏳ הדפדפן עסוק — התצוגה תתעדכן בעוד רגע');
     }
   };
-  tick(); _shotTimer = setInterval(tick, 2500);
+  tick(); _shotTimer = setInterval(tick, 5000);
 }
 
 /* ─── sync card ─── */
@@ -1300,7 +1313,7 @@ function stopCase(portal, caseId){
   if(row && (row.status==='pending'||row.status==='downloading')){
     row.status='skipped'; _saveDl();
     if(typeof _renderDlStats==='function') _renderDlStats();
-    if(typeof _refreshTasks==='function') _refreshTasks();
+    _pollState();
   }
   logEvent(`⏹ בקשת עצירה לתיק ${caseId} (${PORTAL_LABELS[portal]||portal})`);
   fetch('/api/proxy/actions/cancel_case',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -1576,3 +1589,6 @@ function refreshFab(){
   }
   el.innerHTML = html || '<div class="empty">אין פעילות עדיין</div>';
 }
+
+// Start the unified state poller once the page is ready
+document.addEventListener('DOMContentLoaded', _startStatePoller);
