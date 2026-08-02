@@ -1013,7 +1013,13 @@ def _process_case(page, case: dict, output_dir: Path, by_client: bool = False,
                 return cand
         return path
 
-    for rd in rows_data:
+    # Collect process identifiers as plain strings upfront — DOM elements
+    # become stale if a download causes page navigation, but string IDs survive.
+    proc_ids = [rd["process"] for rd in rows_data]
+    proc_map = {rd["process"]: rd for rd in rows_data}
+
+    for idx, proc_id in enumerate(proc_ids):
+        rd = proc_map[proc_id]
         if should_cancel and should_cancel():
             _log(f"  ⏹ עצירת תיק {case_num} באמצע (בקשת המשתמש)")
             break
@@ -1022,18 +1028,32 @@ def _process_case(page, case: dict, output_dir: Path, by_client: bool = False,
         date = _sanitize(rd["date"] or "")
         dec_date = _sanitize(rd["dec_date"] or "")
         proc_dir = case_dir / _sanitize(proc.split(".")[0])
+        _log(f"  הליך {idx+1}/{len(proc_ids)}: {proc}")
+
+        def _ensure_on_case() -> bool:
+            """Navigate back to case page if a download caused navigation away."""
+            if not _on_case_page(page, case_num):
+                _log(f"    ↩ ניווט חזרה לתיק {case_num} אחרי הורדה")
+                if not _open_motions_tab(page, case_num):
+                    _log(f"    ✗ לא חזר לרשימת ההליכים — מדלג על {proc}", "warn")
+                    return False
+            return True
 
         if rd["has_motion"]:
             target = _unique(proc_dir / _make_filename(proc, date, "בקשה", applicant))
             _log(f"    [{proc}] בקשה ({date}) — {target.name}")
             row = _row_locator(page, proc, rd["date"])
             _stats_tick(_download_doc(page, row, "motionDocumentID", target))
+            if not _ensure_on_case():
+                continue
 
         if rd["has_decision"]:
             target = _unique(proc_dir / _make_filename(proc, dec_date, "החלטה", applicant))
             _log(f"    [{proc}] החלטה ({dec_date}) — {target.name}")
             row = _row_locator(page, proc, rd["date"])
             _stats_tick(_download_doc(page, row, "decisionDocumentID", target))
+            if not _ensure_on_case():
+                continue
 
         time.sleep(0.3)
 

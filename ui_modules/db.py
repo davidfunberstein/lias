@@ -210,7 +210,25 @@ def _find_case_info(sub_number: str, portal: str) -> dict | None:
                                 cd = (row.get("תאריך סגירה") or "").strip()
                                 if result is None:
                                     result = {}
-                                result["status"] = "סגור" if cd else "פתוח"
+                                # Prefer explicit status field; fall back to close_date
+                                # only when the date is in the past (conservative: open if unsure)
+                                explicit = (row.get("סטטוס") or "").strip()
+                                if explicit:
+                                    result["status"] = explicit
+                                    result["status_source"] = "csv"
+                                elif cd:
+                                    import datetime as _dt
+                                    try:
+                                        parts = cd.replace("/", ".").split(".")
+                                        cd_date = _dt.date(int(parts[2]), int(parts[1]), int(parts[0]))
+                                        # Only infer closed if date is past — never for future or today
+                                        result["status"] = "סגור" if cd_date < _dt.date.today() else "פתוח"
+                                    except Exception:
+                                        result["status"] = "פתוח"  # unknown → assume open
+                                    result["status_source"] = f"close_date:{cd}"
+                                else:
+                                    result["status"] = "פתוח"
+                                    result["status_source"] = "no_close_date"
                                 break
                 except Exception:
                     pass
@@ -291,6 +309,8 @@ def _case_cards(rows: list[dict]) -> list[dict]:
                 dst["parties"] = c["parties"]
             if not dst.get("portal_status") and c.get("portal_status"):
                 dst["portal_status"] = c["portal_status"]
+                if c.get("status_source"):
+                    dst["status_source"] = c["status_source"]
             if not dst["location"] and c["location"]:
                 dst["location"] = c["location"]
         else:

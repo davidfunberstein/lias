@@ -454,9 +454,23 @@ function renderCase(){
   $('view').innerHTML = `
   <div class="hello"><div class="small">${K?K.arkaa:''}</div>
     <h1 style="font-size:26px">${K?K.sub_number:'טוען…'} ${K?arkaaTag(K.arkaa,K.portal):''}
-      ${K?(( ()=>{const ls=caseStatusMap()[K.sub_case_id]; const st=ls||(K.portal_status&&/סגור|closed/i.test(K.portal_status)?'closed':'open'); return st==='closed'
-        ? `<span class="pill gray">תיק סגור</span> <button class="fv-btn" style="font-size:11px" onclick="toggleCaseStatus(${K.sub_case_id})">סמן כפתוח</button>`
-        : `<span class="pill ok">תיק פתוח</span> <button class="fv-btn" style="font-size:11px" onclick="toggleCaseStatus(${K.sub_case_id})">סמן כסגור</button>`;})() ):''}
+      ${K?(( ()=>{
+        const ls=caseStatusMap()[K.sub_case_id];
+        const st=ls||(K.portal_status&&/סגור|closed/i.test(K.portal_status)?'closed':'open');
+        const src=K.status_source?`מקור: ${K.status_source}`:'סטטוס לפי הפורטל';
+        const portalPill = st==='closed'
+          ? `<span class="pill gray" title="סטטוס תיק בפורטל — ${src}">📁 סגור</span>`
+          : `<span class="pill ok" title="סטטוס תיק בפורטל — ${src}">📂 פתוח</span>`;
+        const toggleBtn = st==='closed'
+          ? `<button class="fv-btn" style="font-size:11px" onclick="toggleCaseStatus(${K.sub_case_id})">סמן כפתוח</button>`
+          : `<button class="fv-btn" style="font-size:11px" onclick="toggleCaseStatus(${K.sub_case_id})">סמן כסגור</button>`;
+        const syncLabel = K.errors>0 ? 'שגיאות הורדה' : K.docs>0 ? 'הורד' : 'לא סונכרן';
+        const syncPill = K.errors>0
+          ? `<span class="pill err" title="סטטוס הורדה פנימי">⚠ ${K.errors} שגיאות</span>`
+          : K.docs>0 ? `<span class="pill" title="סטטוס הורדה פנימי">✓ ${K.docs} מסמכים</span>`
+          : `<span class="pill gray" title="סטטוס הורדה פנימי">○ לא סונכרן</span>`;
+        return portalPill + ' ' + syncPill + ' ' + toggleBtn;
+      })() ):''}
       ${K?`<button class="fv-btn" style="font-size:11px" onclick="openCaseInPortal()" title="פתח את התיק בפורטל בדפדפן לצפייה ויזואלית">🌐 פתח בפורטל</button>
         <button class="fv-btn" style="font-size:11px" onclick="uploadToCase()" title="העלה מסמך אחד או כמה לתיק — יסומנו 'לא מהתיק'">➕ הוסף מסמכים</button>
         <button class="fv-btn" style="font-size:11px" onclick="shareCase()" title="שתף רק את התיק הזה בצפייה">🔗 שתף תיק</button>
