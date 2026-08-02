@@ -179,15 +179,12 @@ function startPortalLockWatch(){
 
 async function act(path, label){
   if(!D?.live){
-    toast('מתחיל רקע…');
     await startEngine();
   }
-  toast((label||'פעולה')+' — נשלח…');
   logEvent('→ '+(label||path));
   try{
     const r = await fetch('/api/proxy/actions/'+path, {method:'POST'});
     if(r.ok){
-      toast((label||'פעולה')+' הופעל ✓');
       showJobBar(label||'פעולה', 0, 'ממתין לתחילת עבודה…');
     } else toast('שגיאה בהפעלה', true);
   }catch(e){ toast('שגיאה: '+e.message, true); }
@@ -805,11 +802,11 @@ let _currentScope = 'all';
 /* Platform-first sync: pick a portal, THEN see only its relevant options.
    The three portals are independent — NET/BDR/ECA never share a flow. */
 let _syncPlatform = null;
+try{ _syncPlatform = localStorage.getItem('lias_last_portal') || null; }catch(_){}
 function syncCard(el){
   el.innerHTML = `<h2>סנכרון — הורדת תיקים
       <span class="qtip" data-tip="בוחרים פורטל, לוחצים הורדה — והמערכת מתחברת ומורידה לבד. ההיקף (הכל / נבחרים) נקבע בהגדרות ⚙.">?</span></h2>
-    <div class="meta">בחר תחילה מאיזה פורטל להוריד, ואז מה להוריד.
-      ☁ אם Drive מוגדר, הקבצים עולים אוטומטית במקביל.</div>
+    <div class="meta">בחר פורטל להורדה. ☁ אם Drive מוגדר, הקבצים עולים אוטומטית במקביל.</div>
     <div id="dl-stats-panel" style="display:none"></div>
     <div id="portal-lock-note" style="display:none;margin-top:12px;padding:9px 12px;
          border-radius:10px;background:rgba(230,168,0,.14);border:1px solid rgba(230,168,0,.5);
@@ -834,6 +831,7 @@ function syncCard(el){
 
 function pickPlatform(p){
   _syncPlatform = p;
+  try{ localStorage.setItem('lias_last_portal', p); }catch(_){}
   ['NET','BDR','ECA'].forEach(x=>{
     const b=$('plat-'+x); if(b) b.classList.toggle('on', x===p);
   });
@@ -1152,9 +1150,17 @@ async function runNet(){
   const s = window._settings || {};
   const scope = _syncScopeChoice || s.net_scope || 'selected';
   if(scope==='all'){
-    act('net_download_all','הורדת כל תיקי נט');
+    const filter = _syncAllMode || 'all';
+    fetch('/api/proxy/actions/net_download_all', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({open_filter: filter})
+    }).then(r=>{
+      if(r.ok) showJobBar('הורדת כל תיקי נט', 0, 'ממתין לתחילת עבודה…');
+      else toast('שגיאה בהפעלה', true);
+    }).catch(e=>toast('שגיאה: '+e.message, true));
+    logEvent('→ הורדת כל תיקי נט (סינון: '+filter+')');
   } else {
-    startNetDownload();   // show list → pick
+    startNetDownload();
   }
 }
 function runBdr(){

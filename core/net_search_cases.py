@@ -521,10 +521,12 @@ def run_bulk_download_from_date_search(
     logger: "Logger | None" = None,
     years_back: int = 10,
     on_case_done: "Callable[[Path, str], None] | None" = None,
+    open_filter: str = "all",
 ) -> None:
     """Full flow: search by date → extract cases → download each one.
 
     years_back: how many years back from today the from_date will be set.
+    open_filter: 'all' / 'open' / 'open_client' — skip closed cases when set.
     """
     def _log(msg: str, level: str = "info") -> None:
         print(f"[BulkSearch] {msg}")
@@ -583,6 +585,28 @@ def run_bulk_download_from_date_search(
             parseable.append((c, parsed[0], parsed[1]))
         else:
             skipped.append(did)
+
+    if open_filter and open_filter != "all":
+        before = len(parseable)
+        _OPEN_RE = re.compile(r"פתוח|פעיל|open", re.IGNORECASE)
+        _CLOSED_RE = re.compile(r"סגור|closed|נמחק", re.IGNORECASE)
+        def _is_open(c):
+            st = c.get("CaseStatusName", "")
+            if not st:
+                return True
+            return bool(_OPEN_RE.search(st)) and not bool(_CLOSED_RE.search(st))
+        if open_filter == "open":
+            parseable = [(c, n, m) for c, n, m in parseable if _is_open(c)]
+        elif open_filter == "open_client":
+            active_clients = set()
+            for c, _n, _m in parseable:
+                if _is_open(c):
+                    active_clients.add((c.get("CaseName", "") or "").strip())
+            parseable = [(c, n, m) for c, n, m in parseable
+                         if _is_open(c) or (c.get("CaseName", "") or "").strip() in active_clients]
+        filtered = before - len(parseable)
+        if filtered:
+            _log(f"סונן לפי '{open_filter}': {filtered} תיקים סגורים דולגו.")
 
     _log(f"{len(parseable)} תיקים להורדה, {len(skipped)} דולגו (פורמט לא מוכר: {skipped}).")
 

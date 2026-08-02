@@ -287,6 +287,18 @@ def handle_bdr_login_page(
     # Brief pause to allow the DevExpress combo state to settle
     time.sleep(0.5)
 
+    # Detect error page before trying to click — the portal sometimes returns
+    # its error page (ErrorPage.aspx) after the SSO redirect, and we'd
+    # time-out on every locator if we don't bail early.
+    import re as _re
+    _url = page.url or ""
+    if _re.search(r"ErrorPage|FailedSite", _url, _re.IGNORECASE):
+        msg = "פורטל בית הדין הרבני מציג דף שגיאה — ככל הנראה תקלה בצד השרת. נסה שוב מאוחר יותר."
+        print(f"{_ts()} [BDR] ⛔ {msg}")
+        if logger:
+            logger.error(f"[BDR] {msg}")
+        return False
+
     print(f"{_ts()} [BDR] {t('bdr_clicking_enter')}")
 
     for sel in _ENTER_SYSTEM_SELECTORS:

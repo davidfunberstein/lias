@@ -168,25 +168,47 @@ def navigate_to_case_by_number(
             _log(f"מעבר חלק לתיק {case_number}/{month_year_raw} "
                  f"(חיפוש בכותרת — בלי לטעון מחדש את רשימת התיקים)")
         else:
-            _log(f"Navigating to secured portal before entering case "
-                 f"{case_number}/{month_year_raw}...")
+            # Try to force-show the header search on the current page first,
+            # before the expensive full-page navigation.
             try:
-                page.goto(_SECURED_HOME, wait_until="networkidle", timeout=20000)
+                page.evaluate("""
+                    ['header_CaseLocatorHeaderUC2_BamaMonthYearTextBoxHT',
+                     'Header1_CaseLocatorHeaderUC2_BamaMonthYearTextBoxHT'].forEach(id => {
+                        var el = document.getElementById(id);
+                        if (!el) return;
+                        var node = el;
+                        while (node && node !== document.body) {
+                            var s = window.getComputedStyle(node);
+                            if (s.display === 'none') node.style.setProperty('display', '', 'important');
+                            if (s.visibility === 'hidden') node.style.setProperty('visibility', 'visible', 'important');
+                            node = node.parentElement;
+                        }
+                    });
+                """)
+                time.sleep(0.5)
             except Exception:
+                pass
+            if _locator_fields_ready():
+                _log(f"מעבר חלק לתיק {case_number}/{month_year_raw} "
+                     f"(חיפוש בכותרת — שדות הוצגו מחדש)")
+            else:
+                _log(f"Navigating to secured portal before entering case "
+                     f"{case_number}/{month_year_raw}...")
                 try:
-                    page.goto(_SECURED_HOME, wait_until="domcontentloaded", timeout=15000)
+                    page.goto(_SECURED_HOME, wait_until="networkidle", timeout=20000)
                 except Exception:
-                    time.sleep(3)
+                    try:
+                        page.goto(_SECURED_HOME, wait_until="domcontentloaded", timeout=15000)
+                    except Exception:
+                        time.sleep(3)
 
-            # The header search should be available on PersonalAreaPage already.
-            # Only fall back to the heavy "התיקים שלי" if fields still missing.
-            time.sleep(1.5)
-            if not _locator_fields_ready():
-                try:
-                    from core.net_search_cases import navigate_to_my_cases
-                    navigate_to_my_cases(page)
-                except Exception as nav_exc:
-                    _log(f"  Could not navigate to my-cases: {nav_exc}")
+                time.sleep(1.5)
+                if not _locator_fields_ready():
+                    try:
+                        from core.net_search_cases import navigate_to_my_cases
+                        navigate_to_my_cases(page)
+                    except Exception as nav_exc:
+                        _log(f"  Could not navigate to my-cases: {nav_exc}")
 
         # Re-resolve selectors (secured portal uses 'header_' prefix)
         my_sel  = _resolve_sel(_BASE_MY)

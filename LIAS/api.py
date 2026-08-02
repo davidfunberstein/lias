@@ -660,8 +660,15 @@ def act_drive_share(emails: str = "", scope: str = "all", case_folder: str = "")
 
 
 @app.post("/api/actions/net_download_all")
-def act_net_download_all(years_back: int = 20):
-    return {"job_id": jobs.submit("net_download_all", {"years_back": years_back})}
+async def act_net_download_all(request: Request):
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    years_back = int(body.get("years_back", 20))
+    open_filter = body.get("open_filter", "all")
+    return {"job_id": jobs.submit("net_download_all", {"years_back": years_back, "open_filter": open_filter})}
 
 
 @app.post("/api/actions/reorganize_folders")

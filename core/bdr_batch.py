@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from core.logger import Logger
 
 BDR_FILES_URL = "https://sides.rbc.gov.il/Pages/FilesList.aspx"
+BDR_ERROR_PAGE_PATTERN = re.compile(r"ErrorPage|FailedSite", re.IGNORECASE)
 GRID_ID = (
     "ctl00_ctl00_ContentPlaceHolder_PH_GridData_"
     "ASPxRoundPanel2_grdFilesView"
@@ -852,9 +853,20 @@ class BdrBatchRunner:
 
     # ── Navigation ────────────────────────────────────────────────────────────
 
+    def _is_error_page(self) -> bool:
+        """Detect if the BDR portal redirected to its error page."""
+        try:
+            url = self.page.url or ""
+            return bool(BDR_ERROR_PAGE_PATTERN.search(url))
+        except Exception:
+            return False
+
     def _select_status_and_search(self, option_index: int, label: str) -> bool:
         """Pick status option #option_index from the dropdown, click 'אתר',
         and return True only if group rows are actually visible afterwards."""
+        if self._is_error_page():
+            self._log("⛔ פורטל בית הדין הרבני מציג דף שגיאה — ככל הנראה תקלה בצד השרת. נסה שוב מאוחר יותר.", "error")
+            raise RuntimeError("פורטל בית הדין הרבני אינו זמין כרגע (דף שגיאה מהשרת) — נסה שוב מאוחר יותר")
         for _attempt in (1, 2):
             try:
                 self._log(f"בוחר '{label}' מהתפריט...")
@@ -868,6 +880,9 @@ class BdrBatchRunner:
                 break
             except Exception as e:
                 self._log(f"שגיאה בתפריט ({label}): {e}", "warn")
+                if self._is_error_page():
+                    self._log("⛔ פורטל בית הדין הרבני מציג דף שגיאה — ככל הנראה תקלה בצד השרת.", "error")
+                    raise RuntimeError("פורטל בית הדין הרבני אינו זמין כרגע (דף שגיאה מהשרת) — נסה שוב מאוחר יותר")
                 if _attempt == 1:
                     self._log("קוטע ניווט תקוע וחוזר לרשימת התיקים...", "warn")
                     try:

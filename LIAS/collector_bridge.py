@@ -817,7 +817,8 @@ def net_download_all(payload: dict, ctx: JobContext) -> str:
     if ctx.browser is None:
         raise RuntimeError("no browser attached / אין דפדפן מחובר")
     years_back = min(int(payload.get("years_back", 10)), 10)
-    ctx.progress(0.05, f"הורדת כל התיקים — {years_back} שנים אחורה (ללא תלות בקשורים)")
+    open_filter = payload.get("open_filter", "all")
+    ctx.progress(0.05, f"הורדת כל התיקים — {years_back} שנים אחורה (סינון: {open_filter})")
 
     def _run(page):
         from core.connection import ensure_logged_in
@@ -827,7 +828,7 @@ def net_download_all(payload: dict, ctx: JobContext) -> str:
         run_bulk_download_from_date_search(
             page=page, root_output_dir=config.COURT_DOCS_DIR,
             session_settings={**SESSION_SETTINGS, "download_related_cases": False},
-            logger=None, years_back=years_back,
+            logger=None, years_back=years_back, open_filter=open_filter,
             on_case_done=lambda d, num: import_one_case(d, "NET", num))
         return "download-all done"
 
@@ -1420,6 +1421,7 @@ def net_smart_download(payload: dict, ctx: JobContext) -> str:
     if isinstance(selected_ids, str):
         selected_ids = json.loads(selected_ids)
     years_back = min(int(payload.get("years_back", 10)), 10)
+    open_filter = payload.get("open_filter", "all")
 
     _cancel_flags[ctx.job_id] = False
     stats = {"done": 0, "total": 0, "failed": 0, "docs_downloaded": 0,
@@ -1495,6 +1497,28 @@ def net_smart_download(payload: dict, ctx: JobContext) -> str:
                                   "interest": c.get("CaseInterestName", "")})
         else:
             queue = list(selected_ids)
+
+        if mode == "all" and open_filter and open_filter != "all":
+            import re as _re
+            _OPEN_RE = _re.compile(r"פתוח|פעיל|open", _re.IGNORECASE)
+            _CLOSED_RE = _re.compile(r"סגור|closed|נמחק", _re.IGNORECASE)
+            def _is_open(q):
+                st = q.get("status", "")
+                if not st:
+                    return True
+                return bool(_OPEN_RE.search(st)) and not bool(_CLOSED_RE.search(st))
+            before = len(queue)
+            if open_filter == "open":
+                queue = [q for q in queue if _is_open(q)]
+            elif open_filter == "open_client":
+                active_clients = set()
+                for q in queue:
+                    if _is_open(q):
+                        active_clients.add((q.get("name", "") or "").strip())
+                queue = [q for q in queue if _is_open(q) or (q.get("name", "") or "").strip() in active_clients]
+            filtered = before - len(queue)
+            if filtered:
+                log.info(f"[net_smart] סונן לפי '{open_filter}': {filtered} תיקים סגורים דולגו.")
 
         stats["total"] = len(queue)
         stats["cases_queue"] = [q.get("display_id", "") for q in queue]

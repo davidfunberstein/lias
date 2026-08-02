@@ -427,19 +427,26 @@ def _open_motions_tab(page, case_num: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _maximize_paginator(page) -> None:
-    """Change items-per-page selector to the maximum available option."""
-    try:
-        # Click the mat-select for page size
-        page.locator("mat-paginator mat-select").first.click()
-        time.sleep(0.8)
-        # Pick the largest option (last in the list)
-        options = page.locator("mat-option").all()
-        if options:
-            options[-1].click()
-            time.sleep(1.5)
-            _log("  ✓ הגדיל את הפגינטור למקסימום")
-    except Exception:
-        pass
+    """Change items-per-page selector to the maximum available option.
+    Retries with different selectors; also handles mat-paginator navigation
+    to ensure ALL pages are accessible (not just the first)."""
+    for attempt in range(3):
+        try:
+            sel = page.locator("mat-paginator mat-select, mat-paginator .mat-mdc-select").first
+            if sel.count() == 0:
+                break
+            sel.scroll_into_view_if_needed(timeout=2000)
+            sel.click(timeout=3000)
+            time.sleep(1)
+            options = page.locator("mat-option, .mat-mdc-option").all()
+            if options:
+                options[-1].click()
+                time.sleep(2)
+                _log("  ✓ הגדיל את הפגינטור למקסימום")
+                return
+        except Exception:
+            time.sleep(1)
+    _log("  ⚠ פגינטור לא אותר — ממשיך עם ברירת מחדל")
 
 
 # ---------------------------------------------------------------------------
@@ -465,11 +472,30 @@ def _has_button(row, selector: str) -> bool:
         return False
 
 
+def _next_paginator_page(page) -> bool:
+    """Click the 'next page' button on the mat-paginator. Returns True if
+    there was a next page and it was clicked."""
+    try:
+        btn = page.locator(
+            "mat-paginator button.mat-mdc-paginator-navigation-next, "
+            "mat-paginator button[aria-label*='Next']").first
+        if btn.count() == 0:
+            return False
+        disabled = btn.get_attribute("disabled")
+        if disabled is not None:
+            return False
+        btn.click()
+        time.sleep(2)
+        return True
+    except Exception:
+        return False
+
+
 def _extract_rows(page) -> list[dict]:
-    """Collect ALL rows from the motions table. The table may virtual-scroll,
-    so we scroll through it repeatedly and merge rows by process number until
-    no new rows appear. Only plain data is kept — row handles go stale after
-    scrolling, so downloads re-locate each row fresh by its process number."""
+    """Collect ALL rows from the motions table, across ALL paginator pages.
+    Virtual-scroll rows are merged by (process, date, name) key. After
+    exhausting scroll on the current page, clicks 'next' in the paginator
+    until there are no more pages."""
     collected: dict = {}
 
     def _grab() -> int:
@@ -496,23 +522,27 @@ def _extract_rows(page) -> list[dict]:
             new += 1
         return new
 
-    _grab()
-    stale_rounds = 0
-    for _ in range(60):
-        try:
-            rows = page.query_selector_all("tr[mat-row], tr.mat-mdc-row")
-            if rows:
-                rows[-1].scroll_into_view_if_needed(timeout=2000)
-            page.mouse.wheel(0, 800)
-        except Exception:
-            pass
-        time.sleep(0.6)
-        if _grab() == 0:
-            stale_rounds += 1
-            if stale_rounds >= 3:
-                break
-        else:
-            stale_rounds = 0
+    for page_num in range(50):
+        _grab()
+        stale_rounds = 0
+        for _ in range(60):
+            try:
+                rows = page.query_selector_all("tr[mat-row], tr.mat-mdc-row")
+                if rows:
+                    rows[-1].scroll_into_view_if_needed(timeout=2000)
+                page.mouse.wheel(0, 800)
+            except Exception:
+                pass
+            time.sleep(0.6)
+            if _grab() == 0:
+                stale_rounds += 1
+                if stale_rounds >= 4:
+                    break
+            else:
+                stale_rounds = 0
+        if not _next_paginator_page(page):
+            break
+        _log(f"  עבר לעמוד {page_num + 2} בטבלה ({len(collected)} שורות עד כה)")
     return list(collected.values())
 
 
