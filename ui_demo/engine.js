@@ -3,7 +3,7 @@ let _netDownloadJobId=null, _pendingNetCases=[];
 /* Per-portal download stats — each portal (NET/BDR/ECA) keeps its own live
    stats so parallel downloads never overwrite each other in the panel
    (previously a single _dlStats caused "shows NET while I'm on ECA"). */
-let _dlByPortal={};
+let _dlByPortal={}, _dlStatsTimer=null, _importBatchTimer=null;
 const PORTAL_LABELS={NET:'נט המשפט', BDR:'בית הדין הרבני', ECA:'הוצאה לפועל'};
 try{ const _saved=sessionStorage.getItem('dlByPortal'); if(_saved) _dlByPortal=JSON.parse(_saved)||{}; }catch(_){}
 try{ const _savedJid=sessionStorage.getItem('dlJobId'); if(_savedJid) _netDownloadJobId=+_savedJid; }catch(_){}
@@ -296,17 +296,16 @@ function connectEngineSSE(){
       const portal=e.portal||'NET';
       _dlByPortal[portal]=e; _saveDl();
       if(e.job_id && !_netDownloadJobId){ _netDownloadJobId=e.job_id; try{sessionStorage.setItem('dlJobId',e.job_id);}catch(_){} }
-      _renderDlStats();
+      if(!_dlStatsTimer) _dlStatsTimer=setTimeout(()=>{ _dlStatsTimer=null; _renderDlStats(); }, 500);
     }
-    /* A case finished and was imported — the dashboard has real new rows now,
-       so refresh immediately instead of guessing from the document counter. */
     if(e.type==='case_imported'){
       logEvent(`✓ ${e.case}: ${e.docs} מסמכים נוספו לדשבורד`);
-      _serverDlAt = 0;                       // force the picker's next truth check
-      refreshDownloadedSet(true).then(()=>{
-        if(typeof _renderDlStats==='function') _renderDlStats();
-      });
-      if(typeof refresh==='function') refresh(true);
+      _serverDlAt = 0;
+      if(!_importBatchTimer) _importBatchTimer=setTimeout(()=>{
+        _importBatchTimer=null;
+        refreshDownloadedSet(true).then(()=>{ _renderDlStats(); });
+        if(typeof refresh==='function') refresh(true);
+      }, 2000);
     }
     if(e.type==='portal_done'){
       logEvent(`✅ ${e.message||((e.label||'')+' — ההורדה הסתיימה')}`);
@@ -633,6 +632,9 @@ async function refreshDownloadedSet(force){
     _serverDownloaded = new Set((d.cases||[])
       .filter(c=>c.downloaded).map(c=>String(c.number)));
     _serverDlAt = Date.now();
+    for(const s of [_ecaHandled, _bdrHandled]){
+      for(const n of [...s]) if(!_serverDownloaded.has(String(n))) s.delete(n);
+    }
   }catch(_){}
   return _serverDownloaded;
 }
@@ -890,7 +892,7 @@ function _saveSyncScope(){
 }
 
 function _renderScopeChooser(p, label, relNote){
-  const runFn = {NET:'runNet()', BDR:'runBdr()', ECA:'ecaConnectAndList()'}[p];
+  const runFn = {NET:'runNet()', BDR:'runBdr()', ECA:'runEca()'}[p];
   const seg = (val, cur, fn, title, sub) => `
     <button onclick="${fn}('${val}')" class="scope-seg${cur===val?' on':''}"
       style="flex:1;text-align:right;padding:9px 11px;border-radius:10px;cursor:pointer;
@@ -1155,11 +1157,20 @@ async function runNet(){
   }
 }
 function runBdr(){
-  // Follows the scope chosen ON SCREEN (step 1), falling back to Settings.
   const s = window._settings || {};
   const scope = _syncScopeChoice || s.bdr_scope || 'all';
   if(scope==='all') runBdrBatch('');
   else bdrConnectAndList();
+}
+async function runEca(){
+  if(!await ensureNoPortalRunning('ECA')) return;
+  const s = window._settings || {};
+  const scope = _syncScopeChoice || s.eca_scope || 'all';
+  if(scope==='all'){
+    act('eca_sync','סנכרון כל תיקי הוצל"פ');
+  } else {
+    ecaConnectAndList();
+  }
 }
 async function checkCaseByNumber(portal){
   if(portal==='NET'){ openNetCase(true); return; }
@@ -1297,9 +1308,14 @@ function _renderDlStats(){
   if(!portals.length){ if(panel) panel.style.display='none'; return; }
   if(!panel){
     panel=document.createElement('div'); panel.id='dl-stats-panel';
+    document.body.appendChild(panel);
+  }
+  const inSync = panel.closest('#sync-card');
+  if(inSync){
+    panel.style.cssText='margin-top:12px;direction:rtl';
+  } else {
     panel.style.cssText='position:fixed;top:80px;left:16px;z-index:120;width:min(380px,90vw);'
       +'max-height:80vh;overflow-y:auto;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.35);direction:rtl';
-    document.body.appendChild(panel);
   }
   panel.style.display='block';
   panel.innerHTML = portals.map(portal=>_renderPortalCard(portal, _dlByPortal[portal])).join('');

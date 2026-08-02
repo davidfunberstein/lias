@@ -272,16 +272,20 @@ function openDrawer(kind, filter){
     const chip = c=> st[c.sub_case_id]==='closed'
       ? '<span class="pill err" style="margin-right:6px">סגור</span>'
       : '<span class="pill ok" style="margin-right:6px">פתוח</span>';
-    const parties = c => {
-      const n = c.sub_number||'';
-      const m = n.match(/נ['’]\s*(.+)/);
+    const partyLine = c => {
+      if(c.parties && c.parties.length>=2) return c.parties.join(" נ' ");
+      if(c.case_title){
+        const m = (c.case_title||'').match(/:\s*(.+)/);
+        if(m) return m[1].trim();
+      }
+      const m = (c.sub_number||'').match(/נ['']\s*(.+)/);
       return m ? m[1].trim() : '';
     };
     const item = c=>{
-      const vs = parties(c);
+      const vs = partyLine(c);
       return `<div class="dl-item" onclick="closeDrawer();go('case',${c.sub_case_id})">
         <b>${c.sub_number}</b>${chip(c)}
-        ${vs?`<span style="font-size:11px;color:var(--ink-soft)">מול: ${vs}</span>`:''}
+        ${vs?`<div style="font-size:12px;color:var(--ink-soft);margin:2px 0">${vs}</div>`:''}
         <span>${c.arkaa} · ${nf.format(c.docs)} מסמכים · ${c.groups['בקשה']||0} בקשות · ${(c.groups['החלטה']||0)+(c.groups['פסק דין']||0)} החלטות</span>
       </div>`;
     };

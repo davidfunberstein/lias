@@ -128,6 +128,7 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
 
     _court = ""
     _title = ""
+    _lawyer_is_party = False
 
     try:
         _ci = case_dir / "case_info.json"
@@ -142,6 +143,8 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
             _parties = _info.get("parties", [])
             if _parties:
                 _normed = [_normalize_party(p.get("name", "")) for p in _parties if p.get("name")]
+                if _ln_words and any(_is_me(n) for n in _normed):
+                    _lawyer_is_party = True
                 result = _pick_client(_normed)
                 if result:
                     client_name = result
@@ -152,6 +155,8 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
         for part in parts:
             if " - " in part:
                 folder_parties = [_normalize_party(p) for p in part.split(" - ") if p.strip()]
+                if _ln_words and any(_is_me(n) for n in folder_parties):
+                    _lawyer_is_party = True
                 result = _pick_client(folder_parties)
                 if result and not _is_me(result):
                     client_name = result
@@ -167,7 +172,7 @@ def _import_manifest(case_dir: Path, csv_path: Path, downloads_root: Path) -> tu
     if _ln_last:
         _all_words = set(_re.findall(r"[א-ת]{2,}", client_name))
         _folder_words = set(_re.findall(r"[א-ת]{2,}", parts[0]))
-        if _ln_last in _all_words or _ln_last in _folder_words:
+        if _lawyer_is_party or _ln_last in _all_words or _ln_last in _folder_words:
             client_name = _ln
 
     portal = _detect_portal(case_dir)
