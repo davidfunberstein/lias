@@ -347,11 +347,13 @@ class BrowserManager:
                 # of tracebacks. Stop this thread and say exactly what to do.
                 if isinstance(_exc, OSError) and getattr(_exc, "errno", None) == 24:
                     self._log(
-                        "[browser] ⛔ נגמרו הקבצים הפתוחים המותרים (Too many open files).\n"
-                        "           הדפדפן לא יורם שוב עד שתפעיל מחדש את המערכת.\n"
-                        "           פתרון: הרץ  ulimit -n 8192  ואז  bash start.sh")
+                        "[browser] ⚠ נגמרו הקבצים הפתוחים (Too many open files) — "
+                        "ממתין 120 שניות ומנסה שוב.\n"
+                        "           פתרון קבוע: הרץ  ulimit -n 8192  ואז  bash start.sh")
                     self._alive.clear()
-                    return
+                    if self._stop.wait(120):
+                        return
+                    # fall through to normal relaunch
             # a newer generation took over (show() relaunched) → this loop is
             # a zombie; exit instead of fighting over the profile lock.
             if self._generation != my_gen:
@@ -425,10 +427,31 @@ class BrowserManager:
     def _watchdog_loop(self) -> None:
         """EN: pings via the same command queue. No pong within timeout →
             marks dead; the serve loop exits and the outer loop relaunches.
+            Also acts as a thread supervisor: if _browser_loop exits (OSError,
+            generation mismatch, any fatal exception), restart it after 60 s.
         HE: מפנג דרך אותו תור פקודות. אין pong בזמן ← מסמן מת; לולאת
             השירות יוצאת והלולאה החיצונית מרימה מחדש.
+            גם מפקח על ה-thread: אם _browser_loop יצא מכל סיבה, מחזיר אותו
+            אחרי 60 שניות.
         """
         while not self._stop.wait(config.BROWSER_PING_INTERVAL_SEC):
+            # ── Thread supervisor: revive a dead browser_loop ──────────────
+            if not self._thread.is_alive() and not self._stop.is_set():
+                self._log("[watchdog] browser thread dead — restarting in 60 s / "
+                          "ה-thread של הדפדפן מת — מחזיר לחיים בעוד 60 שניות")
+                if self._stop.wait(60):
+                    return
+                if self._stop.is_set():
+                    return
+                self._alive.clear()
+                self._generation += 1
+                self._relaunch_count = 0
+                self._thread = threading.Thread(
+                    target=self._browser_loop, name="lias-browser", daemon=True)
+                self._thread.start()
+                self._log("[watchdog] browser thread restarted / thread הדפדפן הופעל מחדש")
+                continue
+
             if not self._alive.is_set():
                 continue                          # already relaunching / כבר בהרמה מחדש
             if self._busy:
