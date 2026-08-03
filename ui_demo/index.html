@@ -285,6 +285,24 @@
 
     <button class="btn-accent" style="width:100%;margin-top:12px" onclick="saveSyncSettings()">💾 שמור הגדרות סנכרון</button>
     <div id="g-sync-ok" class="sub" style="min-height:16px;margin-top:4px"></div>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
+      <b style="font-size:13px">ייבוא סשן לקוח</b>
+      <div class="note" style="margin:4px 0 8px">
+        לחיבור כלקוח (לא עורך דין) — ייצא קובץ session_*.json עם
+        <code style="font-size:11px">tools/export_session.py</code> ואז טען אותו כאן.
+        הסשן ידרוס את ההתחברות הרגילה לפורטל הנבחר וייפתח חלון לאימות.
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="file" id="session-import-file" accept=".json" style="font-size:12px;flex:1;min-width:0"
+          onchange="_onSessionFileChosen(this)">
+        <button onclick="_doImportSession()"
+          style="font-size:12px;padding:5px 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface2);cursor:pointer;white-space:nowrap">
+          ייבא
+        </button>
+      </div>
+      <div id="session-import-status" style="font-size:11.5px;margin-top:5px;color:var(--ink-soft)"></div>
+    </div>
   </div>
   </div>
   <div class="set-pane" data-pane="general" hidden>

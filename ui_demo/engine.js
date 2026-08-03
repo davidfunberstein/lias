@@ -906,29 +906,22 @@ function syncCard(el){
       הצג דפדפן בזמן הורדה
     </label>
     <div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
-      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px">ייבוא סשן לקוח (session_*.json)</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input type="file" id="session-import-file" accept=".json" style="font-size:12px;flex:1;min-width:0"
-          onchange="_onSessionFileChosen(this)">
-        <button id="session-import-btn" onclick="_doImportSession()"
-          style="font-size:12px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface2);cursor:pointer;white-space:nowrap">
-          ייבא
-        </button>
+      <div style="font-size:13px;font-weight:600;margin-bottom:3px">⬇ הורדה לפי עדיפות עדכון</div>
+      <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:8px;line-height:1.5">
+        מוריד רק תיקים <b>פתוחים</b> שלא נבדקו מול הפורטל זמן רב.<br>
+        הסדר: הכי פחות מעודכן ראשון.
       </div>
-      <div id="session-import-status" style="font-size:11.5px;margin-top:4px;color:var(--ink-soft)"></div>
-    </div>
-    <div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
-      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px">הורדת תיקים לא-מעודכנים</div>
       <div style="display:flex;gap:8px;align-items:center">
+        <span style="font-size:12.5px;color:var(--ink)">לא נבדק יותר מ-</span>
         <input type="number" id="stale-days" value="7" min="1" max="365"
-          style="width:56px;font-size:12px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface2)">
-        <span style="font-size:12px;color:var(--ink-soft)">ימים ומעלה</span>
+          style="width:52px;font-size:13px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface2);text-align:center">
+        <span style="font-size:12.5px;color:var(--ink)">ימים</span>
         <button onclick="_downloadStaleCases()"
-          style="font-size:12px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface2);cursor:pointer;white-space:nowrap;margin-right:auto">
+          style="font-size:13px;font-weight:600;padding:5px 14px;border:1px solid var(--accent,#4a7cc7);border-radius:6px;background:var(--accent-soft,#dce8ff);color:var(--accent-strong,#1a4b9e);cursor:pointer;white-space:nowrap;margin-right:auto">
           ⬇ הורד
         </button>
       </div>
-      <div id="stale-status" style="font-size:11.5px;margin-top:4px;color:var(--ink-soft)"></div>
+      <div id="stale-status" style="font-size:12px;margin-top:6px;color:var(--ink-soft)"></div>
     </div>
     <div id="sync-options" style="margin-top:14px"></div>
     <div id="sync-case-picker" style="display:none;margin-top:12px"></div>
