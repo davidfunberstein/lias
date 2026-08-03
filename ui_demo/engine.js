@@ -905,24 +905,6 @@ function syncCard(el){
         onchange="_saveBrowserVisible(this.checked)">
       הצג דפדפן בזמן הורדה
     </label>
-    <div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
-      <div style="font-size:13px;font-weight:600;margin-bottom:3px">⬇ הורדה לפי עדיפות עדכון</div>
-      <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:8px;line-height:1.5">
-        מוריד רק תיקים <b>פתוחים</b> שלא נבדקו מול הפורטל זמן רב.<br>
-        הסדר: הכי פחות מעודכן ראשון.
-      </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <span style="font-size:12.5px;color:var(--ink)">לא נבדק יותר מ-</span>
-        <input type="number" id="stale-days" value="7" min="1" max="365"
-          style="width:52px;font-size:13px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface2);text-align:center">
-        <span style="font-size:12.5px;color:var(--ink)">ימים</span>
-        <button onclick="_downloadStaleCases()"
-          style="font-size:13px;font-weight:600;padding:5px 14px;border:1px solid var(--accent,#4a7cc7);border-radius:6px;background:var(--accent-soft,#dce8ff);color:var(--accent-strong,#1a4b9e);cursor:pointer;white-space:nowrap;margin-right:auto">
-          ⬇ הורד
-        </button>
-      </div>
-      <div id="stale-status" style="font-size:12px;margin-top:6px;color:var(--ink-soft)"></div>
-    </div>
     <div id="sync-options" style="margin-top:14px"></div>
     <div id="sync-case-picker" style="display:none;margin-top:12px"></div>
 `;
@@ -1522,80 +1504,218 @@ function stopCase(portal, caseId){
                else { toast('שגיאה בעצירת התיק', true); if(row) row.status='downloading'; } })
     .catch(e=>{ toast('שגיאה: '+e.message,true); if(row) row.status='downloading'; });
 }
-function _renderDlStats(){
-  const portals=Object.keys(_dlByPortal);
-  let panel=$('dl-stats-panel');
-  if(!portals.length){ if(panel) panel.style.display='none'; return; }
-  if(!panel){
-    panel=document.createElement('div'); panel.id='dl-stats-panel';
-    document.body.appendChild(panel);
-  }
-  const inSync = panel.closest('#sync-card');
-  if(inSync){
-    panel.style.cssText='margin-top:12px;direction:rtl';
-  } else {
-    panel.style.cssText='position:fixed;top:80px;left:16px;z-index:120;width:min(380px,90vw);'
-      +'max-height:80vh;overflow-y:auto;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.35);direction:rtl';
-  }
-  panel.style.display='block';
-  panel.innerHTML = portals.map(portal=>_renderPortalCard(portal, _dlByPortal[portal])).join('');
+/* ═══════════════════════════════════════════════════════════════════
+   Floating Download Bubble
+   ─ Fixed bottom-left, draggable, minimizable, survives refresh
+   ═══════════════════════════════════════════════════════════════════ */
+let _dlBubbleMinimized = false;
+let _dlBubblePaused    = false;
+let _dlBubblePos       = null;   // {x,y} saved position
+try {
+  const _s = sessionStorage.getItem('dlBubble');
+  if(_s){ const p=JSON.parse(_s); _dlBubbleMinimized=p.min||false; _dlBubblePos=p.pos||null; }
+} catch(_){}
+
+function _saveBubbleState(){
+  try{ sessionStorage.setItem('dlBubble', JSON.stringify({min:_dlBubbleMinimized, pos:_dlBubblePos})); }catch(_){}
 }
+
+function _renderDlStats(){
+  const portals = Object.keys(_dlByPortal);
+  let bubble = document.getElementById('dl-bubble');
+
+  if(!portals.length){
+    if(bubble) bubble.style.display='none';
+    return;
+  }
+
+  if(!bubble){
+    bubble = document.createElement('div');
+    bubble.id = 'dl-bubble';
+    bubble.dir = 'rtl';
+    bubble.style.cssText = [
+      'position:fixed','z-index:9999','direction:rtl',
+      'font-family:inherit','user-select:none',
+      'transition:box-shadow .15s',
+    ].join(';');
+    document.body.appendChild(bubble);
+    _applyBubblePos(bubble);
+    _makeDraggable(bubble);
+  }
+  bubble.style.display = 'block';
+
+  if(_dlBubbleMinimized){
+    // ── Minimized badge ──────────────────────────────────────────
+    const totalDone   = Object.values(_dlByPortal).reduce((s,p)=>s+(p.done||0),0);
+    const totalCases  = Object.values(_dlByPortal).reduce((s,p)=>s+(p.total||0),0);
+    const totalDocs   = Object.values(_dlByPortal).reduce((s,p)=>s+(p.docs_downloaded||0),0);
+    const portLabel   = portals.map(p=>PORTAL_LABELS[p]||p).join(' · ');
+    const paused      = _dlBubblePaused;
+    bubble.innerHTML = `
+      <div onclick="_dlBubbleMinimized=false;_saveBubbleState();_renderDlStats()"
+        style="background:#1a2a40;color:#e8edf4;border-radius:999px;padding:7px 14px 7px 10px;
+               box-shadow:0 4px 18px rgba(0,0,0,.5);cursor:pointer;display:flex;align-items:center;gap:8px;
+               border:1px solid rgba(255,255,255,.18);font-size:13px;white-space:nowrap">
+        <span style="font-size:16px">${paused?'⏸':'⬇'}</span>
+        <span><b>${totalDone}/${totalCases}</b> תיקים · ${totalDocs} מסמכים</span>
+        <span style="opacity:.55;font-size:11px">${portLabel}</span>
+        <span style="opacity:.4;font-size:11px">▲</span>
+      </div>`;
+    return;
+  }
+
+  // ── Expanded bubble ──────────────────────────────────────────
+  bubble.style.cssText += ';width:min(400px,96vw);border-radius:16px;'
+    +'background:#111c2d;border:1px solid rgba(255,255,255,.15);'
+    +'box-shadow:0 16px 48px rgba(0,0,0,.6);overflow:hidden';
+
+  const paused = _dlBubblePaused;
+  const activePortal = portals.find(p=>_dlByPortal[p].job_id) || portals[0];
+  const jobId = _dlByPortal[activePortal]?.job_id || 0;
+
+  bubble.innerHTML = `
+    <div id="dl-bubble-drag" style="background:#0d1726;padding:8px 12px;cursor:grab;
+         display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,255,255,.1)">
+      <span style="font-size:14px;flex:1;font-weight:700;color:#c9d8f0">
+        ${paused?'⏸ מושהה':'⬇ מוריד'}
+      </span>
+      <button title="הסתר / הצג דפדפן" onclick="_toggleBubbleBrowser('${activePortal}')"
+        style="${_btnStyle('#1e3a5f')}">👁</button>
+      <button title="${paused?'המשך':'השהה'}" onclick="_togglePause(${jobId})"
+        style="${_btnStyle(paused?'#1a4020':'#2a2a15')}">
+        ${paused?'▶':'⏸'}
+      </button>
+      <button title="עצור הכל" onclick="stopAllDownloads()"
+        style="${_btnStyle('#4a0f0f')}">⏹</button>
+      <button title="מזער" onclick="_dlBubbleMinimized=true;_saveBubbleState();_renderDlStats()"
+        style="${_btnStyle('#1a2333')}">▼</button>
+    </div>
+    <div style="padding:10px 14px;max-height:60vh;overflow-y:auto">
+      ${portals.map(p=>_renderPortalCard(p, _dlByPortal[p])).join('')}
+    </div>`;
+
+  // Re-attach drag to new header
+  _makeDraggable(bubble, document.getElementById('dl-bubble-drag'));
+}
+
+function _btnStyle(bg){
+  return `background:${bg};border:none;border-radius:7px;padding:4px 8px;cursor:pointer;`
+        +'color:#c9d8f0;font-size:13px;min-width:28px;';
+}
+
+function _applyBubblePos(bubble){
+  if(_dlBubblePos){
+    bubble.style.left = _dlBubblePos.x+'px';
+    bubble.style.top  = _dlBubblePos.y+'px';
+    bubble.style.bottom = 'auto';
+    bubble.style.right  = 'auto';
+  } else {
+    bubble.style.bottom = '20px';
+    bubble.style.left   = '16px';
+  }
+}
+
+function _makeDraggable(el, handle){
+  const grip = handle || el;
+  grip.style.cursor = 'grab';
+  grip.onmousedown = e=>{
+    if(e.target.tagName==='BUTTON') return;
+    e.preventDefault();
+    const r = el.getBoundingClientRect();
+    const ox = e.clientX - r.left, oy = e.clientY - r.top;
+    grip.style.cursor = 'grabbing';
+    const onMove = e=>{
+      const x = Math.max(0, Math.min(window.innerWidth-el.offsetWidth,  e.clientX-ox));
+      const y = Math.max(0, Math.min(window.innerHeight-el.offsetHeight, e.clientY-oy));
+      el.style.left='auto'; el.style.right='auto';
+      el.style.top='auto';  el.style.bottom='auto';
+      el.style.left=x+'px'; el.style.top=y+'px';
+      _dlBubblePos={x,y}; _saveBubbleState();
+    };
+    const onUp = ()=>{
+      grip.style.cursor='grab';
+      document.removeEventListener('mousemove',onMove);
+      document.removeEventListener('mouseup',onUp);
+    };
+    document.addEventListener('mousemove',onMove);
+    document.addEventListener('mouseup',onUp);
+  };
+}
+
+async function _togglePause(jobId){
+  const ep = _dlBubblePaused ? 'resume_download' : 'pause_download';
+  _dlBubblePaused = !_dlBubblePaused;
+  _renderDlStats();
+  await fetch(`/api/proxy/actions/${ep}?job_id=${jobId}`,{method:'POST'}).catch(()=>{});
+}
+
+async function _toggleBubbleBrowser(portal){
+  // Detect current visibility from browser status
+  const r = await fetch('/api/browser/status').then(r=>r.json()).catch(()=>({}));
+  const portalKey = portal==='BDR'?'bdr':portal==='ECA'?'eca':'main';
+  const vis = !(r[portalKey]?.headless ?? true);
+  await fetch('/api/proxy/actions/toggle_browser_visible',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({portal, visible:!vis})
+  }).catch(()=>{});
+  toast(vis ? 'דפדפן הוסתר' : 'דפדפן נפתח');
+}
+
 function _renderPortalCard(portal, s){
   const pct = s.total? Math.round((s.done||0)/s.total*100) : 0;
   const elapsed = s.elapsed_sec||0;
-  const mm = Math.floor(elapsed/60), ss = String(elapsed%60).padStart(2,'0');
-  const currentLabel = s.current_name ? `${s.current_case} — ${s.current_name}` : (s.current_case||'');
+  const mm = Math.floor(elapsed/60), ss2 = String(elapsed%60).padStart(2,'0');
+  const currentCase = s.current_name ? `${s.current_case} — ${s.current_name}` : (s.current_case||'');
+  const currentDoc  = s.current_doc || '';
 
-  let casesHtml = '';
   const details = s.cases_detail||[];
-  if(details.length){
-    casesHtml = `<div style="margin-top:8px;max-height:200px;overflow-y:auto;font-size:11px;border-top:1px solid rgba(255,255,255,.1);padding-top:6px">
-      <b style="font-size:11.5px">תיקים (${s.done||0}/${s.total||0}):</b>
+  const casesHtml = details.length ? `
+    <div style="margin-top:8px;max-height:180px;overflow-y:auto;font-size:11.5px;
+         border-top:1px solid rgba(255,255,255,.08);padding-top:6px">
       ${details.map(c=>{
         const st=c.status||'pending';
-        const icon = st==='done'?'✓':st==='downloading'?'⏳':st==='failed'?'✗':st==='skipped'?'⏭':'·';
-        const opacity = st==='done'?'.6':st==='downloading'?'1':'.7';
-        const weight = st==='downloading'?'bold':'normal';
-        const clickable = st==='done' ? 'cursor:pointer' : '';
-        const onclick = st==='done' ? `onclick="closeDlPanel();_goToCaseByNumber('${c.id}')"` : '';
-        // per-case stop button only while pending/downloading
+        const icon = {done:'✓',downloading:'⏳',failed:'✗',skipped:'⏭'}[st]||'·';
+        const dim  = st==='done'||st==='skipped';
         const stopBtn = (st==='pending'||st==='downloading')
-          ? `<button title="עצור תיק זה" onclick="event.stopPropagation();stopCase('${portal}','${c.id}')" style="background:none;border:none;cursor:pointer;color:#ef9a9a;font-size:12px;padding:0 4px">⏹</button>`
-          : '';
-        return `<div style="display:flex;align-items:center;gap:4px;padding:3px 0;opacity:${opacity};font-weight:${weight};border-bottom:1px solid rgba(255,255,255,.05)">
-          <div style="flex:1;min-width:0;${clickable}" ${onclick}>
-            ${icon} <b>${c.id}</b> ${c.name||''}
-            <span style="color:rgba(255,255,255,.4);font-size:10px">${c.type||''}${c.court?' · '+c.court:''}</span>
-          </div>${stopBtn}
+          ? `<button onclick="event.stopPropagation();stopCase('${portal}','${c.id}')"
+              title="דלג לתיק הבא" style="background:none;border:none;cursor:pointer;
+              color:#ef9a9a;font-size:11px;padding:0 2px" >⏭</button>` : '';
+        const clk = st==='done'
+          ? `style="cursor:pointer" onclick="closeDlPanel();_goToCaseByNumber('${c.id}')"` : '';
+        return `<div style="display:flex;align-items:center;gap:4px;padding:2px 0;
+                  opacity:${dim?.5:1};font-weight:${st==='downloading'?700:400};
+                  border-bottom:1px solid rgba(255,255,255,.04)">
+          <span style="min-width:14px;text-align:center;font-size:11px">${icon}</span>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" ${clk}>
+            ${c.id}${c.name?' — '+c.name:''}
+          </span>${stopBtn}
         </div>`;
       }).join('')}
-    </div>`;
-  }
+    </div>` : '';
 
-  return `<div style="background:var(--card-bg,#1a2332);border:1px solid rgba(255,255,255,.2);border-radius:12px;padding:12px 16px;margin-bottom:10px">
-    <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:6px">
-      <b>⬇ ${PORTAL_LABELS[portal]||portal}</b>
-      <div style="display:flex;gap:8px;align-items:center">
-        <span>${pct}% · ${s.done||0}/${s.total||0} תיקים</span>
-      </div></div>
-    <div style="height:7px;background:rgba(255,255,255,.12);border-radius:4px;overflow:hidden;margin-bottom:8px">
-      <div style="height:100%;width:${pct}%;background:var(--accent);transition:width .4s"></div></div>
-    ${currentLabel?`<div style="font-size:12px;margin-bottom:6px">📂 <b>${currentLabel}</b></div>`:''}
-    <div style="display:flex;flex-wrap:wrap;gap:10px 16px;font-size:11.5px;color:rgba(255,255,255,.55)">
-      <span>נותרו: ${s.remaining||0}</span>
-      <span>נכשלו: <span style="color:${s.failed?'#ef5350':'inherit'}">${s.failed||0}</span></span>
-      <span>מסמכים: ${s.docs_downloaded||0}</span>
-      <span>קצב: ${s.speed_per_min||0}/דק׳</span>
-      <span>זמן: ${mm}:${ss}</span>
+  return `<div style="background:rgba(255,255,255,.04);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+    <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px">
+      <b style="color:#a8c8f8">${PORTAL_LABELS[portal]||portal}</b>
+      <span style="color:rgba(255,255,255,.5)">${mm}:${ss2} · ${s.speed_per_min||0} מסמכים/דק׳</span>
     </div>
-    ${s.output_dir?`<div style="font-size:10px;color:rgba(255,255,255,.35);margin-top:6px;word-break:break-all">📁 ${s.output_dir}</div>`:''}
+    <div style="height:5px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden;margin-bottom:6px">
+      <div style="height:100%;width:${pct}%;background:#4a9eff;transition:width .4s;border-radius:3px"></div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:#c9d8f0;margin-bottom:${currentCase?6:0}px">
+      <span>תיקים: <b>${s.done||0}/${s.total||0}</b></span>
+      <span>מסמכים: <b>${s.docs_downloaded||0}</b></span>
+      ${s.failed?`<span style="color:#ef9a9a">נכשלו: <b>${s.failed}</b></span>`:''}
+      <span style="color:rgba(255,255,255,.4)">נותרו: ${s.remaining||0}</span>
+    </div>
+    ${currentCase?`<div style="font-size:11.5px;color:rgba(255,255,255,.65);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+      📂 ${currentCase}</div>`:''}
+    ${currentDoc?`<div style="font-size:11px;color:rgba(255,255,255,.4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px">
+      📄 ${currentDoc}</div>`:''}
     ${casesHtml}
-    <button class="btn-accent" style="margin-top:10px;font-size:12px;padding:6px 14px;background:rgba(198,40,40,.8)"
-      onclick="stopPortalDownload('${portal}')">⏹ עצור הורדת ${PORTAL_LABELS[portal]||portal}</button>
   </div>`;
 }
 
-function closeDlPanel(){ const p=$('dl-stats-panel'); if(p) p.style.display='none'; }
+function closeDlPanel(){ const b=document.getElementById('dl-bubble'); if(b) b.style.display='none'; }
 function _goToCaseByNumber(displayId){
   if(!D?.case_cards) return;
   const card = D.case_cards.find(c=>(c.sub_number||'').includes(displayId));
