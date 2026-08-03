@@ -729,16 +729,8 @@ function showEcaCases(cases){
   try{ localStorage.setItem('ecaCasesAll', JSON.stringify(_ecaCases)); }catch(_){}
   const picker=$('sync-case-picker'); if(!picker) return;
   if(!_ecaCases.length){ picker.style.display='none'; toast('לא נמצאו תיקי הוצל"פ', true); return; }
-  // In "download all" mode — show read-only progress list, no picker
-  if(_syncScopeChoice==='all'){
-    picker.style.display='block';
-    picker.innerHTML=`<div style="padding:8px 12px;background:rgba(47,125,246,.1);border-radius:10px;font-size:13px">
-      <b>מוריד ${_ecaCases.length} תיקי הוצל"פ</b> — אין צורך בבחירה
-      <div style="margin-top:6px;max-height:180px;overflow-y:auto">
-        ${_ecaCases.map(c=>`<div style="padding:3px 0;opacity:.8">· ${c.number||''} ${c.type||''}</div>`).join('')}
-      </div></div>`;
-    return;
-  }
+  // In "download all" mode — hide picker entirely; the download button is the UI
+  if(_syncScopeChoice==='all'){ picker.style.display='none'; return; }
   // Remember ticks before re-render so a refreshDownloadedSet() callback
   // doesn't wipe the user's selection.
   const _wasChecked = new Set(
@@ -1125,16 +1117,8 @@ function showBdrCases(cases){
   try{ localStorage.setItem('bdrCasesAll', JSON.stringify(_bdrCases)); }catch(_){}
   const picker=$('sync-case-picker'); if(!picker) return;
   if(!_bdrCases.length){ picker.style.display='none'; toast('לא נמצאו תיקי בד"ר', true); return; }
-  // In "download all" mode — show progress list, not selection picker
-  if(_syncScopeChoice==='all'){
-    picker.style.display='block';
-    picker.innerHTML=`<div style="padding:8px 12px;background:rgba(47,125,246,.1);border-radius:10px;font-size:13px">
-      <b>מוריד ${_bdrCases.length} תיקי בד"ר</b> — אין צורך בבחירה
-      <div style="margin-top:6px;max-height:200px;overflow-y:auto">
-        ${_bdrCases.map(c=>`<div style="padding:3px 0;opacity:.8">· ${c.display_id||c.id||c.number||''} ${c.name||c.CaseName||''}</div>`).join('')}
-      </div></div>`;
-    return;
-  }
+  // In "download all" mode — hide picker; download button is the UI
+  if(_syncScopeChoice==='all'){ picker.style.display='none'; return; }
   // Remember what the user already ticked. A blanket "don't re-render" guard
   // used to protect the selection, but it also froze the list so newly-listed
   // cases never appeared. Re-render always; restore the ticks afterwards.
@@ -1497,17 +1481,9 @@ function showNetCases(cases){
   _pendingNetCases = _allNetCases;
   if(!_allNetCases.length){ toast('לא נמצאו תיקים בפורטל', true); return; }
   if(route.v !== 'sync'){ go('sync'); }
-  // In "download all" mode — show progress list, not selection picker
+  // In "download all" mode — hide picker; download button is the UI
   if(_syncScopeChoice==='all'){
-    setTimeout(()=>{
-      const picker=$('sync-case-picker'); if(!picker) return;
-      picker.style.display='block';
-      picker.innerHTML=`<div style="padding:8px 12px;background:rgba(47,125,246,.1);border-radius:10px;font-size:13px">
-        <b>מוריד ${_allNetCases.length} תיקי נט המשפט</b> — אין צורך בבחירה
-        <div style="margin-top:6px;max-height:200px;overflow-y:auto">
-          ${_allNetCases.map(c=>`<div style="padding:3px 0;opacity:.8">· ${c.CaseDisplayIdentifier||c.display_id||''} ${c.CaseName||c.name||''}</div>`).join('')}
-        </div></div>`;
-    }, 200);
+    const picker=$('sync-case-picker'); if(picker) picker.style.display='none';
     return;
   }
   setTimeout(()=>_renderNetCasesPicker(_allNetCases), 200);

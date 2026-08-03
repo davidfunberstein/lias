@@ -589,7 +589,7 @@ function boot(){
   route = v? {v, id:+id} : {v:'home'};
   render();
   refresh(true);
-  setInterval(()=>refresh(false), 10000);
+  setInterval(()=>refresh(false), 60000);
   ensureFab();
   connectEngineSSE();
   // Reopen the tasks balloon if it was open before a refresh
