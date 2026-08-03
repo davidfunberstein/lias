@@ -971,10 +971,12 @@ function renderVerdicts(){
           </select>
         </div>
         <div>
-          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">שם שופט (חלקי)</label>
-          <input id="v-judge" type="text" placeholder="לדוגמה: כהן"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">שם שופט</label>
+          <select id="v-judge" style="width:100%;padding:8px 10px;border-radius:8px;
             border:1px solid var(--line);background:var(--surface);font-size:13px">
+            <option value="">-- כל השופטים --</option>
+          </select>
+          <div id="v-judge-status" style="font-size:11px;color:var(--ink-soft);margin-top:3px;height:14px"></div>
         </div>
         <div>
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">מתאריך</label>
@@ -1025,8 +1027,31 @@ async function _loadVerdictCourts(){
     window._verdictCourts = courts;
     sel.innerHTML = '<option value="">-- כל בתי המשפט --</option>'
       + courts.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+    sel.onchange = () => _loadVerdictJudges(sel.value);
   } catch(e){
     sel.innerHTML = '<option value="">-- כל בתי המשפט --</option>';
+  }
+}
+
+async function _loadVerdictJudges(courtId){
+  const sel    = $('v-judge');
+  const status = $('v-judge-status');
+  if(!sel) return;
+  sel.innerHTML = '<option value="">-- כל השופטים --</option>';
+  if(!courtId){ if(status) status.textContent=''; return; }
+  if(status) status.textContent = 'טוען שופטים…';
+  try{
+    const r = await fetch(`/api/verdicts/judges?court_id=${encodeURIComponent(courtId)}`);
+    const d = await r.json();
+    if(d.judges && d.judges.length){
+      sel.innerHTML = '<option value="">-- כל השופטים --</option>'
+        + d.judges.map(j=>`<option value="${j.name}">${j.name}</option>`).join('');
+      if(status) status.textContent = `${d.judges.length} שופטים`;
+    } else {
+      if(status) status.textContent = d.error ? 'שגיאה בטעינה' : 'אין שופטים';
+    }
+  } catch(e){
+    if(status) status.textContent = 'שגיאה בטעינה';
   }
 }
 

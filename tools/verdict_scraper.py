@@ -76,7 +76,18 @@ def scrape_verdicts(
     verdicts: list[dict] = []
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        # court.gov.il WAF blocks Playwright's bundled Chromium (ERR_CONNECTION_RESET)
+        # but passes real Google Chrome. Use channel="chrome" + --headless=new.
+        _args = [
+            "--disable-blink-features=AutomationControlled",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--headless=new",
+        ]
+        try:
+            browser = pw.chromium.launch(channel="chrome", headless=False, args=_args)
+        except Exception:
+            browser = pw.chromium.launch(headless=True, args=_args)
         context = browser.new_context(
             accept_downloads=True,
             locale="he-IL",
