@@ -1976,7 +1976,8 @@ except Exception as _ve:
 def _refresh_judges_handler(payload: dict, ctx: JobContext) -> str:
     """Open a new tab in the NET browser, iterate all courts on court.gov.il/NGCS,
     scrape each court's judges dropdown, and save to disk cache."""
-    from .api import _VERDICT_COURTS, _JUDGES_CACHE, _save_judges_cache_to_disk
+    # lazy import avoids circular-import at module load time
+    from .api import _VERDICT_COURTS, _JUDGES_CACHE, _save_judges_cache_to_disk  # noqa: PLC0415
 
     COURT_URL = "https://www.court.gov.il/NGCS.Web.Site/LocateDecisions/LocateDecisionQuering.aspx"
     bm = ctx.browser
