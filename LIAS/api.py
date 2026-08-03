@@ -1428,6 +1428,55 @@ def verdicts_courts():
     return {"courts": _VERDICT_COURTS}
 
 
+@app.get("/api/verdicts/judges")
+async def verdicts_judges(court_id: str = "-1"):
+    """Fetch the judge dropdown options for a given court from court.gov.il (headless)."""
+    if court_id in ("-1", ""):
+        return {"judges": []}
+    import asyncio, concurrent.futures
+    def _fetch():
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            return []
+        COURT_URL = "https://www.court.gov.il/NGCS.Web.Site/HomePage.aspx"
+        judges = []
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            try:
+                ctx  = browser.new_context(locale="he-IL",
+                    extra_http_headers={"Accept-Language": "he-IL,he;q=0.9"})
+                page = ctx.new_page()
+                page.set_default_timeout(30_000)
+                page.goto(COURT_URL, wait_until="domcontentloaded", timeout=60_000)
+                page.evaluate("javascript:__doPostBack('Header1$UpperMenu1$btnVerdictLocalization','')")
+                page.wait_for_load_state("domcontentloaded", timeout=60_000)
+                try:
+                    page.click("a[href='#tabOrderDetails']", timeout=8_000)
+                except Exception:
+                    page.evaluate("javascript:$('#tabOrderDetails').click()")
+                page.wait_for_timeout(600)
+                page.select_option("#LocateByParameters1_ddlSelectCourt", court_id)
+                page.wait_for_timeout(1800)  # judge list loads dynamically
+                judges = page.evaluate("""
+                    (() => {
+                        const sel = document.querySelector('#LocateByParameters1_ddlJudgeName');
+                        if (!sel) return [];
+                        return Array.from(sel.options)
+                            .filter(o => o.value && o.value !== '0' && o.value !== '-1')
+                            .map(o => ({value: o.value, name: o.text.trim()}));
+                    })()
+                """)
+            finally:
+                try: browser.close()
+                except Exception: pass
+        return judges
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        result = await loop.run_in_executor(pool, _fetch)
+    return {"judges": result}
+
+
 @app.post("/api/verdicts/search")
 async def verdicts_search(request: Request):
     """Start a verdict scrape job.

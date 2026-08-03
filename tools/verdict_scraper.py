@@ -364,6 +364,8 @@ def register_verdict_handler():
             except Exception:
                 pass
 
+            # Run headless in the worker thread directly — no BrowserManager needed
+            # (court.gov.il is public; no portal login required)
             verdicts = scrape_verdicts(
                 court_id=court_id,
                 judge_name=judge_name,
@@ -372,7 +374,7 @@ def register_verdict_handler():
                 output_dir=output_dir,
                 max_pages=max_pages,
                 progress_cb=ctx.progress,
-                browser_manager=ctx.browser,   # reuse NET browser
+                browser_manager=None,
             )
 
             # Save run manifest

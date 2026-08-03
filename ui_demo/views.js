@@ -965,16 +965,18 @@ function renderVerdicts(){
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
         <div>
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">בית משפט</label>
-          <select id="v-court" style="width:100%;padding:8px 10px;border-radius:8px;
+          <select id="v-court" onchange="_loadVerdictJudges(this.value)"
+            style="width:100%;padding:8px 10px;border-radius:8px;
             border:1px solid var(--line);background:var(--surface);font-size:13px">
             <option value="">-- טוען… --</option>
           </select>
         </div>
         <div>
-          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">שם שופט (חלקי)</label>
-          <input id="v-judge" type="text" placeholder="לדוגמה: כהן"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">שופט</label>
+          <select id="v-judge" style="width:100%;padding:8px 10px;border-radius:8px;
             border:1px solid var(--line);background:var(--surface);font-size:13px">
+            <option value="">-- בחר בית משפט תחילה --</option>
+          </select>
         </div>
         <div>
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">מתאריך</label>
@@ -1026,21 +1028,52 @@ async function _loadVerdictCourts(){
     ]);
     const courts   = await courtsRes.json();
     const settings = await settingsRes.json();
-    window._verdictCourts = courts;
+    window._verdictCourts   = courts;
+    window._verdictLastJudge = settings.verdict_last_judge || '';
     sel.innerHTML = '<option value="">-- כל בתי המשפט --</option>'
       + courts.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-    // Restore last-used values
-    if(settings.verdict_last_court) sel.value = settings.verdict_last_court;
-    if(settings.verdict_last_judge && $('v-judge'))
-      $('v-judge').value = settings.verdict_last_judge;
+    if(settings.verdict_last_court){
+      sel.value = settings.verdict_last_court;
+      // Load judges for the restored court, then restore judge selection
+      await _loadVerdictJudges(settings.verdict_last_court);
+    }
   } catch(e){
     sel.innerHTML = '<option value="">-- כל בתי המשפט --</option>';
   }
 }
 
+async function _loadVerdictJudges(courtId){
+  const jsel = $('v-judge');
+  if(!jsel) return;
+  if(!courtId){
+    jsel.innerHTML = '<option value="">-- בחר בית משפט תחילה --</option>';
+    return;
+  }
+  jsel.innerHTML = '<option value="">טוען שופטים…</option>';
+  try{
+    const r = await fetch('/api/verdicts/judges?court_id='+encodeURIComponent(courtId));
+    const d = await r.json();
+    const judges = d.judges || [];
+    jsel.innerHTML = '<option value="">-- כל השופטים --</option>'
+      + judges.map(j=>`<option value="${j.value}">${j.name}</option>`).join('');
+    // Restore last judge if available
+    const last = window._verdictLastJudge;
+    if(last){
+      // Try exact value match first, then name match
+      const opt = [...jsel.options].find(o => o.value === last || o.text === last);
+      if(opt) jsel.value = opt.value;
+      window._verdictLastJudge = ''; // consume
+    }
+  } catch(e){
+    jsel.innerHTML = '<option value="">-- שגיאה בטעינת שופטים --</option>';
+  }
+}
+
 async function searchVerdicts(){
   const courtId  = $('v-court')?.value  || '';
-  const judge    = $('v-judge')?.value  || '';
+  const judgeEl  = $('v-judge');
+  const judge    = judgeEl?.value || '';
+  const judgeName = judgeEl ? (judgeEl.options[judgeEl.selectedIndex]?.text || '') : '';
   const dateFrom = $('v-from')?.value   || '';
   const dateTo   = $('v-to')?.value     || '';
   const status   = $('v-status');
