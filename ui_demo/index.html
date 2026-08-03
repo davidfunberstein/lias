@@ -336,6 +336,12 @@
   <div class="note" style="margin-top:6px;margin-bottom:8px">מעביר תיקיות פיזיות לתת-תיקיות לפי ערכאה (בימ"ש שלום, מחוזי, …).</div>
   <button class="btn-accent" style="width:100%;font-size:12.5px;margin-top:4px" onclick="act('reorganize_folders','ארגון מחדש של תיקיות').then(()=>refresh(true))">📁 ארגן תיקיות לפי ערכאה</button>
 
+  <label style="margin-top:16px;font-weight:600">🧠 NotebookLM — חיבור</label>
+  <div id="nlm-auth-status" style="font-size:12px;margin:4px 0 8px;min-height:16px;color:var(--ink-soft)">בודק…</div>
+  <button class="btn-accent" id="nlm-login-btn" style="width:100%;font-size:12.5px"
+          onclick="connectNotebookLM()">🔗 חבר ל-Google NotebookLM</button>
+  <div id="nlm-login-status" style="font-size:12px;margin-top:6px;min-height:16px"></div>
+
   <label style="margin-top:16px;font-weight:600">🧠 ניתוח NotebookLM</label>
   <div class="note" style="margin-bottom:8px">מעלה את מסמכי התיק ל-Gemini Notebook ומחלץ: סיכום, ציר זמן, צדדים, טענות, אסמכתאות, שאלות פתוחות וסתירות פנימיות. הניתוח נשמר ומוצג בכרטיס התיק.</div>
   <select id="analyze-case-sel" style="width:100%;margin-bottom:6px">

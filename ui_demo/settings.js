@@ -350,3 +350,54 @@ if(_origSetTab){
     if(name === 'general') _populateAnalyzeSel();
   };
 }
+
+// ── NotebookLM auth ───────────────────────────────────────────────────────────
+async function _checkNotebookLMStatus(){
+  const el = document.getElementById('nlm-auth-status');
+  if(!el) return;
+  try{
+    const d = await (await fetch('/api/notebooklm/status')).json();
+    if(d.authenticated){
+      el.innerHTML = `<span style="color:var(--accent-strong)">✓ מחובר${d.account ? ' · ' + d.account : ''}</span>`;
+      const btn = document.getElementById('nlm-login-btn');
+      if(btn) btn.textContent = '🔄 חבר מחדש';
+    } else {
+      el.innerHTML = `<span style="color:var(--warn)">${d.error || 'לא מחובר'}</span>`;
+    }
+  }catch(e){
+    el.textContent = 'לא ניתן לבדוק סטטוס';
+  }
+}
+
+async function connectNotebookLM(){
+  const btn = document.getElementById('nlm-login-btn');
+  const status = document.getElementById('nlm-login-status');
+  btn.disabled = true;
+  status.innerHTML = '<span style="color:var(--ink-soft)">⏳ מייבא עוגיות מ-Chrome…</span>';
+  try{
+    const r = await fetch('/api/notebooklm/login', {method:'POST'});
+    const d = await r.json();
+    if(d.ok){
+      status.innerHTML = `<span style="color:var(--accent-strong)">✓ חובר בהצלחה${d.account ? ' · ' + d.account : ''}</span>`;
+      _checkNotebookLMStatus();
+    } else {
+      status.innerHTML = `<span style="color:var(--danger)">✗ ${d.error}</span>`;
+    }
+  }catch(e){
+    status.innerHTML = `<span style="color:var(--danger)">שגיאה: ${e.message}</span>`;
+  }
+  btn.disabled = false;
+}
+
+// hook into setTab so status refreshes when General tab opens
+(function(){
+  const _orig = window.setTab;
+  if(!_orig) return;
+  window.setTab = function(name){
+    _orig(name);
+    if(name === 'general'){
+      _checkNotebookLMStatus();
+      _populateAnalyzeSel();
+    }
+  };
+})();

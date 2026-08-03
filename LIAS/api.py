@@ -1260,6 +1260,53 @@ def analyze_notebook(sub_case_id: int):
     return {"job_id": jobs.submit("notebook_analysis", {"sub_case_id": sub_case_id})}
 
 
+@app.get("/api/notebooklm/status")
+def notebooklm_status():
+    """Check if notebooklm CLI is installed and authenticated."""
+    import subprocess, shutil
+    bin_path = shutil.which("notebooklm") or str(Path.home() / ".local" / "bin" / "notebooklm")
+    if not Path(bin_path).exists():
+        return {"installed": False, "authenticated": False, "account": None,
+                "error": "notebooklm לא מותקן — הרץ: uv tool install 'notebooklm-py[browser]'"}
+    try:
+        r = subprocess.run([bin_path, "auth", "check", "--json"],
+                           capture_output=True, text=True, timeout=15)
+        data = json.loads(r.stdout.strip() or "{}")
+        ok = data.get("status") == "ok"
+        return {"installed": True, "authenticated": ok,
+                "account": data.get("account"),
+                "error": None if ok else "לא מחובר — לחץ 'חבר ל-Google'"}
+    except Exception as e:
+        return {"installed": True, "authenticated": False, "account": None, "error": str(e)}
+
+
+@app.post("/api/notebooklm/login")
+def notebooklm_login():
+    """Import Google cookies from Chrome into notebooklm auth storage."""
+    import subprocess, shutil
+    bin_path = shutil.which("notebooklm") or str(Path.home() / ".local" / "bin" / "notebooklm")
+    if not Path(bin_path).exists():
+        raise HTTPException(503, "notebooklm לא מותקן")
+    try:
+        r = subprocess.run(
+            [bin_path, "login", "--browser-cookies", "chrome", "--json"],
+            capture_output=True, text=True, timeout=30
+        )
+        if r.returncode == 0:
+            # verify auth worked
+            r2 = subprocess.run([bin_path, "auth", "check", "--json"],
+                                 capture_output=True, text=True, timeout=15)
+            data = json.loads(r2.stdout.strip() or "{}")
+            if data.get("status") == "ok":
+                return {"ok": True, "account": data.get("account")}
+        err = r.stderr.strip() or r.stdout.strip()
+        return {"ok": False, "error": err[:300] or "login נכשל"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "timeout — Chrome לא נגיש או עוגיות לא נמצאו"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 # --- SSE ---------------------------------------------------------------------
 
 @app.get("/events")
