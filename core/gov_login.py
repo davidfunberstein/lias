@@ -308,6 +308,8 @@ def handle_bdr_login_page(
             if logger:
                 logger.info(f"[BDR] Clicked 'כניסה למערכת' with selector: {sel}")
             print(f"{_ts()} [BDR] {t('bdr_clicked_enter')}")
+            # Dismiss "אינך מורשה לבצע פעולה זו" DevExpress popup if it appears
+            _dismiss_bdr_permission_popup(page, logger=logger)
             return True
         except Exception:
             continue
@@ -315,6 +317,43 @@ def handle_bdr_login_page(
     print(f"{_ts()} [BDR] {t('bdr_not_found')}")
     if logger:
         logger.warn("[BDR] 'כניסה למערכת' button not found.")
+    return False
+
+
+def _dismiss_bdr_permission_popup(page: "Page", logger: "Logger | None" = None) -> bool:
+    """Dismiss the DevExpress 'אינך מורשה לבצע פעולה זו' popup that sometimes
+    appears after clicking 'כניסה למערכת' on the BDR login page."""
+    _POPUP_TEXT = "אינך מורשה"
+    _OK_SELECTORS = [
+        'button:has-text("אישור")',
+        'input[type="button"][value="אישור"]',
+        'input[type="submit"][value="אישור"]',
+        '.dxpc-footer button',
+        '[id*="PopupControl"] button',
+        '[id*="popup"] button',
+        'td.dxbButton_Office2010Blue:has-text("אישור")',
+        'span.dx-button-text:has-text("אישור")',
+    ]
+    try:
+        # Wait briefly for the popup to appear
+        page.wait_for_selector(
+            f'text="{_POPUP_TEXT}"',
+            timeout=3000,
+        )
+        # Try each OK-button selector
+        for ok_sel in _OK_SELECTORS:
+            try:
+                btn = page.locator(ok_sel)
+                if btn.count() > 0 and btn.first.is_visible(timeout=1000):
+                    btn.first.click()
+                    print(f"{_ts()} [BDR] Dismissed 'אינך מורשה' popup.")
+                    if logger:
+                        logger.info("[BDR] Dismissed permission popup.")
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass  # popup did not appear — normal path
     return False
 
 
