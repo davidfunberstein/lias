@@ -300,3 +300,53 @@ async function saveGovil(){
   }
   else toast('שגיאה: '+(r.error||''), true);
 }
+
+// ── NotebookLM analysis ───────────────────────────────────────────────────────
+async function _populateAnalyzeSel(){
+  const sel = document.getElementById('analyze-case-sel');
+  if(!sel || sel.options.length > 1) return;
+  try{
+    const cases = await (await fetch('/api/cases')).json();
+    const list = Array.isArray(cases) ? cases : (cases.cases||cases.sub_cases||[]);
+    list.forEach(c=>{
+      const opt = document.createElement('option');
+      opt.value = c.sub_case_id || c.id;
+      const num = c.case_number || c.sub_case_number || c.sub_case_id;
+      const name = c.client_name ? ` — ${c.client_name}` : '';
+      opt.textContent = `${num}${name}`;
+      sel.appendChild(opt);
+    });
+  }catch(e){}
+}
+
+async function runNotebookAnalysis(){
+  const sel = document.getElementById('analyze-case-sel');
+  const status = document.getElementById('analyze-status');
+  const btn = document.getElementById('analyze-run-btn');
+  const id = sel && sel.value;
+  if(!id){ status.textContent='בחר תיק תחילה'; return; }
+  btn.disabled = true;
+  status.innerHTML = '<span style="color:var(--ink-soft)">⏳ שולח לניתוח… (עשוי לקחת כמה דקות)</span>';
+  try{
+    const r = await fetch(`/api/analyze/notebook/${id}`, {method:'POST'});
+    const j = await r.json().catch(()=>({}));
+    if(r.ok){
+      status.innerHTML = '<span style="color:var(--accent-strong)">✓ ניתוח הופעל ברקע — התוצאות יישמרו אוטומטית</span>';
+    } else {
+      status.innerHTML = `<span style="color:var(--danger)">שגיאה: ${j.detail||j.error||r.status}</span>`;
+    }
+  }catch(e){
+    status.innerHTML = `<span style="color:var(--danger)">שגיאה: ${e.message}</span>`;
+  }
+  btn.disabled = false;
+}
+
+// populate the select whenever the general tab becomes visible
+const _origSetTab = typeof setTab !== 'undefined' ? setTab : null;
+if(_origSetTab){
+  window._setTabOrig = _origSetTab;
+  window.setTab = function(name){
+    _setTabOrig(name);
+    if(name === 'general') _populateAnalyzeSel();
+  };
+}
