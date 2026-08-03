@@ -61,6 +61,7 @@
     <button data-nav="sync" onclick="go('sync')" data-i18n="nav_sync">סנכרון</button>
     <button data-nav="transcribe" onclick="go('transcribe')" data-i18n="nav_transcribe">תמלול</button>
     <button data-nav="docs" onclick="go('docs')" data-i18n="nav_docs">מסמכים</button>
+    <button data-nav="verdicts" onclick="go('verdicts')">⚖️ החלטות שפורסמו</button>
     <button title="בשלב הבא">עוזר AI <span class="soon">בקרוב</span></button>
   </nav>
   <div class="search" style="position:relative">
@@ -101,6 +102,7 @@
     <button class="set-tab" data-tab="govil" onclick="setTab('govil')">🏛 gov.il<span class="set-ok" id="set-ok-govil"></span></button>
     <button class="set-tab" data-tab="share" onclick="setTab('share')">☁️ שיתוף<span class="set-ok" id="set-ok-share"></span></button>
     <button class="set-tab" data-tab="downloads" onclick="setTab('downloads')">⬇ הורדות<span class="set-ok" id="set-ok-downloads"></span></button>
+    <button class="set-tab" data-tab="portals" onclick="setTab('portals')">🔌 פורטלים<span class="set-ok" id="set-ok-portals"></span></button>
     <button class="set-tab" data-tab="general" onclick="setTab('general')">⚙ כללי<span class="set-ok" id="set-ok-general"></span></button>
   </div>
   <div class="set-pane" data-pane="account">
@@ -323,6 +325,57 @@
     </div>
   </div>
   </div>
+  <div class="set-pane" data-pane="portals" hidden>
+  <p class="sub">בחר אילו פורטלים פעילים. פורטל שכובה לא יופיע בדשבורד ולא יסונכרן.</p>
+
+  <div style="padding:12px;border:1px solid var(--line);border-radius:10px;margin-top:8px">
+    <b style="font-size:13.5px">🔌 פורטלים פעילים</b>
+    <div class="note" style="margin:4px 0 10px">כבה פורטל שאינו רלוונטי — הוא יוסתר מכל המסכים.</div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:400">
+      <input type="checkbox" id="g-portal-net" style="width:auto"> נט המשפט (NET) — בתי המשפט האזרחיים
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:400">
+      <input type="checkbox" id="g-portal-bdr" style="width:auto"> בית הדין הרבני (BDR)
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:400">
+      <input type="checkbox" id="g-portal-eca" style="width:auto"> הוצאה לפועל (ECA)
+    </label>
+    <button class="btn-accent" style="width:100%;margin-top:12px" onclick="savePortalSettings()">💾 שמור הגדרות פורטלים</button>
+    <div id="g-portal-ok" class="sub" style="min-height:16px;margin-top:4px"></div>
+  </div>
+
+  <div style="padding:12px;border:1px solid var(--line);border-radius:10px;margin-top:14px">
+    <b style="font-size:13.5px">⏱ סנכרון אוטומטי</b>
+    <div class="note" style="margin:4px 0 10px">LIAS יסנכרן את כל הפורטלים הפעילים אוטומטית כל כמה שעות, גם בלי פתיחת הדשבורד.</div>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:400">
+      <input type="checkbox" id="g-auto-sync" style="width:auto"> הפעל סנכרון אוטומטי
+    </label>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+      <span style="font-size:13px">כל</span>
+      <input type="number" id="g-auto-sync-hours" value="4" min="1" max="24"
+        style="width:52px;font-size:13px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface2);text-align:center">
+      <span style="font-size:13px">שעות</span>
+    </div>
+    <div id="g-auto-sync-last" style="font-size:11.5px;color:var(--ink-soft);margin-top:6px"></div>
+    <button class="btn-accent" style="width:100%;margin-top:12px" onclick="saveAutoSyncSettings()">💾 שמור תזמון</button>
+    <div id="g-auto-sync-ok" class="sub" style="min-height:16px;margin-top:4px"></div>
+  </div>
+
+  <div style="padding:12px;border:1px solid var(--line);border-radius:10px;margin-top:14px">
+    <b style="font-size:13.5px">📧 שליחת לוגים למייל (למפתח)</b>
+    <div class="note" style="margin:4px 0 10px">לאחר כל סנכרון אוטומטי, שלח את 300 השורות האחרונות של הלוג למייל — לדיבוג מרחוק.</div>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:400">
+      <input type="checkbox" id="g-log-email" style="width:auto"> שלח לוג למייל
+    </label>
+    <input type="email" id="g-log-email-to" placeholder="developer@example.com"
+      style="margin-top:8px" autocomplete="off">
+    <button class="btn-accent" style="width:100%;margin-top:10px" onclick="saveLogEmailSettings()">💾 שמור</button>
+    <button style="width:100%;margin-top:6px;padding:7px;border-radius:8px;border:1px solid var(--line);background:var(--surface2);cursor:pointer;font-size:12.5px"
+      onclick="sendTestLogEmail()">📤 שלח לוג עכשיו (בדיקה)</button>
+    <div id="g-log-email-ok" class="sub" style="min-height:16px;margin-top:4px"></div>
+  </div>
+  </div>
+
   <div class="set-pane" data-pane="general" hidden>
   <label style="margin-top:12px">🌐 שפת ממשק / Interface language</label>
   <select onchange="setLang(this.value)" style="width:100%" id="g-lang">

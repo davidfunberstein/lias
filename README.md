@@ -168,12 +168,57 @@ http://localhost:8500/docs
 | GET | `/api/vector/search?q=...&limit=10` | Full-text search (FTS5, Hebrew) |
 | GET | `/api/vector/stats` | Index stats: analyzed docs, chunks, categories |
 
+### Portal Actions
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/actions/download_all` | Start sync on all enabled portals at once. Body: `{"open_only": true}` (optional) |
+| GET | `/api/settings` | Read persistent settings (portal flags, auto-sync, etc.) |
+| POST | `/api/settings` | Update persistent settings |
+| POST | `/api/actions/send_log_email` | Send last 300 log lines to `{"to": "..."}` |
+
 ### Tools
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/tools/export_session?portal=NET` | Export session cookies from internal browser |
 | POST | `/api/actions/reorganize_by_client` | Re-assign cases to clients |
 | POST | `/api/actions/reorganize_folders` | Reorganize folders by court type |
+
+### Verdicts (החלטות שפורסמו)
+Public court decisions — no login required.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/verdicts/courts` | List of courts with IDs |
+| POST | `/api/verdicts/search` | Start scraping job. Body: `{"court_id", "judge_name", "date_from", "date_to"}` |
+| GET | `/api/verdicts/results` | Poll scrape results (`status`, `rows[]`) |
+| GET | `/api/verdicts/download/{filename}` | Download a specific verdict PDF |
+
+---
+
+## New Features (2026-08)
+
+### Portal Enable / Disable
+Turn off portals you don't use in **Settings → פורטלים**. Disabled portals are skipped by all download jobs and the auto-sync scheduler.
+
+### Download All Portals
+The "⬇ הורד הכל" button in the Sync tab triggers one job per enabled portal simultaneously. Check "רק פתוחים" to restrict each job to open cases only.
+
+### Auto-Sync Scheduler
+Enable automatic sync every N hours from **Settings → פורטלים → סנכרון אוטומטי**. The scheduler runs as a daemon thread and saves `auto_sync_last_run` to `session_defaults.json`.
+
+### Log Email
+After each auto-sync, LIAS can email the last 300 log lines to any address. Configure in Settings → פורטלים → שליחת לוג. Uses the same SMTP credentials stored in keychain for the OTP email system.
+
+### Browser Show/Hide Toggle
+Quick "👁 הצג/הסתר דפדפן" button in the Sync tab — no need to open Settings.
+
+### Verdicts Scraper (החלטות שפורסמו)
+New tab **⚖️ החלטות שפורסמו** searches the public Israeli court decisions portal (`court.gov.il`) without any login. Select a court, enter a partial judge name and date range, then click Search. Results appear in a table with per-row PDF download links, or use "הורד כל ה-PDF" to batch-download all.
+
+The scraper is also available as a standalone CLI tool:
+```bash
+python tools/verdict_scraper.py --court 30 --judge "כהן" --from 01/01/2025 --to 01/08/2026
+```
 
 ---
 

@@ -216,7 +216,14 @@ def main() -> int:
     jobs._pool = pool
     print(f"{config.JOB_WORKERS} workers up / עובדים למעלה")
 
-    # 3) open UI in system browser once server is ready / פתח UI בדפדפן המערכת
+    # 3) auto-sync scheduler / מתזמן סנכרון אוטומטי
+    try:
+        from core.scheduler import start as _sched_start
+        _sched_start(config.PROJECT_ROOT)
+    except Exception as _se:
+        print(f"scheduler not started: {_se}")
+
+    # 4) open UI in system browser once server is ready / פתח UI בדפדפן המערכת
     ui_url = f"http://{config.API_HOST}:{config.API_PORT}"
     t = threading.Thread(target=_open_ui_when_ready, args=(ui_url,), daemon=True)
     t.start()

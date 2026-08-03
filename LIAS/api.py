@@ -382,6 +382,25 @@ async def act_toggle_browser_visible(request: Request):
     return {"ok": True, "visible": visible}
 
 
+@app.post("/api/actions/send_log_email")
+async def act_send_log_email(request: Request):
+    """Send the last 300 lines of latest.log to the given email address."""
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    to_addr = (body.get("to") or "").strip()
+    if not to_addr:
+        raise HTTPException(400, "missing 'to' address")
+    try:
+        from core.scheduler import send_log_email
+        send_log_email(config.PROJECT_ROOT, to_addr)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/api/actions/net_list_cases")
 def act_net_list_cases(years_back: int = 20):
     return {"job_id": jobs.submit("net_list_cases", {"years_back": years_back})}
@@ -421,6 +440,44 @@ def act_purge_stale(mode: str = "missing"):
 @app.post("/api/actions/net_auto_update")
 def act_net_auto_update():
     return {"job_id": jobs.submit("net_auto_update")}
+
+
+@app.post("/api/actions/download_all")
+async def act_download_all(request: Request):
+    """Start sync on all enabled portals at once.
+    Body (optional): {"open_only": true}  — pass open-cases-only filter to each portal job.
+    """
+    import json as _json
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    open_only: bool = bool(body.get("open_only", False))
+
+    defaults_path = config.PROJECT_ROOT / "session_defaults.json"
+    d: dict = {}
+    if defaults_path.exists():
+        try:
+            d = _json.loads(defaults_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    job_ids = []
+    if d.get("portal_net_enabled", True):
+        net_filter = "open" if open_only else "all"
+        job_ids.append(jobs.submit("net_auto_update", {"open_filter": net_filter}))
+    if d.get("portal_bdr_enabled", True):
+        bdr_params: dict = {"open_only": open_only} if open_only else {}
+        job_ids.append(jobs.submit("bdr_batch", bdr_params))
+    if d.get("portal_eca_enabled", True):
+        try:
+            from .collector_bridge import _eca_handler_exists
+            if _eca_handler_exists():
+                eca_params: dict = {"open_only": open_only} if open_only else {}
+                job_ids.append(jobs.submit("eca_batch", eca_params))
+        except Exception:
+            pass
+    return {"job_ids": job_ids, "count": len(job_ids)}
 
 
 @app.post("/api/actions/bdr_batch")
@@ -953,6 +1010,16 @@ def get_settings():
         "eca_scope":               d.get("eca_scope", "selected"),   # all | selected
         "browser_visible":         d.get("browser_visible", True),   # show automation browser
         "govil_configured":        _govil_creds_exist(),
+        # Portal enable/disable
+        "portal_net_enabled":      d.get("portal_net_enabled", True),
+        "portal_bdr_enabled":      d.get("portal_bdr_enabled", True),
+        "portal_eca_enabled":      d.get("portal_eca_enabled", True),
+        # Auto-sync scheduling
+        "auto_sync_enabled":       d.get("auto_sync_enabled", False),
+        "auto_sync_interval_hours": d.get("auto_sync_interval_hours", 4),
+        # Developer log email
+        "log_email_enabled":       d.get("log_email_enabled", False),
+        "log_email_to":            d.get("log_email_to", ""),
     }
 
 
@@ -1012,6 +1079,16 @@ class SettingsUpdate(BaseModel):
     bdr_scope: Optional[str] = None
     eca_scope: Optional[str] = None
     browser_visible: Optional[bool] = None
+    # Portal enable/disable
+    portal_net_enabled: Optional[bool] = None
+    portal_bdr_enabled: Optional[bool] = None
+    portal_eca_enabled: Optional[bool] = None
+    # Auto-sync scheduling
+    auto_sync_enabled: Optional[bool] = None
+    auto_sync_interval_hours: Optional[int] = None
+    # Developer log email
+    log_email_enabled: Optional[bool] = None
+    log_email_to: Optional[str] = None
     # EN: change gov.il credentials from the UI — written straight to the OS
     #     keychain, never stored in files and never echoed back.
     # HE: החלפת ת"ז/סיסמה מה-UI — נכתב ישירות ל-Keychain, לא לקבצים.
@@ -1034,18 +1111,24 @@ def save_settings(req: SettingsUpdate):
     elif "court_docs_dir" in d:
         del d["court_docs_dir"]
     _BOOL_FIELDS = {"check_viewers", "download_related_cases", "net_related",
-                    "browser_visible"}
+                    "browser_visible", "portal_net_enabled", "portal_bdr_enabled",
+                    "portal_eca_enabled", "auto_sync_enabled", "log_email_enabled"}
     _STR_FIELDS  = {"mode", "storage_mode", "login_method", "otp_method", "otp_source",
                     "user_mode", "lawyer_name", "share_email", "case_scope", "years_back",
-                    "net_scope", "bdr_scope", "eca_scope"}
+                    "net_scope", "bdr_scope", "eca_scope", "log_email_to"}
+    _INT_FIELDS  = {"auto_sync_interval_hours"}
     for f in _BOOL_FIELDS:
-        v = getattr(req, f)
+        v = getattr(req, f, None)
         if v is not None:
             d[f] = v
     for f in _STR_FIELDS:
-        v = getattr(req, f)
+        v = getattr(req, f, None)
         if v is not None:
             d[f] = v
+    for f in _INT_FIELDS:
+        v = getattr(req, f, None)
+        if v is not None:
+            d[f] = int(v)
     defaults_path.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
     from pathlib import Path as _P
     config.COURT_DOCS_DIR = _P(req.court_docs_dir).expanduser().resolve() if req.court_docs_dir else (config.PROJECT_ROOT / "court_documents")
@@ -1305,6 +1388,91 @@ def notebooklm_login():
         return {"ok": False, "error": "timeout — Chrome לא נגיש או עוגיות לא נמצאו"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# --- Verdicts scraper (public decisions / החלטות שהותרו לפרסום) ---------------
+
+_VERDICT_COURTS = [
+    {"id": "-1", "name": "בחר"},
+    {"id": "11",  "name": "העליון"},
+    {"id": "16",  "name": "המחוזי באר שבע"},
+    {"id": "13",  "name": "המחוזי חיפה"},
+    {"id": "14",  "name": "המחוזי ירושלים"},
+    {"id": "896", "name": "המחוזי מרכז"},
+    {"id": "12",  "name": "המחוזי נוף הגליל-נצרת"},
+    {"id": "15",  "name": "המחוזי תל אביב - יפו"},
+    {"id": "30",  "name": "שלום ירושלים"},
+    {"id": "32",  "name": "שלום תל אביב - יפו"},
+    {"id": "26",  "name": "שלום חיפה"},
+    {"id": "41",  "name": "שלום באר שבע"},
+    {"id": "17",  "name": "שלום נוף הגליל-נצרת"},
+    {"id": "38",  "name": "שלום נתניה"},
+    {"id": "39",  "name": "שלום כפר סבא"},
+    {"id": "35",  "name": "שלום פתח תקווה"},
+    {"id": "40",  "name": "שלום ראשון לציון"},
+    {"id": "37",  "name": "שלום רחובות"},
+    {"id": "33",  "name": "ענייני משפחה במחוז ת\"א"},
+    {"id": "47",  "name": "הארצי לעבודה"},
+    {"id": "49",  "name": "אזורי לעבודה תל אביב - יפו"},
+    {"id": "48",  "name": "אזורי לעבודה ירושלים"},
+    {"id": "50",  "name": "אזורי לעבודה חיפה"},
+    {"id": "51",  "name": "אזורי לעבודה באר שבע"},
+]
+
+
+@app.get("/api/verdicts/courts")
+def verdicts_courts():
+    return {"courts": _VERDICT_COURTS}
+
+
+@app.post("/api/verdicts/search")
+async def verdicts_search(request: Request):
+    """Start a verdict scrape job.
+    Body: {court_id, judge_name, date_from (DD/MM/YYYY), date_to, max_pages}"""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    court_id   = str(body.get("court_id", "-1"))
+    judge_name = str(body.get("judge_name", ""))
+    date_from  = str(body.get("date_from", ""))
+    date_to    = str(body.get("date_to", ""))
+    max_pages  = int(body.get("max_pages", 5))
+    if court_id == "-1":
+        raise HTTPException(400, "יש לבחור בית משפט")
+    payload = {"court_id": court_id, "judge_name": judge_name,
+               "date_from": date_from, "date_to": date_to,
+               "max_pages": max_pages}
+    return {"job_id": jobs.submit("verdict_scrape", payload)}
+
+
+@app.get("/api/verdicts/results")
+def verdicts_results(limit: int = 200):
+    """Return previously scraped verdicts from the verdict_runs log."""
+    import json as _json
+    results_dir = config.COURT_DOCS_DIR / "verdicts"
+    rows = []
+    if results_dir.exists():
+        for f in sorted(results_dir.glob("run_*.json"), reverse=True)[:10]:
+            try:
+                data = _json.loads(f.read_text(encoding="utf-8"))
+                rows.extend(data.get("verdicts", []))
+            except Exception:
+                pass
+    return {"verdicts": rows[:limit]}
+
+
+@app.get("/api/verdicts/download/{filename}")
+def verdicts_download(filename: str):
+    """Serve a downloaded verdict PDF."""
+    # Prevent path traversal
+    safe = Path(filename).name
+    path = config.COURT_DOCS_DIR / "verdicts" / "pdfs" / safe
+    if not path.exists():
+        raise HTTPException(404, "file not found")
+    return FileResponse(str(path), media_type="application/pdf",
+                        headers={"Content-Disposition": "inline"})
 
 
 # --- SSE ---------------------------------------------------------------------

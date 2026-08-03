@@ -1944,3 +1944,21 @@ def notebook_analysis(payload: dict, ctx: JobContext) -> str:
     ctx.progress(1.0, "ניתוח הושלם")
     keys = [k for k, v in result.items() if v]
     return f"notebook analysis done — {len(keys)} sections for {case_number}"
+
+
+# ---------------------------------------------------------------------------
+# Verdict scraper registration
+# ---------------------------------------------------------------------------
+
+def _eca_handler_exists() -> bool:
+    """Return True if an eca_batch handler is registered."""
+    from . import jobs as _j
+    return "eca_batch" in _j._HANDLERS or "eca_sync" in _j._HANDLERS
+
+
+# Register the public verdict scraper job handler
+try:
+    from tools.verdict_scraper import register_verdict_handler
+    register_verdict_handler()
+except Exception as _ve:
+    print(f"[collector_bridge] verdict handler not registered: {_ve}")

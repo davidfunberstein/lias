@@ -389,7 +389,109 @@ async function connectNotebookLM(){
   btn.disabled = false;
 }
 
-// hook into setTab so status refreshes when General tab opens
+// ── Portal settings ──────────────────────────────────────────────────────────
+async function savePortalSettings(){
+  const body = {
+    portal_net_enabled: !!$('g-portal-net')?.checked,
+    portal_bdr_enabled: !!$('g-portal-bdr')?.checked,
+    portal_eca_enabled: !!$('g-portal-eca')?.checked,
+  };
+  const ok = $('g-portal-ok');
+  try{
+    const r = await fetch('/api/settings',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    if(r.ok){
+      if(ok){ ok.style.color='var(--accent-strong)'; ok.textContent='✓ נשמר'; }
+      toast('הגדרות פורטלים נשמרו ✓');
+    } else {
+      if(ok){ ok.style.color='var(--danger)'; ok.textContent='✗ שגיאה'; }
+    }
+  } catch(e){
+    if(ok){ ok.style.color='var(--danger)'; ok.textContent='✗ '+e.message; }
+  }
+}
+
+// ── Auto-sync settings ───────────────────────────────────────────────────────
+async function saveAutoSyncSettings(){
+  const enabled = !!$('g-auto-sync')?.checked;
+  const hours   = parseInt($('g-auto-sync-hours')?.value||'4', 10);
+  const ok = $('g-auto-sync-ok');
+  try{
+    const r = await fetch('/api/settings',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({auto_sync_enabled: enabled, auto_sync_interval_hours: hours})
+    });
+    if(r.ok){
+      if(ok){ ok.style.color='var(--accent-strong)'; ok.textContent=enabled?`✓ סנכרון אוטומטי פעיל — כל ${hours} שעות`:'✓ סנכרון אוטומטי כבוי'; }
+      toast(enabled?`סנכרון אוטומטי הופעל כל ${hours} שעות ✓`:'סנכרון אוטומטי כובה ✓');
+    } else {
+      if(ok){ ok.style.color='var(--danger)'; ok.textContent='✗ שגיאה'; }
+    }
+  } catch(e){
+    if(ok){ ok.style.color='var(--danger)'; ok.textContent='✗ '+e.message; }
+  }
+}
+
+// ── Log email settings ───────────────────────────────────────────────────────
+async function saveLogEmailSettings(){
+  const enabled = !!$('g-log-email')?.checked;
+  const to      = ($('g-log-email-to')?.value||'').trim();
+  const ok = $('g-log-email-ok');
+  if(enabled && !to){ toast('נא להזין כתובת מייל', true); return; }
+  try{
+    const r = await fetch('/api/settings',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({log_email_enabled: enabled, log_email_to: to})
+    });
+    if(r.ok){
+      if(ok){ ok.style.color='var(--accent-strong)'; ok.textContent=enabled?`✓ לוגים ישלחו ל-${to}`:'✓ כבוי'; }
+      toast('הגדרות לוג נשמרו ✓');
+    } else {
+      if(ok){ ok.style.color='var(--danger)'; ok.textContent='✗ שגיאה'; }
+    }
+  } catch(e){
+    if(ok){ ok.style.color='var(--danger)'; ok.textContent='✗ '+e.message; }
+  }
+}
+
+async function sendTestLogEmail(){
+  const to = ($('g-log-email-to')?.value||'').trim();
+  if(!to){ toast('נא להזין כתובת מייל', true); return; }
+  const ok = $('g-log-email-ok');
+  if(ok) ok.textContent = 'שולח…';
+  try{
+    const r = await fetch('/api/actions/send_log_email',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({to})
+    });
+    const d = await r.json();
+    if(d.ok){
+      if(ok){ ok.style.color='var(--accent-strong)'; ok.textContent='✓ נשלח!'; }
+    } else {
+      if(ok){ ok.style.color='var(--danger)'; ok.textContent='✗ '+(d.error||'שגיאה'); }
+    }
+  } catch(e){
+    if(ok){ ok.style.color='var(--danger)'; ok.textContent='✗ '+e.message; }
+  }
+}
+
+// ── Load portal/auto-sync settings when Portals tab opens ────────────────────
+async function _loadPortalSettings(){
+  try{
+    const st = await (await fetch('/api/settings')).json();
+    if($('g-portal-net')) $('g-portal-net').checked = st.portal_net_enabled !== false;
+    if($('g-portal-bdr')) $('g-portal-bdr').checked = st.portal_bdr_enabled !== false;
+    if($('g-portal-eca')) $('g-portal-eca').checked = st.portal_eca_enabled !== false;
+    if($('g-auto-sync'))  $('g-auto-sync').checked  = !!st.auto_sync_enabled;
+    if($('g-auto-sync-hours')) $('g-auto-sync-hours').value = st.auto_sync_interval_hours || 4;
+    if($('g-log-email'))    $('g-log-email').checked    = !!st.log_email_enabled;
+    if($('g-log-email-to')) $('g-log-email-to').value   = st.log_email_to || '';
+    if(st.auto_sync_last_run && $('g-auto-sync-last')){
+      $('g-auto-sync-last').textContent = 'סנכרון אחרון: ' + st.auto_sync_last_run.replace('T',' ').slice(0,16);
+    }
+  } catch(e){}
+}
+
+// hook into setTab so statuses refresh when relevant tabs open
 (function(){
   const _orig = window.setTab;
   if(!_orig) return;
@@ -398,6 +500,9 @@ async function connectNotebookLM(){
     if(name === 'general'){
       _checkNotebookLMStatus();
       _populateAnalyzeSel();
+    }
+    if(name === 'portals'){
+      _loadPortalSettings();
     }
   };
 })();

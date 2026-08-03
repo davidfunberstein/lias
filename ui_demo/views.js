@@ -943,3 +943,176 @@ async function viewTranscription(name){
     w.classList.add('on'); _syncOverlays();
   }catch(e){ toast('שגיאה בפתיחת תמלול', true); }
 }
+
+// ── Verdicts view ──────────────────────────────────────────────────────────
+async function renderVerdicts(){
+  const el = $('view-verdicts');
+  if(!el) return;
+  // Load courts list for the dropdown (first time only)
+  if(!window._verdictCourts){
+    try{
+      const r = await fetch('/api/verdicts/courts');
+      window._verdictCourts = await r.json();
+    } catch(e){ window._verdictCourts = []; }
+  }
+  const courts = window._verdictCourts;
+  const courtOpts = courts.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  el.innerHTML = `
+    <div class="card c12" style="max-width:680px">
+      <div class="kpi-top"><div><h2>⚖️ החלטות שהותרו לפרסום</h2>
+        <div class="sub">חיפוש החלטות שופטים מפורטל בתי המשפט הממשלתי (ללא התחברות)</div>
+      </div></div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
+        <div>
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">בית משפט</label>
+          <select id="v-court" style="width:100%;padding:8px 10px;border-radius:8px;
+            border:1px solid var(--line);background:var(--surface);font-size:13px">
+            <option value="">-- כל בתי המשפט --</option>${courtOpts}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">שם שופט (חלקי)</label>
+          <input id="v-judge" type="text" placeholder="לדוגמה: כהן"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;
+            border:1px solid var(--line);background:var(--surface);font-size:13px">
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">מתאריך</label>
+          <input id="v-from" type="date" style="width:100%;box-sizing:border-box;padding:8px 10px;
+            border-radius:8px;border:1px solid var(--line);background:var(--surface);font-size:13px">
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">עד תאריך</label>
+          <input id="v-to" type="date" style="width:100%;box-sizing:border-box;padding:8px 10px;
+            border-radius:8px;border:1px solid var(--line);background:var(--surface);font-size:13px">
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center">
+        <button onclick="searchVerdicts()" style="padding:9px 20px;border-radius:10px;
+          border:none;background:var(--accent);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer">
+          🔍 חפש
+        </button>
+        <button id="v-dl-btn" onclick="downloadVerdicts()" style="display:none;padding:9px 18px;
+          border-radius:10px;border:2px solid var(--accent);background:var(--accent-soft,#dce8ff);
+          color:var(--accent-strong,#1a4b9e);font-weight:700;font-size:13px;cursor:pointer">
+          ⬇ הורד כל ה-PDF
+        </button>
+        <span id="v-status" style="font-size:12px;color:var(--ink-soft)"></span>
+      </div>
+    </div>
+
+    <div id="v-results" style="margin-top:12px"></div>
+  `;
+
+  // Set default date range: last 6 months
+  const today = new Date();
+  const sixBack = new Date(today); sixBack.setMonth(today.getMonth()-6);
+  const fmt = d => d.toISOString().slice(0,10);
+  if($('v-to'))   $('v-to').value   = fmt(today);
+  if($('v-from')) $('v-from').value = fmt(sixBack);
+}
+
+async function searchVerdicts(){
+  const courtId  = $('v-court')?.value  || '';
+  const judge    = $('v-judge')?.value  || '';
+  const dateFrom = $('v-from')?.value   || '';
+  const dateTo   = $('v-to')?.value     || '';
+  const status   = $('v-status');
+  const btn      = $('v-dl-btn');
+  if(status) status.textContent = 'מחפש…';
+  if(btn)    btn.style.display  = 'none';
+  try{
+    const r = await fetch('/api/verdicts/search', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({court_id: courtId, judge_name: judge,
+        date_from: dateFrom, date_to: dateTo})
+    });
+    const d = await r.json();
+    if(d.job_id){
+      if(status) status.textContent = `משימה הופעלה (${d.job_id}) — הורדה רצה ברקע`;
+    } else if(d.error){
+      if(status) status.textContent = `שגיאה: ${d.error}`;
+    }
+    // Poll results
+    _pollVerdictResults();
+  } catch(e){
+    if(status) status.textContent = `שגיאה: ${e.message}`;
+  }
+}
+
+let _verdictPollTimer = null;
+function _pollVerdictResults(){
+  if(_verdictPollTimer) clearInterval(_verdictPollTimer);
+  let attempts = 0;
+  _verdictPollTimer = setInterval(async ()=>{
+    attempts++;
+    if(attempts > 60){ clearInterval(_verdictPollTimer); return; }
+    try{
+      const r = await fetch('/api/verdicts/results');
+      const d = await r.json();
+      _renderVerdictResults(d);
+      if(d.status === 'done' || d.status === 'error'){
+        clearInterval(_verdictPollTimer);
+        _verdictPollTimer = null;
+      }
+    } catch(e){}
+  }, 2000);
+}
+
+function _renderVerdictResults(d){
+  const el = $('v-results');
+  if(!el) return;
+  const status = $('v-status');
+  const btn    = $('v-dl-btn');
+  const rows   = d.rows || [];
+  if(d.status === 'error'){
+    if(status) status.textContent = `שגיאה: ${d.error || 'לא ידוע'}`;
+    return;
+  }
+  if(!rows.length){
+    if(d.status === 'done' && status) status.textContent = 'לא נמצאו תוצאות';
+    el.innerHTML = '';
+    return;
+  }
+  if(status) status.textContent = `${rows.length} תוצאות${d.status==='running'?' (טוען עוד…)':''}`;
+  if(btn && d.status === 'done') btn.style.display = 'inline-block';
+  const th = (t,w) => `<th style="padding:6px 10px;text-align:right;font-size:11.5px;font-weight:600;white-space:nowrap${w?`;width:${w}`:''};">${t}</th>`;
+  const td = (t,extra) => `<td style="padding:6px 10px;font-size:12.5px;direction:rtl${extra?`;${extra}`:''};">${t||''}</td>`;
+  el.innerHTML = `<div class="card c12" style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;direction:rtl">
+    <thead style="background:var(--surface2)"><tr>
+      ${th('תאריך','90px')}${th('שופט')}${th('תיק')}${th('נושא')}${th('PDF','60px')}
+    </tr></thead>
+    <tbody>${rows.map((row,i)=>`<tr style="background:${i%2?'var(--surface)':'var(--surface2)'}">
+      ${td(row.date||'')}
+      ${td(row.judge||'')}
+      ${td(row.case_number||'')}
+      ${td(row.subject||'')}
+      ${td(row.filename?`<a href="/api/verdicts/download/${encodeURIComponent(row.filename)}" target="_blank" style="color:var(--accent)">⬇ PDF</a>`:'')}
+    </tr>`).join('')}
+    </tbody></table></div>`;
+}
+
+async function downloadVerdicts(){
+  const btn = $('v-dl-btn');
+  if(btn){ btn.textContent='מוריד…'; btn.disabled=true; }
+  const status = $('v-status');
+  try{
+    const r = await fetch('/api/verdicts/results');
+    const d = await r.json();
+    const rows = (d.rows||[]).filter(r=>r.filename);
+    for(let i=0;i<rows.length;i++){
+      const a = document.createElement('a');
+      a.href = '/api/verdicts/download/'+encodeURIComponent(rows[i].filename);
+      a.download = rows[i].filename;
+      a.click();
+      await new Promise(r=>setTimeout(r,300));
+    }
+    if(status) status.textContent = `הורדו ${rows.length} קבצים ✓`;
+  } catch(e){
+    if(status) status.textContent = `שגיאה: ${e.message}`;
+  } finally{
+    if(btn){ btn.textContent='⬇ הורד כל ה-PDF'; btn.disabled=false; }
+  }
+}

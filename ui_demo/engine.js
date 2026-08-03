@@ -895,11 +895,28 @@ function syncCard(el){
     <div id="portal-lock-note" style="display:none;margin-top:12px;padding:9px 12px;
          border-radius:10px;background:rgba(230,168,0,.14);border:1px solid rgba(230,168,0,.5);
          font-size:12.5px;font-weight:600"></div>
-    <div style="display:flex;gap:10px;margin-top:12px" id="sync-platforms">
+    <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap" id="sync-platforms">
       <button class="sync-plat" id="plat-NET" onclick="pickPlatform('NET')">🏛<div>נט המשפט</div></button>
       <button class="sync-plat" id="plat-BDR" onclick="pickPlatform('BDR')">🕍<div>בית הדין הרבני</div></button>
       <button class="sync-plat" id="plat-ECA" onclick="pickPlatform('ECA')">⚖️<div>הוצאה לפועל</div></button>
     </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
+      <button onclick="downloadAll()" style="flex:1;padding:9px 14px;border-radius:10px;
+        border:2px solid var(--accent);background:var(--accent-soft,#dce8ff);
+        color:var(--accent-strong,#1a4b9e);font-weight:700;font-size:13.5px;cursor:pointer">
+        ⬇ הורד הכל (כל הפורטלים)
+      </button>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;white-space:nowrap">
+        <input type="checkbox" id="download-all-open-only" style="width:auto">
+        רק פתוחים
+      </label>
+      <button id="browser-toggle-btn" onclick="_toggleBrowserWindow()"
+        style="padding:9px 14px;border-radius:10px;border:1px solid var(--line);
+        background:var(--surface2);cursor:pointer;font-size:13px;white-space:nowrap">
+        👁 הצג/הסתר דפדפן
+      </button>
+    </div>
+    <div id="download-all-status" style="font-size:12px;margin-top:5px;color:var(--ink-soft)"></div>
     <label id="browser-visible-row" style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;opacity:.85;cursor:pointer">
       <input type="checkbox" id="sync-browser-visible" style="width:auto"
         onchange="_saveBrowserVisible(this.checked)">
@@ -1907,6 +1924,41 @@ function refreshFab(){
     if(jobs.length>5) html += `<div style="font-size:11px;color:var(--ink-soft);padding:2px 8px">ועוד ${jobs.length-5}…</div>`;
   }
   el.innerHTML = html || '<div class="empty">אין פעילות עדיין</div>';
+}
+
+// ── Download all portals ────────────────────────────────────────────────────
+async function downloadAll(){
+  const el = $('download-all-status');
+  if(el) el.textContent = 'מפעיל הורדה בכל הפורטלים…';
+  const openOnly = !!$('download-all-open-only')?.checked;
+  try{
+    const r = await fetch('/api/actions/download_all', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({open_only: openOnly})
+    });
+    const d = await r.json();
+    if(el) el.textContent = d.count>0
+      ? `✓ הופעלו ${d.count} משימות הורדה`
+      : '⚠ אין פורטלים פעילים — בדוק הגדרות פורטלים';
+  } catch(e){
+    if(el) el.textContent = `שגיאה: ${e.message}`;
+  }
+}
+
+// ── Browser window quick toggle ─────────────────────────────────────────────
+async function _toggleBrowserWindow(){
+  try{
+    const status = await (await fetch('/api/browser/status')).json();
+    // headless = hidden; try to toggle
+    const visible = status.headless;  // headless=true means hidden → we want to show
+    const portal = window._syncPlatform || 'NET';
+    await fetch('/api/actions/toggle_browser_visible', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({portal, visible})
+    });
+    const btn = $('browser-toggle-btn');
+    if(btn) btn.textContent = visible ? '👁 הסתר דפדפן' : '👁 הצג דפדפן';
+  } catch(e){ toast('לא ניתן לשנות מצב דפדפן: '+e.message, true); }
 }
 
 // Start the unified state poller once the page is ready
