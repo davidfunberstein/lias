@@ -67,6 +67,26 @@ def import_one_case(case_dir: Path, portal: str = "", case_number: str = "") -> 
                             "message": f"{case_number}: {n} מסמכים נוספו לדשבורד"})
         except Exception:
             pass
+    # Queue newly imported documents for background analysis
+    try:
+        from core.doc_pipeline import queue_document
+        from core.download import SESSION_SETTINGS
+        from ui_modules.db import get_conn
+        # find docs we just imported for this case_number
+        newly = get_conn().execute(
+            """SELECT d.document_id FROM documents d
+               JOIN sub_cases s ON s.sub_case_id=d.sub_case_id
+               JOIN cases c ON c.case_id=s.case_id
+               LEFT JOIN doc_analysis da ON da.document_id=d.document_id
+               WHERE c.case_number=? AND da.document_id IS NULL
+                 AND d.physical_name IS NOT NULL AND d.physical_name!=''
+               LIMIT 100""",
+            (case_number,)
+        ).fetchall()
+        for r in newly:
+            queue_document(r[0], dict(SESSION_SETTINGS))
+    except Exception as _ae:
+        print(f"[import_one_case] analysis queue skip: {_ae}")
     return n
 
 
@@ -1901,3 +1921,26 @@ def import_session(payload: dict, ctx: JobContext) -> str:
     ctx.progress(1.0, f"סשן {portal} יובא בהצלחה")
     jobs.broadcast({"type": "session_imported", "portal": portal, "url": str(final_url)})
     return f"סשן {portal} יובא — {len(cookies)} עוגיות הוזרקו"
+
+
+@handler("notebook_analysis")
+def notebook_analysis(payload: dict, ctx: JobContext) -> str:
+    """Run NotebookLM analysis pipeline for a case (background, no browser needed)."""
+    sub_case_id = int(payload.get("sub_case_id", 0))
+    if not sub_case_id:
+        raise RuntimeError("sub_case_id required")
+
+    from ui_modules.db import get_conn
+    row = get_conn().execute(
+        "SELECT c.case_number FROM sub_cases s JOIN cases c ON c.case_id=s.case_id WHERE s.sub_case_id=?",
+        (sub_case_id,)
+    ).fetchone()
+    case_number = row["case_number"] if row else str(sub_case_id)
+
+    ctx.progress(0.1, f"מנתח תיק {case_number} עם Gemini Notebook…")
+    from core.notebook_bridge import run_notebook_pipeline
+    from core.download import SESSION_SETTINGS
+    result = run_notebook_pipeline(sub_case_id, case_number, dict(SESSION_SETTINGS))
+    ctx.progress(1.0, "ניתוח הושלם")
+    keys = [k for k, v in result.items() if v]
+    return f"notebook analysis done — {len(keys)} sections for {case_number}"

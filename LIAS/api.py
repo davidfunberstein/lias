@@ -1186,6 +1186,80 @@ def ai_ask(req: AiAskRequest):
                             "api_key": req.api_key})
 
 
+# ── Analysis / Vector store ───────────────────────────────────────────────────
+
+@app.post("/api/analyze/case/{sub_case_id}")
+def analyze_case(sub_case_id: int, force: bool = False):
+    """Trigger background analysis pipeline for all documents in a case.
+    Returns job-style dict with queued count."""
+    from core.doc_pipeline import process_case, queue_document
+    from core.download import SESSION_SETTINGS
+    from ui_modules.db import get_conn
+    if force:
+        skip = False
+    else:
+        skip = True
+    # queue each unanalyzed doc
+    rows = get_conn().execute(
+        """SELECT d.document_id FROM documents d
+           LEFT JOIN doc_analysis da ON da.document_id=d.document_id
+           WHERE d.sub_case_id=? AND d.physical_name IS NOT NULL
+             AND d.physical_name!=''
+             AND (? OR da.document_id IS NULL)""",
+        (sub_case_id, 1 if not skip else 0)
+    ).fetchall()
+    for r in rows:
+        queue_document(r[0], dict(SESSION_SETTINGS))
+    return {"queued": len(rows), "sub_case_id": sub_case_id}
+
+
+@app.get("/api/analyze/case/{sub_case_id}")
+def get_case_analysis(sub_case_id: int):
+    """Return stored analysis for all documents in a case."""
+    from core.vector_store import get_case_analysis, ensure_schema
+    ensure_schema()
+    return {"analyses": get_case_analysis(sub_case_id)}
+
+
+@app.get("/api/analyze/doc/{document_id}")
+def get_doc_analysis(document_id: int):
+    """Return stored analysis for a single document."""
+    from core.vector_store import get_analysis, ensure_schema
+    ensure_schema()
+    a = get_analysis(document_id)
+    if not a:
+        raise HTTPException(404, "not analyzed yet")
+    return a
+
+
+@app.get("/api/vector/search")
+def vector_search(q: str = "", sub_case_id: int = 0,
+                  doc_category: str = "", limit: int = 10):
+    """Full-text search across all indexed document chunks."""
+    from core.vector_store import search, ensure_schema
+    ensure_schema()
+    if not q:
+        raise HTTPException(400, "q is required")
+    results = search(q, limit=min(limit, 50),
+                     sub_case_id=sub_case_id or None,
+                     doc_category=doc_category or None)
+    return {"results": results, "count": len(results)}
+
+
+@app.get("/api/vector/stats")
+def vector_stats():
+    """Summary of what's indexed in the vector store."""
+    from core.vector_store import stats, ensure_schema
+    ensure_schema()
+    return stats()
+
+
+@app.post("/api/analyze/notebook/{sub_case_id}")
+def analyze_notebook(sub_case_id: int):
+    """Trigger NotebookLM pipeline for a case (background job)."""
+    return {"job_id": jobs.submit("notebook_analysis", {"sub_case_id": sub_case_id})}
+
+
 # --- SSE ---------------------------------------------------------------------
 
 @app.get("/events")
