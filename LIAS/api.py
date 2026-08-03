@@ -608,6 +608,38 @@ async def act_eca_sync(request: Request):
     return {"job_id": jobs.submit("eca_sync", body or {})}
 
 
+@app.get("/api/tools/export_session")
+def export_session(portal: str = "NET"):
+    """Export current cookies from the running Playwright browser context for a portal.
+    Returns the same storage_state JSON that import_session / export_session.py produce.
+    Use this when the lawyer is already logged in and wants to share their own session."""
+    import time as _t
+    from .collector_bridge import get_browser_for_portal
+    bm = get_browser_for_portal(portal.upper())
+    if bm is None:
+        raise HTTPException(503, "browser not available — start the engine first")
+
+    def _get(page):
+        return page.context.storage_state()
+
+    try:
+        state = bm.run(lambda page: page.context.storage_state(), timeout=15)
+    except Exception as e:
+        raise HTTPException(500, f"could not export cookies: {e}")
+
+    payload = {
+        "portal":        portal.upper(),
+        "exported_at":   _t.time(),
+        "exported_iso":  _t.strftime("%Y-%m-%dT%H:%M:%S"),
+        "storage_state": state,
+    }
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        content=payload,
+        headers={"Content-Disposition": f'attachment; filename="session_{portal.lower()}.json"'}
+    )
+
+
 @app.post("/api/actions/import_session")
 async def act_import_session(request: Request):
     """Inject a client-exported session (cookies) into the portal browser context.
