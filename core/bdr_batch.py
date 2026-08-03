@@ -681,6 +681,17 @@ class BdrBatchRunner:
                 self._log(f"בחירת תת-תיקים: {len(keep)}/{len(all_sub_cases)} יורדו.")
                 all_sub_cases = keep
 
+        # Filter closed sub-cases when the user requested open-only
+        open_filter = session_settings.get("open_filter", "all")
+        if open_filter in ("open", "open_client"):
+            before = len(all_sub_cases)
+            # close_date present → sub-case is closed; keep only those without it
+            all_sub_cases = [sc for sc in all_sub_cases
+                             if not (sc.close_date or "").strip()]
+            skipped = before - len(all_sub_cases)
+            if skipped:
+                self._log(f"סונן open_filter='{open_filter}': {skipped} תת-תיקים סגורים דולגו.")
+
         if not all_sub_cases:
             self._log("לא נמצאו תת-תיקים אחרי פתיחת הקבוצות.", "error")
             return

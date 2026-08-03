@@ -35,3 +35,5 @@ google_login.json
 *Google Cloud console.pdf
 Client ID for Web application*
 .venv/
+session_*.json
+docs_fix_spec_*.md

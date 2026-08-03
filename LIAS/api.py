@@ -503,6 +503,29 @@ def get_all_cases(q: str = ""):
             "missing": sum(1 for r in out if not r["downloaded"])}
 
 
+@app.get("/api/cases/db")
+def get_cases_db(portal: str = "", client_id: int = 0, open_only: bool = False):
+    """Return case_cards directly from the local DB — includes last_synced,
+    doc counts, status, and parties.  No portal login needed.
+    Query params: portal (NET/BDR/ECA), client_id, open_only=true."""
+    from ui_modules.db import _case_cards, _doc_rows
+    import sqlite3, os
+    db_path = str(config.PROJECT_ROOT / "lias.db")
+    if not os.path.exists(db_path):
+        return {"cases": [], "total": 0}
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=3)
+    con.row_factory = sqlite3.Row
+    rows = _doc_rows(con)
+    cards = _case_cards(rows)
+    if portal:
+        cards = [c for c in cards if c.get("portal", "").upper() == portal.upper()]
+    if client_id:
+        cards = [c for c in cards if c.get("client_id") == client_id]
+    if open_only:
+        cards = [c for c in cards if (c.get("portal_status") or "").lower() not in ("סגור", "closed", "")]
+    return {"cases": cards, "total": len(cards)}
+
+
 @app.post("/api/actions/open_case_view")
 def act_open_case_view(portal: str = "", case_number: str = ""):
     """פתיחת התיק ויזואלית בדפדפן האוטומציה."""
@@ -536,6 +559,29 @@ async def act_eca_sync(request: Request):
     except Exception:
         pass
     return {"job_id": jobs.submit("eca_sync", body or {})}
+
+
+@app.post("/api/actions/import_session")
+async def act_import_session(request: Request):
+    """Inject a client-exported session (cookies) into the portal browser context.
+    Payload: the full JSON produced by tools/export_session.py
+    {"portal": "bdr"|"net"|"eca", "url": "...", "storage_state": {...}, "exported_at": N}
+    The portal browser is shown so the user can verify the session is active."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON")
+    portal = (body.get("portal") or "").upper()
+    if portal not in ("BDR", "NET", "ECA"):
+        raise HTTPException(400, f"Unknown portal: {portal}")
+    storage_state = body.get("storage_state")
+    if not storage_state or not isinstance(storage_state.get("cookies"), list):
+        raise HTTPException(400, "storage_state.cookies missing")
+    return {"job_id": jobs.submit("import_session", {
+        "portal": portal,
+        "url": body.get("url", ""),
+        "storage_state": storage_state,
+    })}
 
 
 @app.post("/api/actions/cancel_case")

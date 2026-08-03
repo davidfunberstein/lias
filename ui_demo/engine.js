@@ -655,10 +655,11 @@ async function runBdrBatch(client_filter, cases, sub_cases){
           : (client_filter ? `מוריד תיקי בד"ר של "${client_filter}"…`
                            : 'מתחבר לבית הדין הרבני ומוריד את כל התיקים…'));
   logEvent('→ הורדת תיקי BDR' + (n||m? ` (${n} תיקים, ${m} תת-תיקים)` : (client_filter? ' — '+client_filter : ' (הכל)')));
+  const _bdrOpenFilter = _currentScope==='open'||_currentScope==='open_client' ? _currentScope : 'all';
   fetch('/api/proxy/actions/bdr_batch', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({client_filter, cases: cases||[], sub_cases: sub_cases||[]})
+    body: JSON.stringify({client_filter, cases: cases||[], sub_cases: sub_cases||[], open_filter: _bdrOpenFilter})
   }).then(r=>{
     if(r.ok) toast('הורדת BDR הופעלה ✓');
     else toast('שגיאה בהפעלת BDR', true);
@@ -776,6 +777,18 @@ function showEcaCases(cases){
   }
 }
 function _selectAllEca(v){ document.querySelectorAll('.eca-cb').forEach(cb=>cb.checked=v); }
+async function runEcaDryRun(){
+  const picked=[...(document.querySelectorAll('.eca-cb:checked'))].map(cb=>_ecaCases[+cb.dataset.i]?.number).filter(Boolean);
+  const caseNum = picked[0] || (_ecaCases[0]?.number) || '';
+  if(!caseNum){ toast('לא נמצא תיק להרצה יבשה', true); return; }
+  toast(`🧪 הרצה יבשה לתיק ${caseNum}…`);
+  logEvent(`→ הרצה יבשה: ${caseNum}`);
+  fetch('/api/proxy/actions/eca_dry_run',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({case: caseNum, limit:5})
+  }).then(r=>r.ok ? toast(`הרצה יבשה הופעלה ✓ — בדוק את לוג הפעילות`) : toast('שגיאה', true))
+    .catch(e=>toast('שגיאה: '+e.message, true));
+}
 async function runEcaSelected(){
   const picked = [...document.querySelectorAll('.eca-cb:checked')].map(cb=>_ecaCases[+cb.dataset.i].number);
   if(!picked.length){ toast('לא סומן אף תיק', true); return; }
@@ -887,17 +900,141 @@ function syncCard(el){
       <button class="sync-plat" id="plat-BDR" onclick="pickPlatform('BDR')">🕍<div>בית הדין הרבני</div></button>
       <button class="sync-plat" id="plat-ECA" onclick="pickPlatform('ECA')">⚖️<div>הוצאה לפועל</div></button>
     </div>
+    <label id="browser-visible-row" style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;opacity:.85;cursor:pointer">
+      <input type="checkbox" id="sync-browser-visible" style="width:auto"
+        onchange="_saveBrowserVisible(this.checked)">
+      הצג דפדפן בזמן הורדה
+    </label>
+    <div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px">ייבוא סשן לקוח (session_*.json)</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="file" id="session-import-file" accept=".json" style="font-size:12px;flex:1;min-width:0"
+          onchange="_onSessionFileChosen(this)">
+        <button id="session-import-btn" onclick="_doImportSession()"
+          style="font-size:12px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface2);cursor:pointer;white-space:nowrap">
+          ייבא
+        </button>
+      </div>
+      <div id="session-import-status" style="font-size:11.5px;margin-top:4px;color:var(--ink-soft)"></div>
+    </div>
+    <div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px">הורדת תיקים לא-מעודכנים</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" id="stale-days" value="7" min="1" max="365"
+          style="width:56px;font-size:12px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface2)">
+        <span style="font-size:12px;color:var(--ink-soft)">ימים ומעלה</span>
+        <button onclick="_downloadStaleCases()"
+          style="font-size:12px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface2);cursor:pointer;white-space:nowrap;margin-right:auto">
+          ⬇ הורד
+        </button>
+      </div>
+      <div id="stale-status" style="font-size:11.5px;margin-top:4px;color:var(--ink-soft)"></div>
+    </div>
     <div id="sync-options" style="margin-top:14px"></div>
     <div id="sync-case-picker" style="display:none;margin-top:12px"></div>
 `;
   fetch('/api/settings').then(r=>r.json()).then(st=>{
     window._settings = st;
     _currentScope = st.case_scope || 'all';
+    // Sync the browser-visible checkbox with stored setting (default: true)
+    const bvCb = $('sync-browser-visible');
+    if(bvCb) bvCb.checked = st.browser_visible !== false;
     if(_syncPlatform) pickPlatform(_syncPlatform);   // re-render with fresh settings
   }).catch(()=>{});
   if(_syncPlatform) pickPlatform(_syncPlatform);
   if(Object.keys(_dlByPortal).length) _renderDlStats();
   startPortalLockWatch();
+}
+
+function _saveBrowserVisible(checked){
+  // Keep both checkboxes (sync panel + settings panel) in sync
+  const gs = $('g-browser-visible');
+  if(gs) gs.checked = checked;
+  // Persist via the settings API (same path as saveSyncSettings)
+  fetch('/api/settings').then(r=>r.json()).then(st=>{
+    return fetch('/api/settings', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({...st, browser_visible: checked})
+    });
+  }).catch(()=>{});
+}
+
+let _sessionImportData = null;
+function _onSessionFileChosen(input){
+  _sessionImportData = null;
+  const st = $('session-import-status');
+  if(!input.files || !input.files[0]){ if(st) st.textContent=''; return; }
+  const reader = new FileReader();
+  reader.onload = e=>{
+    try{
+      const d = JSON.parse(e.target.result);
+      if(!d.portal || !d.storage_state?.cookies?.length)
+        throw new Error('קובץ לא תקין — חסר portal או cookies');
+      _sessionImportData = d;
+      if(st) st.textContent = `✓ פורטל: ${d.portal} · ${d.storage_state.cookies.length} עוגיות`;
+    }catch(err){
+      if(st) st.textContent = '✗ '+err.message;
+    }
+  };
+  reader.readAsText(input.files[0]);
+}
+
+async function _doImportSession(){
+  const st = $('session-import-status');
+  if(!_sessionImportData){ if(st) st.textContent='בחר קובץ JSON קודם'; return; }
+  if(st) st.textContent = 'מייבא…';
+  try{
+    const r = await fetch('/api/actions/import_session', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(_sessionImportData)
+    });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.detail || d.error || r.status);
+    if(st) st.textContent = '✓ הסשן יובא — הדפדפן ייפתח לאימות';
+  }catch(err){
+    if(st) st.textContent = '✗ '+err.message;
+  }
+}
+
+async function _downloadStaleCases(){
+  const st = $('stale-status');
+  const days = parseInt($('stale-days')?.value || '7', 10) || 7;
+  if(st) st.textContent = 'מחפש תיקים לא-מעודכנים…';
+  try{
+    const r = await fetch('/api/cases/all');
+    const cards = await r.json().catch(()=>[]);
+    const _sm = caseStatusMap ? caseStatusMap() : {};
+    const cutoff = Date.now() - days*864e5;
+    const stale = cards.filter(c=>{
+      if(_sm[c.sub_case_id]==='closed') return false;
+      if(!c.last_synced) return true;
+      return new Date(c.last_synced.replace(' ','T')).getTime() < cutoff;
+    });
+    if(!stale.length){ if(st) st.textContent = `✓ כל התיקים הפתוחים עודכנו בפחות מ-${days} ימים`; return; }
+    const byPortal = {};
+    stale.forEach(c=>{ (byPortal[c.portal]=byPortal[c.portal]||[]).push(c); });
+    if(st) st.textContent = `מריץ הורדה ל-${stale.length} תיקים (${Object.keys(byPortal).join(', ')})…`;
+    if(byPortal.BDR){
+      const caseNums = [...new Set(byPortal.BDR.map(c=>(c.sub_number||'').split(' ')[0]).filter(Boolean))];
+      runBdrBatch('', caseNums, []);
+    }
+    if(byPortal.NET){
+      const ids = byPortal.NET.map(c=>c.sub_case_id);
+      fetch('/api/proxy/actions/net_smart_download',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({scope:'selected', sub_case_ids:ids, open_filter:'all'})
+      }).catch(()=>{});
+    }
+    if(byPortal.ECA){
+      const caseNums = byPortal.ECA.map(c=>c.sub_number||c.case_number||'').filter(Boolean);
+      fetch('/api/proxy/actions/eca_sync',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({cases:caseNums})
+      }).catch(()=>{});
+    }
+  }catch(err){
+    if(st) st.textContent = '✗ '+err.message;
+  }
 }
 
 function pickPlatform(p){
@@ -917,20 +1054,23 @@ function pickPlatform(p){
   if(!_syncScopeChoice) _syncScopeChoice = scope==='all' ? 'all' : 'selected';
   box.innerHTML = _renderScopeChooser(p, label, relNote);
   _applyScopeChoice();
-  // Returning to the ECA tab after a completed list — restore the picker from
-  // the server so the user doesn't have to reconnect just to see the cases.
-  if(p==='ECA' && scope==='selected'){
+  // Restore cached case list when switching tabs — throttled to once per 30s
+  // to avoid duplicate fetches when pickPlatform is called multiple times on load.
+  const _now = Date.now();
+  if(p==='ECA' && scope==='selected' && _now-(pickPlatform._t?.ECA||0) > 30000){
+    pickPlatform._t = {...(pickPlatform._t||{}), ECA:_now};
     fetch('/api/proxy/eca/cases').then(r=>r.json())
       .then(d=>{ if(d.cases && d.cases.length) showEcaCases(d.cases); })
       .catch(()=>{});
   }
-  if(p==='BDR' && scope==='selected'){
+  if(p==='BDR' && scope==='selected' && _now-(pickPlatform._t?.BDR||0) > 30000){
+    pickPlatform._t = {...(pickPlatform._t||{}), BDR:_now};
     fetch('/api/proxy/bdr/cases').then(r=>r.json())
       .then(d=>{ if(d.cases && d.cases.length) showBdrCases(d.cases); })
       .catch(()=>{});
   }
-  if(p==='NET' && scope==='selected'){
-    // Show the cached NET list immediately; a new search only ADDS to it.
+  if(p==='NET' && scope==='selected' && _now-(pickPlatform._t?.NET||0) > 30000){
+    pickPlatform._t = {...(pickPlatform._t||{}), NET:_now};
     fetch('/api/proxy/net/cases').then(r=>r.json())
       .then(d=>{ if(d.cases && d.cases.length) showNetCases(d.cases); })
       .catch(()=>{ if(_allNetCases.length) showNetCases([]); });

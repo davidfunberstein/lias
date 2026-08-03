@@ -472,6 +472,34 @@ def _has_button(row, selector: str) -> bool:
         return False
 
 
+def _go_to_first_page(page) -> None:
+    """Navigate the mat-paginator back to page 1 (click 'first page' or spam
+    'previous' until disabled). Called after _extract_rows so that _row_locator
+    can find rows that are on earlier paginator pages."""
+    try:
+        first_btn = page.locator(
+            "mat-paginator button.mat-mdc-paginator-navigation-first, "
+            "mat-paginator button[aria-label*='First']").first
+        if first_btn.count() > 0 and first_btn.get_attribute("disabled") is None:
+            first_btn.click()
+            time.sleep(1.5)
+            return
+    except Exception:
+        pass
+    # Fallback: click Previous until it becomes disabled
+    for _ in range(20):
+        try:
+            prev = page.locator(
+                "mat-paginator button.mat-mdc-paginator-navigation-previous, "
+                "mat-paginator button[aria-label*='Previous']").first
+            if prev.count() == 0 or prev.get_attribute("disabled") is not None:
+                break
+            prev.click()
+            time.sleep(1.0)
+        except Exception:
+            break
+
+
 def _next_paginator_page(page) -> bool:
     """Click the 'next page' button on the mat-paginator. Returns True if
     there was a next page and it was clicked."""
@@ -498,24 +526,38 @@ def _extract_rows(page) -> list[dict]:
     until there are no more pages."""
     collected: dict = {}
 
+    _grab_count = [0]
+
     def _grab() -> int:
         new = 0
         rows = page.query_selector_all("tr[mat-row], tr.mat-mdc-row, tr[role='row']")
+        if _grab_count[0] == 0 and rows:
+            # First call only: log what the first data row actually looks like
+            for r in rows[:3]:
+                try:
+                    cls = r.get_attribute("class") or ""
+                    tds = r.query_selector_all("td")
+                    td_info = [(t.get_attribute("class") or "")[:60] + "=" + (t.inner_text() or "")[:20]
+                               for t in tds[:3]]
+                    _log(f"  [scan] row cls={cls[:60]} | tds={td_info}")
+                except Exception:
+                    pass
+        _grab_count[0] += 1
         for row in rows:
-            proc = _cell_text(row, "mat-column-processNumber")
+            proc = _cell_text(row, "cdk-column-processNumber")
             if not proc:
                 continue
-            key = (proc, _cell_text(row, "mat-column-motionOpenDate"),
-                   _cell_text(row, "mat-column-motionDecisionName"))
+            key = (proc, _cell_text(row, "cdk-column-motionOpenDate"),
+                   _cell_text(row, "cdk-column-motionDecisionName"))
             if key in collected:
                 continue
             collected[key] = {
                 "process":      proc,
-                "name":         _cell_text(row, "mat-column-motionDecisionName"),
-                "applicant":    _cell_text(row, "mat-column-motionApplicant"),
-                "date":         _cell_text(row, "mat-column-motionOpenDate"),
-                "dec_date":     _cell_text(row, "mat-column-decisionDate"),
-                "dec_result":   _cell_text(row, "mat-column-decisionResultName"),
+                "name":         _cell_text(row, "cdk-column-motionDecisionName"),
+                "applicant":    _cell_text(row, "cdk-column-motionApplicant"),
+                "date":         _cell_text(row, "cdk-column-motionOpenDate"),
+                "dec_date":     _cell_text(row, "cdk-column-decisionDate"),
+                "dec_result":   _cell_text(row, "cdk-column-decisionResultName"),
                 "has_motion":   _has_button(row, "#motionDocumentID"),
                 "has_decision": _has_button(row, "#decisionDocumentID"),
             }
@@ -551,11 +593,11 @@ def _row_locator(page, proc: str, date: str):
     (and, when given, whose open-date matches — disambiguates duplicates)."""
     import re as _re
     base = page.locator("tr[mat-row], tr.mat-mdc-row").filter(
-        has=page.locator("td.mat-column-processNumber .general-text",
+        has=page.locator("td.cdk-column-processNumber",
                          has_text=_re.compile(rf"^\s*{_re.escape(proc)}\s*$")))
     if date:
         with_date = base.filter(
-            has=page.locator("td.mat-column-motionOpenDate .general-text",
+            has=page.locator("td.cdk-column-motionOpenDate",
                              has_text=_re.compile(rf"^\s*{_re.escape(date)}\s*$")))
         if with_date.count() > 0:
             return with_date.first
@@ -644,9 +686,11 @@ def _extract_file_from_json(raw: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 def _download_doc(page, row_loc, btn_id: str, save_path: Path) -> str:
-    """Click a document button on a freshly-located row and capture the file.
-    Returns 'ok' / 'missing' (unavailable — dismissed, safe to continue) /
-    'fail'."""
+    """Two-step ECA download flow:
+      1. Click #motionDocumentID / #decisionDocumentID  → viewer dialog opens
+      2. Click #btn_download inside the dialog          → browser file download
+    Falls back to capturing the API response body if btn_download is absent.
+    Returns 'ok' / 'missing' / 'fail'."""
     if save_path.exists():
         _log(f"      ↩ כבר קיים: {save_path.name}")
         return "ok"
@@ -659,51 +703,80 @@ def _download_doc(page, row_loc, btn_id: str, save_path: Path) -> str:
     except Exception:
         return "fail"
 
+    try:
+        row_loc.scroll_into_view_if_needed(timeout=2000)
+    except Exception:
+        pass
+
+    _close_viewer(page, wait_s=3)   # ensure no leftover dialog blocks the click
+
+    # ── Step 1: open the document viewer ────────────────────────────────────
+    btn.click()
+
+    # Wait for the viewer dialog to appear (up to 8s)
+    dialog_sel = "mat-dialog-container, .cdk-overlay-pane .mdc-dialog"
+    try:
+        page.wait_for_selector(dialog_sel, timeout=8000)
+    except Exception:
+        pass
+
+    if _is_unavailable_dialog(page):
+        _log(f"      ⚠ המסמך אינו זמין — מדלג: {save_path.name}")
+        _close_viewer(page)
+        return "missing"
+
+    # ── Step 2: click the download button inside the viewer ─────────────────
+    dl_btn = page.locator("#btn_download").last  # last in DOM = newest dialog
+    dl_btn_visible = False
+    try:
+        dl_btn_visible = dl_btn.count() > 0 and dl_btn.is_visible(timeout=3000)
+    except Exception:
+        pass
+
+    if dl_btn_visible:
+        try:
+            with page.expect_download(timeout=20000) as dl_info:
+                dl_btn.click()
+            dl = dl_info.value
+            fail = dl.failure()
+            if fail:
+                _log(f"      ⚠ הורדה נכשלה ({fail}): {save_path.name}")
+                _close_viewer(page)
+                return "fail"
+            dl.save_as(str(save_path))
+            _log(f"      ✓ {save_path.name}")
+            _close_viewer(page)
+            return "ok"
+        except Exception as e:
+            _log(f"      ⚠ btn_download נכשל ({str(e)[:60]}) — מנסה API")
+
+    # ── Fallback: capture API response body (GetPermittedDocument / PDF) ────
     pdf_responses: list = []
 
-    def _on_response(resp):
+    def _on_resp(resp):
         try:
+            url = resp.url or ""
             ct = (resp.headers or {}).get("content-type", "")
-            if "pdf" in ct or "octet-stream" in ct or \
-               "GetPermittedDocument" in (resp.url or ""):
+            if "pdf" in ct or "octet-stream" in ct or "GetPermittedDocument" in url:
                 pdf_responses.append(resp)
         except Exception:
             pass
 
-    page.on("response", _on_response)
+    page.on("response", _on_resp)
     try:
-        _close_viewer(page, wait_s=3)          # make sure nothing blocks us
-        try:
-            row_loc.scroll_into_view_if_needed(timeout=2000)
-        except Exception:
-            pass
-        try:
-            with page.expect_download(timeout=6000) as dl_info:
-                btn.click()
-            dl = dl_info.value
-            # save_as() blocks until the transfer completes and takes NO timeout,
-            # so a stalled file used to hang the whole run with nothing in the log
-            # to say which document was stuck. Name it first, then bound the wait
-            # by checking the download actually finished before copying it.
-            _log(f"      ↓ מוריד: {save_path.name}")
-            _t0 = time.time()
-            fail = dl.failure()            # returns None once the transfer ended
-            if fail:
-                _log(f"      ⚠ ההורדה נכשלה ({fail}) — מדלג: {save_path.name}")
-                return "fail"
-            dl.save_as(str(save_path))
-            _log(f"      ✓ {save_path.name} ({time.time()-_t0:.1f}s)")
-            return "ok"
-        except Exception as _e:
-            _log(f"      ⚠ נתיב ההורדה הישיר נכשל ({str(_e)[:60]}) — מנסה דרך ה-API")
-
-        # Wait for the API response that carries the document
+        # If the viewer is already open its API call may have already fired;
+        # try to click btn_download anyway to trigger a fresh one.
+        if dl_btn_visible:
+            try:
+                dl_btn.click()
+            except Exception:
+                pass
         deadline = time.time() + 12
         while time.time() < deadline and not pdf_responses:
             if _is_unavailable_dialog(page):
                 _log(f"      ⚠ המסמך אינו זמין — מדלג: {save_path.name}")
                 return "missing"
-            time.sleep(0.5)
+            time.sleep(0.4)
         if pdf_responses:
             try:
                 data = pdf_responses[-1].body()
@@ -711,21 +784,18 @@ def _download_doc(page, row_loc, btn_id: str, save_path: Path) -> str:
                     data = _extract_file_from_json(data)
                 if data and len(data) > 500:
                     save_path.write_bytes(data)
-                    _log(f"      ✓ {save_path.name}")
+                    _log(f"      ✓ {save_path.name} (API)")
                     return "ok"
             except Exception as e:
-                _log(f"      ⚠ network body: {e}")
-        if _is_unavailable_dialog(page):
-            _log(f"      ⚠ המסמך אינו זמין — מדלג: {save_path.name}")
-            return "missing"
+                _log(f"      ⚠ API body: {e}")
         _log(f"      ✗ לא הורד: {save_path.name}")
         return "fail"
     finally:
         try:
-            page.remove_listener("response", _on_response)
+            page.remove_listener("response", _on_resp)
         except Exception:
             pass
-        _close_viewer(page)                     # never leave a blocking overlay
+        _close_viewer(page)
 
 
 # ---------------------------------------------------------------------------
@@ -938,7 +1008,8 @@ def _resolve_client(case: dict, parties: list[dict], downloads_dir: Path) -> str
 
 
 def _process_case(page, case: dict, output_dir: Path, by_client: bool = False,
-                  should_cancel=None, on_case_done=None) -> None:
+                  should_cancel=None, on_case_done=None,
+                  dry_run: bool = False, dry_run_limit: int = 5) -> None:
     case_num = case["number"]
 
     _log(f"\n{'='*60}")
@@ -988,12 +1059,38 @@ def _process_case(page, case: dict, output_dir: Path, by_client: bool = False,
         except Exception:
             pass
 
+    # Wait for table to render BEFORE trying the paginator (paginator loads last)
+    try:
+        page.wait_for_selector("tr.mat-mdc-row:not(.mat-mdc-header-row)", timeout=12000)
+    except Exception:
+        pass
+    time.sleep(1)
     _maximize_paginator(page)
     time.sleep(1)
-    _expand_all_rows(page)
 
     rows_data = _extract_rows(page)
+    if not rows_data:
+        # Table may not have fully rendered — reload the tab and retry once.
+        _log("  ⚠ 0 שורות — מנסה לפתוח טאב מחדש")
+        if _open_motions_tab(page, case_num):
+            try:
+                page.wait_for_selector("tr.mat-mdc-row:not(.mat-mdc-header-row)", timeout=15000)
+            except Exception:
+                pass
+            time.sleep(3)
+            _maximize_paginator(page)
+            time.sleep(1)
+            rows_data = _extract_rows(page)
+
     _log(f"  {len(rows_data)} שורות נמצאו")
+
+    # After scanning all pages the paginator is on the last page. Navigate back
+    # to page 1 so _row_locator can find rows that are on earlier pages.
+    if rows_data:
+        _go_to_first_page(page)
+    if dry_run:
+        rows_data = rows_data[:dry_run_limit]
+        _log(f"  [DRY RUN] מציג {len(rows_data)} שורות בלבד — ללא הורדה אמיתית")
 
     # Two rows can produce the very same "{הליך} - {תאריך} - {סוג} - {מגיש}"
     # name. _download_doc skips a path that already exists, so without a
@@ -1039,21 +1136,41 @@ def _process_case(page, case: dict, output_dir: Path, by_client: bool = False,
                     return False
             return True
 
+        def _locate_row_maybe_paginate(proc_id, date_val):
+            """Find the row; if not on the current page, advance pages until found."""
+            row = _row_locator(page, proc_id, date_val)
+            if row.count() > 0:
+                return row
+            # Row is on a later paginator page — navigate forward until found
+            for _ in range(10):
+                if not _next_paginator_page(page):
+                    break
+                row = _row_locator(page, proc_id, date_val)
+                if row.count() > 0:
+                    return row
+            return row  # may be count=0; _download_doc handles that gracefully
+
         if rd["has_motion"]:
             target = _unique(proc_dir / _make_filename(proc, date, "בקשה", applicant))
             _log(f"    [{proc}] בקשה ({date}) — {target.name}")
-            row = _row_locator(page, proc, rd["date"])
-            _stats_tick(_download_doc(page, row, "motionDocumentID", target))
-            if not _ensure_on_case():
-                continue
+            if not dry_run:
+                row = _locate_row_maybe_paginate(proc, rd["date"])
+                _stats_tick(_download_doc(page, row, "motionDocumentID", target))
+                if not _ensure_on_case():
+                    continue
 
         if rd["has_decision"]:
             target = _unique(proc_dir / _make_filename(proc, dec_date, "החלטה", applicant))
             _log(f"    [{proc}] החלטה ({dec_date}) — {target.name}")
-            row = _row_locator(page, proc, rd["date"])
-            _stats_tick(_download_doc(page, row, "decisionDocumentID", target))
-            if not _ensure_on_case():
-                continue
+            if not dry_run:
+                # If motion was also downloaded we're already on the correct page
+                if rd["has_motion"]:
+                    row = _row_locator(page, proc, rd["date"])
+                else:
+                    row = _locate_row_maybe_paginate(proc, rd["date"])
+                _stats_tick(_download_doc(page, row, "decisionDocumentID", target))
+                if not _ensure_on_case():
+                    continue
 
         time.sleep(0.3)
 

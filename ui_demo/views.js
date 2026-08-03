@@ -110,10 +110,16 @@ function fillLawyer(){
     <td>${_cn(d)}</td>
     <td><span class="case">${d.sub_number||'—'}</span></td><td>${d.submission_date||'—'}</td>
     <td>${pill(d.download_status)}</td></tr>`).join('');
-  $('clients-list').innerHTML = D.clients.slice(0,4).map((c,i)=>`
-    <div class="client ${i===0?'hot':''}" onclick="go('client',${c.client_id})">
+  const _statusMap = caseStatusMap();
+  $('clients-list').innerHTML = D.clients.slice(0,4).map((c,i)=>{
+    const clientCards = (D.case_cards||[]).filter(cc=>cc.client_id===c.client_id);
+    const openN = clientCards.filter(cc=>_statusMap[cc.sub_case_id]!=='closed').length;
+    const closedN = clientCards.length - openN;
+    const statusStr = closedN>0 ? `${openN} פתוח · ${closedN} סגור` : `${openN} פתוח`;
+    return `<div class="client ${i===0?'hot':''}" onclick="go('client',${c.client_id})">
       <div class="num">${i+1}</div><div class="n">${c.display_name}</div>
-      <div class="d">${c.cases} תיקים · ${nf.format(c.docs)}</div></div>`).join('');
+      <div class="d">${statusStr} · ${nf.format(c.docs)} מסמכים</div></div>`;
+  }).join('');
   monthlyChart('ch-monthly', D.monthly);
   loadMap('ch-load', D.activity);
   fillBreakdown();
@@ -225,12 +231,16 @@ function fillClient(){
   const freshChip = c=>{
     const closed = caseStatusMap()[c.sub_case_id]==='closed';
     if(closed) return '<span class="fresh gray">סגור</span>';
-    if(!c.last) return '';
-    const days = Math.floor((Date.now()-new Date(c.last))/864e5);
-    const dstr = c.last.split('-').reverse().join('/');
-    if(days<=7)  return `<span class="fresh green" title="עודכן לאחרונה: ${dstr}">✓ לפני ${days} ימים</span>`;
-    if(days>30) return `<span class="fresh orange" title="עודכן לאחרונה: ${dstr}">⚠ ${dstr} · לפני ${days} ימים</span>`;
-    return `<span class="fresh gray" title="עודכן לאחרונה">${dstr}</span>`;
+    // last_synced = timestamp of last actual portal check; fall back to last doc date
+    const syncTs = c.last_synced ? new Date(c.last_synced.replace(' ','T')) : null;
+    const days = syncTs ? Math.floor((Date.now()-syncTs)/864e5) : null;
+    const syncStr = syncTs ? syncTs.toLocaleDateString('he-IL') : (c.last ? c.last.split('-').reverse().join('/') : null);
+    if(!syncStr) return '<span class="fresh gray" title="טרם נבדק">לא נבדק</span>';
+    if(days===null) return '';
+    if(days<=3)  return `<span class="fresh green" title="נבדק: ${syncStr}">✓ לפני ${days} ימים</span>`;
+    if(days<=7)  return `<span class="fresh green" style="opacity:.8" title="נבדק: ${syncStr}">✓ ${days} ימים</span>`;
+    if(days<=14) return `<span class="fresh gray" title="נבדק: ${syncStr}">🕐 ${days} ימים</span>`;
+    return `<span class="fresh orange" title="נבדק לאחרונה: ${syncStr}">⚠ לא נבדק ${days} ימים</span>`;
   };
   const card = c=>{
     const dec=(c.groups['החלטה']||0)+(c.groups['פסק דין']||0);
@@ -334,6 +344,15 @@ function toggleCaseStatus(id){
   localStorage.setItem('lias_case_status', JSON.stringify(m));
   render();
 }
+function _isEcaCase(){ return K?.portal==='ECA' || K?.arkaa==='הוצאה לפועל'; }
+// Extract ECA process number from filename "55.2 - 19.07.26 - בקשה - ..."
+// Returns a zero-padded sort key like "0055.2" so numeric order works.
+function _ecaProcKey(name){
+  const m = (name||'').match(/^(\d+(?:\.\d+)?)\s*[-–]/);
+  if(!m) return '~~~~';  // non-ECA docs sort to end
+  const [int, frac='0'] = m[1].split('.');
+  return int.padStart(6,'0')+'.'+frac.padStart(3,'0');
+}
 function setCaseSort(col){
   caseSort = {col, dir: caseSort.col===col ? -caseSort.dir : -1};
   fillCase();
@@ -355,20 +374,31 @@ function _dateFilter(docs){
   });
 }
 function _sortDocs(docs){
+  const _dateKey = d => {
+    const p=(d.submission_date||'').split('/');
+    if(p.length===3) return p[2].padStart(4,'20')+p[1].padStart(2,'0')+p[0].padStart(2,'0');
+    const m=(d.logical_name||d.physical_name||'').match(/(\d{4})[_.-](\d{2})[_.-](\d{2})/);
+    return m? m[1]+m[2]+m[3] : '00000000';
+  };
   const key = {
     name: d=>(d.logical_name||d.physical_name||''),
     type: d=>(d.doc_type||''),
     submitter: d=>((d.submitter_est||'').trim()||'~'),
-    date: d=>{
-      const p=(d.submission_date||'').split('/');
-      if(p.length===3) return p[2].padStart(4,'20')+p[1].padStart(2,'0')+p[0].padStart(2,'0');
-      // fallback: filenames start with a sortable 2026_03_29 prefix
-      const m=(d.logical_name||d.physical_name||'').match(/(\d{4})[_.-](\d{2})[_.-](\d{2})/);
-      return m? m[1]+m[2]+m[3] : '00000000';
-    },
+    date: _dateKey,
     pages: d=>+(d.pages||0),
     status: d=>(d.download_status||''),
-  }[caseSort.col];
+    // ECA-specific: sort by process number ("55.2 - ..." → 000055.002)
+    proc: d=>_ecaProcKey(d.logical_name||d.physical_name||''),
+    // ECA: sort by request date = date of the בקשה doc in the same process
+    req_date: d=>{
+      const t=(d.doc_type||''); if(t==='החלטה') return '~~~~'+_dateKey(d); // decisions after requests
+      return _dateKey(d);
+    },
+    dec_date: d=>{
+      const t=(d.doc_type||''); if(t==='בקשה') return '0000'+_dateKey(d); // requests before decisions
+      return _dateKey(d);
+    },
+  }[caseSort.col] || (d=>(d.logical_name||''));
   return [...docs].sort((a,b)=>{
     const x=key(a), y=key(b);
     return (x<y?-1:x>y?1:0)*caseSort.dir;
@@ -518,10 +548,17 @@ function renderCase(){
         <span class="hint" id="f-hint"></span>
       </div>
       <table><thead><tr>
+        ${_isEcaCase() ? `<th class="sortable" onclick="setCaseSort('proc')" title="מיין לפי מספר הליך">הליך ${sortArrow('proc')}</th>` : ''}
         <th class="sortable" onclick="setCaseSort('name')">מסמך ${sortArrow('name')}</th>
         <th class="sortable" onclick="setCaseSort('type')">סוג ${sortArrow('type')}</th>
         <th class="sortable" onclick="setCaseSort('submitter')">מגיש ${sortArrow('submitter')}</th>
         <th style="position:relative;white-space:nowrap">
+          ${_isEcaCase()
+            ? `<span class="sortable" onclick="setCaseSort('req_date')" title="מיין לפי תאריך בקשה">בקשה ${sortArrow('req_date')}</span>
+               &nbsp;·&nbsp;
+               <span class="sortable" onclick="setCaseSort('dec_date')" title="מיין לפי תאריך החלטה">החלטה ${sortArrow('dec_date')}</span>
+               &nbsp;·&nbsp;`
+            : ''}
           <span class="sortable" onclick="setCaseSort('date')">תאריך ${sortArrow('date')}</span>
           <span class="sortable" onclick="event.stopPropagation();toggleDatePop()" title="סינון מ־עד">📅${caseDates.from||caseDates.to?'●':''}</span>
           <span id="date-pop" style="display:none;position:absolute;top:26px;right:0;z-index:20;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;box-shadow:0 8px 30px rgba(0,0,0,.2);white-space:nowrap">
@@ -550,20 +587,34 @@ function renderCase(){
 function fillCase(){
   $('shown-sub').textContent = `מוצגים ${nf.format(K.shown)} · מוסתרים ${nf.format(K.hidden)}`;
   $('f-hint').textContent = `${nf.format(K.shown)} תוצאות`;
+  // Default sort for ECA cases: by process number descending (newest first)
+  if(_isEcaCase() && !['proc','req_date','dec_date'].includes(caseSort.col)){
+    caseSort = {col:'proc', dir:-1};
+  }
   viewerSources.case = _sortDocs(_dateFilter(K.docs));
-  $('case-docs').innerHTML = viewerSources.case.map((d,i)=>`
-    <tr class="rowlink" onclick="openDocAt('case',${i})" title="לחץ לפתיחת המסמך"><td><span class="docname" title="${d.logical_name||d.physical_name||''}">${d.logical_name||d.physical_name||'—'}</span></td>
+  const isEca = _isEcaCase();
+  const colspan = isEca ? '8' : '7';
+  $('case-docs').innerHTML = viewerSources.case.map((d,i)=>{
+    const name = d.logical_name||d.physical_name||'';
+    // For ECA: display name strips the embedded date ("55 - 2026-01-15 - בקשה" → "55 - בקשה")
+    const dispName = isEca ? name.replace(/\s*-\s*\d{4}-\d{2}-\d{2}\s*-\s*/,' - ').replace(/\s*-\s*\d{2}[./]\d{2}[./]\d{4}\s*-\s*/,' - ') : name;
+    const procNum = isEca ? (name.match(/^(\d+(?:\.\d+)?)\s*[-–]/)||[])[1]||'' : '';
+    return `
+    <tr class="rowlink" onclick="openDocAt('case',${i})" title="לחץ לפתיחת המסמך">
+    ${isEca ? `<td style="font-variant-numeric:tabular-nums;opacity:.7;font-size:12px">${procNum}</td>` : ''}
+    <td><span class="docname" title="${name}">${dispName||'—'}</span></td>
     <td><span class="pill gray">${d.doc_type? d.doc_type.split(' - ')[0] : '—'}</span>${(d.doc_type||'').includes('צירוף ידני')?' <span class="pill pend" title="הועלה ידנית — לא הגיע מהפורטל">לא מהתיק</span>':''}</td>
     <td>${(d.submitter_est||'').trim()||'—'}</td><td>${d.submission_date||'—'}</td>
     <td>${d.pages||''}</td><td>${pill(d.download_status)}</td>
     <td style="white-space:nowrap">
       ${/ERROR|FAILED|Failed/.test(d.download_status||'')?`<span onclick="event.stopPropagation();uploadForFailed(${i})"
         title="צרף ידנית את הקובץ החסר — יישמר בשם התקני" style="cursor:pointer;opacity:.8">📎</span> `:''}
-      <span onclick="event.stopPropagation();pinDoc(${d.document_id},'${(d.logical_name||d.physical_name||'').replace(/'/g,'')}','${(K.sub_number||'').replace(/'/g,'')}')"
+      <span onclick="event.stopPropagation();pinDoc(${d.document_id},'${name.replace(/'/g,'')}','${(K.sub_number||'').replace(/'/g,'')}')"
         title="תייק עם הערה לנושא" style="cursor:pointer;opacity:.55">📌</span>
-      <span onclick="event.stopPropagation();trashDoc(${d.document_id},'${(d.logical_name||d.physical_name||'').replace(/'/g,'')}')"
-        title="הסר מסמך (לתיקיית trash)" style="cursor:pointer;opacity:.45">🗑</span></td></tr>`).join('')
-    || '<tr><td colspan="7" class="empty">אין מסמכים תואמים לפילטר</td></tr>';
+      <span onclick="event.stopPropagation();trashDoc(${d.document_id},'${name.replace(/'/g,'')}')"
+        title="הסר מסמך (לתיקיית trash)" style="cursor:pointer;opacity:.45">🗑</span></td></tr>`;
+  }).join('')
+    || `<tr><td colspan="${colspan}" class="empty">אין מסמכים תואמים לפילטר</td></tr>`;
   donut('ch-ksub','ksub-legend', K.submitters.filter(s=>s.label!=='לא צוין').slice(0,6),
         {sub_case_id:K.sub_case_id});
   const prefix = (K.sub_number||'').trim().split(/[\s-]/)[0];

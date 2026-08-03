@@ -85,6 +85,15 @@ async function _showViewer(id, name){
         if(h2.ok){ frame.src='/api/doc_view/'+idm[1]; frame.style.display='block'; return; }
       }catch(e){}
     }
+    // Load mammoth on demand (not at page load — it's 500 KB)
+    if(!window.mammoth){
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.4.2/mammoth.browser.min.js';
+        s.onload = resolve; s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
     if(window.mammoth){
       docEl.style.display='block';
       docEl.innerHTML = '<div class="page" style="min-height:120px"><span style="color:#999">טוען מסמך Word…</span></div>';

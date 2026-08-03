@@ -354,6 +354,29 @@ def _ensure_logged_in_impl(page: Page, portal: str) -> bool:
                         break
             if sso_done or _id_form_visible():
                 break                       # authenticated, or ready to type creds
+            # Early session-injection shortcut: if stuck at /he/login after round 1
+            # (not redirected to gov.il, no form visible), try the shared gov.il
+            # session right now — no need to burn 2 more 90-second rounds first.
+            if _round == 1 and not sso_done and not _id_form_visible():
+                try:
+                    from core import gov_session as _gs
+                    if _gs.apply_to_context(page.context, "ECA"):
+                        _progress("מנסה קיצור דרך עם סשן gov.il קיים…")
+                        try:
+                            page.goto(ECA_URL, wait_until="domcontentloaded", timeout=20000)
+                        except Exception:
+                            pass
+                        for _ in range(5):
+                            time.sleep(2)
+                            _click_eca_system_choice(page)
+                            if already(page):
+                                sso_done = True
+                                _progress("מחובר ✓ (סשן משותף מהיר)")
+                                break
+                        if sso_done:
+                            break
+                except Exception:
+                    pass
 
         if not sso_done and "login.gov.il" in (page.url or ""):
             # ID form is up — fill credentials + OTP (email or Authenticator)

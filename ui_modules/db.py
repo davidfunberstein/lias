@@ -107,7 +107,9 @@ def _doc_rows(con, sub_case_id: int | None = None, client_id: int | None = None)
                     d.submitter_est, d.submission_date, d.download_status,
                     d.pages, d.local_path, s.sub_case_id, s.sub_number,
                     ca.portal, ca.client_id, ca.court, ca.title AS case_title,
-                    cl.display_name AS client_name
+                    cl.display_name AS client_name,
+                    (SELECT MAX(started_at) FROM sync_runs r
+                     WHERE r.sub_case_id = s.sub_case_id) AS last_synced
              FROM documents d
              JOIN sub_cases s  ON s.sub_case_id = d.sub_case_id
              JOIN cases ca     ON ca.case_id    = s.case_id
@@ -250,6 +252,7 @@ def _case_cards(rows: list[dict]) -> list[dict]:
             "case_title": r.get("case_title") or "",
             "docs": 0, "errors": 0, "groups": {g: 0 for g in GROUPS}, "other": 0,
             "first": None, "last": None, "parties": [], "location": "",
+            "last_synced": r.get("last_synced") or None,
         })
         if not c["parties"] and r.get("local_path"):
             c["parties"], c["location"] = parties_location_from_path(r["local_path"])
@@ -313,6 +316,10 @@ def _case_cards(rows: list[dict]) -> list[dict]:
                     dst["status_source"] = c["status_source"]
             if not dst["location"] and c["location"]:
                 dst["location"] = c["location"]
+            # Keep the most recent sync timestamp across merged sub-cases
+            ls_dst = dst.get("last_synced") or ""
+            ls_src = c.get("last_synced") or ""
+            dst["last_synced"] = max(ls_dst, ls_src) or None
         else:
             if m:
                 topic = re.sub(r"^\d{6,7}-\d+\s*", "", sn).rsplit(" - ", 1)[0].strip()

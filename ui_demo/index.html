@@ -5,8 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LIAS — ניהול תיקים</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- font loads async → no render-blocking; font-display:swap in CSS prevents CLS -->
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet"></noscript>
+<!-- Chart.js loaded on demand when the dashboard or client profile is opened -->
 <link rel="stylesheet" href="style.css">
 <script src="i18n.js"></script>
 </head>
@@ -28,12 +31,6 @@
       </button>
     </div>
     <div id="local-login-fields" style="display:none">
-    <label>סוג משתמש</label>
-    <select id="l-role">
-      <option value="LAWYER">💼 עורך דין</option>
-      <option value="PLEADER">📜 טוען רבני</option>
-      <option value="CLIENT">👤 לקוח פרטי</option>
-    </select>
     <label>שם מלא</label><input id="l-name" required placeholder="למשל: דוד פונברשטיין">
     <label>אימייל</label><input id="l-email" type="email" required placeholder="you@example.com">
     <label>שם משתמש</label><input id="l-user" required autocomplete="username">
@@ -335,7 +332,7 @@
   <div class="fvl-body" id="fvl-body"></div>
 </div>
 <div id="mini-tray"></div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.4.2/mammoth.browser.min.js"></script>
+<!-- mammoth loaded on demand in viewer.js when a .docx is opened -->
 
 <script src="app.js"></script>
 <script src="viewer.js"></script>

@@ -308,8 +308,7 @@ def eca_list(payload: dict, ctx: JobContext) -> str:
     def _run(page):
         import sys
         sys.path.insert(0, str(config.PROJECT_ROOT))
-        from eca_download import (_login_eca, _extract_cases, _open_motions_tab,
-                                  _harvest_parties, OPEN_CASES_URL)
+        from eca_download import (_login_eca, _extract_cases, OPEN_CASES_URL)
         import time as _t
         if not _login_eca(page):
             raise RuntimeError("ההתחברות להוצאה לפועל נכשלה")
@@ -317,15 +316,6 @@ def eca_list(payload: dict, ctx: JobContext) -> str:
             page.goto(OPEN_CASES_URL, wait_until="domcontentloaded", timeout=30000)
             _t.sleep(3)
         cases = _extract_cases(page)
-        # Enrich each case with BOTH parties (client + counter-party) by
-        # entering the גורמים בתיק tab — so the picker shows both sides, not
-        # only the counter-party (req: "צריך את שני הצדדים").
-        for c in cases:
-            try:
-                if _open_motions_tab(page, c["number"]):
-                    c["parties"] = _harvest_parties(page)
-            except Exception:
-                pass
         return cases
 
     _saved = ctx.browser
@@ -514,6 +504,37 @@ def eca_sync(payload: dict, ctx: JobContext) -> str:
     n = _reimport_folder(config.COURT_DOCS_DIR / "downloads")
     _drive_sync(ctx, "אחרי סנכרון הוצל\"פ")
     return f"{result} · {n} מסמכים בדשבורד"
+
+
+@handler("eca_dry_run")
+def eca_dry_run(payload: dict, ctx: JobContext) -> str:
+    """Dry-run: navigate to one ECA case, extract rows and log what WOULD be downloaded
+    (first 5 rows by default). No files are written."""
+    eca = ctx.eca_browser or ctx.browser
+    if eca is None:
+        raise RuntimeError("no browser attached / אין דפדפן מחובר")
+    _saved = ctx.browser
+    ctx.browser = eca
+
+    def _run(page):
+        import sys
+        sys.path.insert(0, str(config.PROJECT_ROOT))
+        from eca_download import (_login_eca, _process_case)
+        from pathlib import Path as _P
+        case_num = payload.get("case") or "528421-07-25"
+        limit = int(payload.get("limit", 5))
+        if not _login_eca(page):
+            raise RuntimeError("ההתחברות לא הושלמה")
+        case = {"number": case_num, "type": "", "role": "", "party": ""}
+        _process_case(page, case, _P("/tmp/eca_dry_run_out"),
+                      by_client=False, dry_run=True, dry_run_limit=limit)
+        return f"[DRY RUN] תיק {case_num} — הצגת {limit} שורות בלבד ✓"
+
+    try:
+        result = _run_portal(ctx, "eca_dry_run", _run, timeout=300)
+    finally:
+        ctx.browser = _saved
+    return result or "dry run הסתיים"
 
 
 @handler("govil_logout")
@@ -721,10 +742,18 @@ def _finish_portal(ctx: JobContext, browser, portal: str, label: str) -> None:
     user (req #6). The browser goes back to headless so it's ready for next time
     without leaving an idle window open."""
     try:
-        # A visible window was shown for the sync — put it back to headless
-        # (closes the on-screen window) now that the download is done.
+        # A visible window was shown for the sync — relaunch as headless so the
+        # Chrome window actually disappears (not just minimized).
         if browser is not None and not getattr(browser, "_headless", True):
-            browser.hide()
+            try:
+                browser._headless = True   # flip the flag first
+                browser._generation += 1   # invalidate current loop
+                browser.shutdown()
+                import threading as _thr
+                t = _thr.Thread(target=browser.start, daemon=True)
+                t.start()
+            except Exception:
+                browser.hide()             # fallback: just minimize
     except Exception:
         pass
     try:
@@ -1265,6 +1294,7 @@ def bdr_batch(payload: dict, ctx: JobContext) -> str:
                         "client_filter": payload.get("client_filter", ""),
                         "cases": payload.get("cases") or [],
                         "sub_cases": payload.get("sub_cases") or [],
+                        "open_filter": payload.get("open_filter", "all"),
                         "user_mode": (payload.get("user_mode")
                                       or SESSION_SETTINGS.get("user_mode")
                                       or "private")}
@@ -1773,3 +1803,64 @@ def convert_md(payload: dict, ctx: JobContext) -> str:
     ctx.progress(1.0, f"נשמר: {md_path.name}")
     jobs.broadcast({"type": "file", "name": md_path.name, "status": "MD_DONE"})
     return f"saved {md_path.name} ({len(full_text)} chars)"
+
+
+@handler("import_session")
+def import_session(payload: dict, ctx: JobContext) -> str:
+    """Inject a client's exported browser session (cookies) into a portal browser
+    context so the portal operates as that client — without touching the lawyer's
+    gov.il credentials.  Payload comes from /api/actions/import_session and mirrors
+    the JSON produced by tools/export_session.py."""
+    portal = (payload.get("portal") or "").upper()
+    storage_state = payload.get("storage_state", {})
+    url = payload.get("url", "")
+    cookies = storage_state.get("cookies", [])
+    if portal not in ("BDR", "NET", "ECA"):
+        raise RuntimeError(f"פורטל לא נתמך: {portal}")
+    if not cookies:
+        raise RuntimeError("storage_state.cookies ריק — ייצוא הסשן נכשל")
+
+    target = (ctx.bdr_browser or ctx.browser) if portal == "BDR" \
+             else (ctx.eca_browser or ctx.browser) if portal == "ECA" \
+             else ctx.browser
+    if target is None:
+        raise RuntimeError("אין דפדפן מחובר — הפעל את המנוע קודם")
+
+    ctx.progress(0.2, f"מזריק עוגיות ל-{portal}…")
+
+    def _run(page):
+        # Inject cookies directly into the browser context (same as apply_to_context)
+        context = page.context
+        try:
+            context.add_cookies(cookies)
+        except Exception as e:
+            raise RuntimeError(f"add_cookies נכשל: {e}")
+
+        ctx.progress(0.6, f"ניווט ל-{portal}…")
+        nav_url = url or {
+            "ECA": "https://publicsso.eca.gov.il/he/home/OpenCase",
+            "NET": "https://www.nethamishpat.gov.il/",
+            "BDR": "https://bdr.court.gov.il/",
+        }.get(portal, "")
+        if nav_url:
+            try:
+                page.goto(nav_url, wait_until="domcontentloaded", timeout=30000)
+            except Exception:
+                pass
+        # Show browser so user can verify the session works
+        try:
+            target.show()
+        except Exception:
+            pass
+        return page.url
+
+    _saved = ctx.browser
+    ctx.browser = target
+    try:
+        final_url = _run_portal(ctx, "import_session", _run, timeout=120)
+    finally:
+        ctx.browser = _saved
+
+    ctx.progress(1.0, f"סשן {portal} יובא בהצלחה")
+    jobs.broadcast({"type": "session_imported", "portal": portal, "url": str(final_url)})
+    return f"סשן {portal} יובא — {len(cookies)} עוגיות הוזרקו"

@@ -5,8 +5,10 @@ let D = null, C = null, K = null, charts = {}, route = {v:'home'};
 
 /* ─── auth (demo, local only) ─── */
 function user(){ try{return JSON.parse(localStorage.getItem('lias_user'))}catch(e){return null} }
-/* Show the Google Authenticator field when a TOTP secret is configured. */
+/* Show the Google Authenticator field when a TOTP secret is configured.
+   Skip when already logged in — the login screen is hidden anyway. */
 async function _initLoginTotp(){
+  if(curUser()) return;   // already authenticated — no need to call the server
   try{
     const d = await (await fetch('/api/totp/status')).json();
     const row = $('l-totp-row');
@@ -128,7 +130,8 @@ async function _initGoogleSignIn(){
       {theme:'outline', size:'large', width:320, text:'signin_with', locale:'he'});
   }catch(_){}
 }
-document.addEventListener('DOMContentLoaded', _initGoogleSignIn);
+// Only fetch Google status when the login screen is actually shown
+document.addEventListener('DOMContentLoaded', ()=>{ if(!curUser()) _initGoogleSignIn(); });
 
 async function _onGoogleCredential(resp){
   const err = $('l-err');
@@ -141,10 +144,10 @@ async function _onGoogleCredential(resp){
       if(err){ err.style.display='block'; err.textContent = d.error || 'כניסה עם Google נכשלה'; }
       return;
     }
-    const role = $('l-role') ? $('l-role').value : 'LAWYER';
-    const u = {role, name:d.name||d.email, email:d.email, username:d.email,
+    const _bdrMode = (()=>{try{return JSON.parse(localStorage.getItem('lias_settings')||'{}').usermode||'lawyer';}catch(e){return 'lawyer';}})();
+    const u = {role:'LAWYER', name:d.name||d.email, email:d.email, username:d.email,
                remember:true, google:true,
-               bdr_entity_type: role==='LAWYER'?'lawyer':role==='PLEADER'?'pleader':'private'};
+               bdr_entity_type: _bdrMode};
     localStorage.setItem('lias_user', JSON.stringify(u));
     if(err) err.style.display='none';
     $('login').classList.add('hide');
@@ -154,11 +157,11 @@ async function _onGoogleCredential(resp){
 
 async function doLogin(e){
   e.preventDefault();
-  const role = $('l-role').value;
   const err = $('l-err');
-  const u = {role, name:$('l-name').value.trim(), email:$('l-email').value.trim(),
+  const _bdrMode2 = (()=>{try{return JSON.parse(localStorage.getItem('lias_settings')||'{}').usermode||'lawyer';}catch(e){return 'lawyer';}})();
+  const u = {role:'LAWYER', name:$('l-name').value.trim(), email:$('l-email').value.trim(),
              username:$('l-user').value.trim(), remember:$('l-rem').checked,
-             bdr_entity_type: role==='LAWYER'?'lawyer':role==='PLEADER'?'pleader':'private'};
+             bdr_entity_type: _bdrMode2};
   // Server verifies the Authenticator code (when configured) and records the
   // attempt in the login audit log — so every connection is accounted for.
   try{
@@ -380,8 +383,18 @@ function render(){
 }
 
 /* ─── shared chart widgets ─── */
-function monthlyChart(id, data, ctx){
-  if(!data?.length || !window.Chart) return;
+async function _ensureChartJs(){
+  if(window.Chart) return;
+  await new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js';
+    s.onload=resolve; s.onerror=reject;
+    document.head.appendChild(s);
+  });
+}
+async function monthlyChart(id, data, ctx){
+  if(!data?.length) return;
+  await _ensureChartJs();
   const accent=css('--accent'), ink=css('--ink-soft'), line=css('--line');
   Chart.defaults.font.family="'Heebo',sans-serif";
   const vals=data.map(m=>m.count), maxIdx=vals.lastIndexOf(Math.max(...vals));
@@ -401,8 +414,9 @@ function monthlyChart(id, data, ctx){
         y:{position:'right',border:{display:false},grid:{color:line},
            ticks:{color:ink,font:{size:11},precision:0}}}}});
 }
-function donut(id, legendId, items, ctx){
-  if(!items?.length || !window.Chart) return;
+async function donut(id, legendId, items, ctx){
+  if(!items?.length) return;
+  await _ensureChartJs();
   const palette=[css('--accent'),'#0E1B29','#7EB1FA','#C9D6CE','#F5A623','#6B7570','#DDE6E0'];
   const open = i => { const t=items[i];
     if(t) openDocList(`מסמכים — ${t.label}`, {submitter:t.label, ...(ctx||{})}); };
@@ -452,8 +466,9 @@ function _mapControls(id, act, pref){
         onclick="toggleMapCase('${id}','${c.replace(/'/g,"\\'")}')" title="הצג/הסתר תיק">${c}</button>`).join('')+
     (sel.size?`<button class="map-chip clear" onclick="clearMapCases('${id}')">✕ נקה סינון</button>`:'');
 }
-function loadMap(id, act){
-  if(!act?.points?.length || !window.Chart) return;
+async function loadMap(id, act){
+  if(!act?.points?.length) return;
+  await _ensureChartJs();
   mapData[id] = act;
   const pref = mapPrefs[id]||{};
   _mapControls(id, act, pref);
@@ -577,7 +592,7 @@ try{
     return origAEL.call(this, type, fn, opts);
   };
 }catch(_){}
-setInterval(()=>{ fetch('/api/heartbeat',{method:'POST'}).catch(()=>{}); }, 5000);
+setInterval(()=>{ fetch('/api/heartbeat',{method:'POST'}).catch(()=>{}); }, 30000);
 fetch('/api/heartbeat',{method:'POST'}).catch(()=>{});
 
 function boot(){
@@ -589,7 +604,12 @@ function boot(){
   route = v? {v, id:+id} : {v:'home'};
   render();
   refresh(true);
-  setInterval(()=>refresh(false), 60000);
+  setInterval(()=>{
+    // Skip auto-refresh while a download job is active — the dashboard updates
+    // via case_imported events anyway, so polling during downloads is pure noise.
+    if(typeof _serverDlAt!=='undefined' && Date.now()-_serverDlAt < 120000) return;
+    refresh(false);
+  }, 180000);
   ensureFab();
   connectEngineSSE();
   // Reopen the tasks balloon if it was open before a refresh
