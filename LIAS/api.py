@@ -1429,6 +1429,32 @@ def verdicts_courts():
 
 
 _JUDGES_CACHE: dict[str, list] = {}   # court_id → [{value, name}]
+_JUDGES_CACHE_FILE = None             # set lazily to config.COURT_DOCS_DIR / "verdicts_judges_cache.json"
+
+def _judges_cache_path():
+    global _JUDGES_CACHE_FILE
+    if _JUDGES_CACHE_FILE is None:
+        _JUDGES_CACHE_FILE = config.COURT_DOCS_DIR / "verdicts_judges_cache.json"
+    return _JUDGES_CACHE_FILE
+
+def _load_judges_cache_from_disk():
+    import json as _j
+    p = _judges_cache_path()
+    if p.exists():
+        try:
+            data = _j.loads(p.read_text(encoding="utf-8"))
+            _JUDGES_CACHE.update(data)
+        except Exception:
+            pass
+
+def _save_judges_cache_to_disk():
+    import json as _j
+    try:
+        p = _judges_cache_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_j.dumps(_JUDGES_CACHE, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 def _load_judges_from_csv(csv_path) -> list[dict]:
     import csv as _csv
@@ -1445,6 +1471,63 @@ def _load_judges_from_csv(csv_path) -> list[dict]:
     return rows
 
 
+@app.post("/api/verdicts/refresh_judges")
+async def verdicts_refresh_judges():
+    """Scrape judge lists for ALL courts from court.gov.il using the NET browser (visible).
+    Results saved to verdicts_judges_cache.json. Returns a job_id."""
+    from LIAS.collector_bridge import get_browser_for_portal
+
+    @handler("verdicts_refresh_judges")
+    def _h(payload: dict, ctx: JobContext):
+        COURT_URL = "https://www.court.gov.il/NGCS.Web.Site/LocateDecisions/LocateDecisionQuering.aspx"
+        bm = ctx.browser   # NET BrowserManager
+        if bm is None:
+            raise RuntimeError("NET browser not available")
+
+        def _run(main_page):
+            page = main_page.context.new_page()
+            page.set_default_timeout(30_000)
+            try:
+                page.goto(COURT_URL, wait_until="domcontentloaded", timeout=60_000)
+                page.wait_for_timeout(800)
+                for court in _VERDICT_COURTS:
+                    cid = court["id"]
+                    if cid in ("-1", "") or cid in _JUDGES_CACHE:
+                        continue
+                    try:
+                        try:
+                            page.select_option("#LocateByParameters1_ddlCourt", cid)
+                        except Exception:
+                            page.select_option("#LocateByParameters1_ddlSelectCourt", cid)
+                        page.wait_for_load_state("domcontentloaded", timeout=30_000)
+                        page.wait_for_timeout(1200)
+                        judges = page.evaluate("""
+                            (() => {
+                                const sel = document.querySelector('#LocateByParameters1_ddlJudgeName');
+                                if (!sel) return [];
+                                return Array.from(sel.options)
+                                    .filter(o => o.value && o.value !== '0' && o.value !== '-1')
+                                    .map(o => ({value: o.value, name: o.text.trim()}));
+                            })()
+                        """)
+                        if judges:
+                            _JUDGES_CACHE[cid] = judges
+                            print(f"[verdicts] {court['name']}: {len(judges)} judges")
+                    except Exception as e:
+                        print(f"[verdicts] {court['name']} judges failed: {e}")
+                _save_judges_cache_to_disk()
+            finally:
+                try: page.close()
+                except Exception: pass
+
+        bm.run("verdicts_refresh_judges", _run, timeout=600)
+        return "done"
+
+    _load_judges_cache_from_disk()
+    job_id = jobs.submit("verdicts_refresh_judges", {})
+    return {"job_id": job_id}
+
+
 @app.get("/api/verdicts/judges")
 async def verdicts_judges(court_id: str = "-1"):
     """Fetch the judge dropdown options for a given court.
@@ -1454,8 +1537,12 @@ async def verdicts_judges(court_id: str = "-1"):
     if court_id in ("-1", ""):
         return {"judges": []}
 
+    # Load disk cache if in-memory is empty
+    if not _JUDGES_CACHE:
+        _load_judges_cache_from_disk()
+
     if court_id in _JUDGES_CACHE:
-        return {"judges": _JUDGES_CACHE[court_id]}
+        return {"judges": _JUDGES_CACHE[court_id], "from_cache": True}
 
     # ── Fast path: bundled CSV for שלום ירושלים ─────────────────────────────
     if court_id == "30":

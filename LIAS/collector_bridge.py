@@ -1157,6 +1157,11 @@ def net_auto_update(payload: dict, ctx: JobContext) -> str:
     ctx.progress(0.9, "re-importing CSVs")
     n = _reimport_folder(config.COURT_DOCS_DIR / "downloads")
     jobs.broadcast({"type": "file", "name": "auto-update", "status": "SYNC_DONE"})
+    # Refresh judges cache in background after every NET sync
+    try:
+        jobs.submit("verdicts_refresh_judges", {})
+    except Exception:
+        pass
     return f"net auto-update ok, {n} docs re-imported"
 
 

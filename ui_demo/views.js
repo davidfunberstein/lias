@@ -995,6 +995,9 @@ function renderVerdicts(){
           border:none;background:var(--accent);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer">
           🔍 חפש
         </button>
+        <button onclick="_refreshVerdictJudges()" title="רענן רשימת שופטים מנט המשפט"
+          style="padding:9px 14px;border-radius:10px;border:1px solid var(--line);
+          background:var(--surface2);cursor:pointer;font-size:13px">🔄 רענן שופטים</button>
         <button id="v-dl-btn" onclick="downloadVerdicts()" style="display:none;padding:9px 18px;
           border-radius:10px;border:2px solid var(--accent);background:var(--accent-soft,#dce8ff);
           color:var(--accent-strong,#1a4b9e);font-weight:700;font-size:13px;cursor:pointer">
@@ -1016,6 +1019,36 @@ function renderVerdicts(){
 
   // Load courts asynchronously after the DOM is painted
   _loadVerdictCourts();
+}
+
+async function _refreshVerdictJudges(){
+  const status = $('v-status');
+  if(status) status.textContent = 'פותח נט המשפט לרענון רשימת שופטים…';
+  try{
+    const r = await fetch('/api/verdicts/refresh_judges', {method:'POST'});
+    const d = await r.json();
+    if(d.job_id){
+      if(status) status.textContent = 'רענון שופטים רץ ברקע — יעדכן את ה-dropdown בסיום';
+      // Poll until job done, then reload current court's judges
+      let attempts = 0;
+      const timer = setInterval(async ()=>{
+        attempts++;
+        if(attempts > 120){ clearInterval(timer); return; }
+        try{
+          const jr = await fetch('/api/jobs/'+d.job_id);
+          const jd = await jr.json();
+          if(jd.status === 'DONE' || jd.status === 'ERROR'){
+            clearInterval(timer);
+            const courtId = $('v-court')?.value;
+            if(courtId) await _loadVerdictJudges(courtId);
+            if(status) status.textContent = jd.status==='DONE' ? 'רשימת שופטים עודכנה ✓' : 'רענון נכשל';
+          }
+        } catch(e){ clearInterval(timer); }
+      }, 3000);
+    }
+  } catch(e){
+    if(status) status.textContent = 'שגיאה: '+e.message;
+  }
 }
 
 async function _loadVerdictCourts(){
