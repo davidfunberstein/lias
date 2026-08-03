@@ -945,30 +945,29 @@ async function viewTranscription(name){
 }
 
 // ── Verdicts view ──────────────────────────────────────────────────────────
-async function renderVerdicts(){
-  const el = $('view-verdicts');
-  if(!el) return;
-  // Load courts list for the dropdown (first time only)
-  if(!window._verdictCourts){
-    try{
-      const r = await fetch('/api/verdicts/courts');
-      window._verdictCourts = await r.json();
-    } catch(e){ window._verdictCourts = []; }
-  }
-  const courts = window._verdictCourts;
-  const courtOpts = courts.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-  el.innerHTML = `
+function renderVerdicts(){
+  $('crumbs').innerHTML = '';
+  $('view').innerHTML = `
+  <div class="hello">
+    <div class="small">פורטל בתי המשפט הממשלתי · ציבורי · ללא התחברות</div>
+    <h1>החלטות שפורסמו</h1>
+    <div style="max-width:560px;margin-top:8px;font-size:13.5px;line-height:1.7;color:var(--ink-soft)">
+      בתי המשפט בישראל מפרסמים חלק מהחלטותיהם לציבור הרחב דרך
+      <a href="https://www.court.gov.il" target="_blank" style="color:var(--accent)">court.gov.il</a>.
+      ניתן לחפש לפי בית משפט, שם שופט ותאריכים ולהוריד את קובצי ה-PDF.
+      אין צורך בהתחברות לפורטל.
+    </div>
+  </div>
+  <div class="grid">
     <div class="card c12" style="max-width:680px">
-      <div class="kpi-top"><div><h2>⚖️ החלטות שהותרו לפרסום</h2>
-        <div class="sub">חיפוש החלטות שופטים מפורטל בתי המשפט הממשלתי (ללא התחברות)</div>
-      </div></div>
+      <div class="kpi-top"><div><h2>חיפוש החלטות</h2></div></div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
         <div>
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">בית משפט</label>
           <select id="v-court" style="width:100%;padding:8px 10px;border-radius:8px;
             border:1px solid var(--line);background:var(--surface);font-size:13px">
-            <option value="">-- כל בתי המשפט --</option>${courtOpts}
+            <option value="">-- טוען… --</option>
           </select>
         </div>
         <div>
@@ -1012,6 +1011,23 @@ async function renderVerdicts(){
   const fmt = d => d.toISOString().slice(0,10);
   if($('v-to'))   $('v-to').value   = fmt(today);
   if($('v-from')) $('v-from').value = fmt(sixBack);
+
+  // Load courts asynchronously after the DOM is painted
+  _loadVerdictCourts();
+}
+
+async function _loadVerdictCourts(){
+  const sel = $('v-court');
+  if(!sel) return;
+  try{
+    const r = await fetch('/api/verdicts/courts');
+    const courts = await r.json();
+    window._verdictCourts = courts;
+    sel.innerHTML = '<option value="">-- כל בתי המשפט --</option>'
+      + courts.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  } catch(e){
+    sel.innerHTML = '<option value="">-- כל בתי המשפט --</option>';
+  }
 }
 
 async function searchVerdicts(){
