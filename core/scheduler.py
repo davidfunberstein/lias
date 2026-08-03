@@ -106,47 +106,53 @@ def _send_log_after_delay(project_root: Path, to_addr: str, delay_sec: int) -> N
 
 
 def send_log_email(project_root: Path, to_addr: str, subject: str = "LIAS — log") -> None:
-    """Send the last 300 lines of latest.log to to_addr using stored IMAP credentials."""
+    """Send the last 300 lines of latest.log to to_addr.
+
+    Credentials are read from session_defaults.json keys:
+      log_smtp_user     — sender Gmail address
+      log_smtp_password — Gmail App Password (16-char)
+    Falls back to gov-il-connect keychain if those are absent.
+    """
     import smtplib
     from email.mime.text import MIMEText
 
     log_path = project_root / "court_documents" / "logs" / "latest.log"
     if not log_path.exists():
-        return
+        raise FileNotFoundError(f"קובץ לוג לא נמצא: {log_path}")
 
     lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
     body  = "\n".join(lines)
 
-    # Load email credentials from keychain
-    try:
-        import keyring
-        email_addr  = keyring.get_password("gov-il-connect", "email_address") or ""
-        email_pw    = keyring.get_password("gov-il-connect", "email_password") or ""
-        imap_host   = keyring.get_password("gov-il-connect", "email_host") or "imap.gmail.com"
-    except Exception:
-        return
+    # 1) Try dedicated log-email credentials from session_defaults.json
+    d = _load_settings(project_root)
+    email_addr = (d.get("log_smtp_user") or "").strip()
+    email_pw   = (d.get("log_smtp_password") or "").strip()
+
+    # 2) Fall back to gov-il-connect keychain credentials
+    if not email_addr or not email_pw:
+        try:
+            import keyring
+            email_addr = email_addr or keyring.get_password("gov-il-connect", "email_address") or ""
+            email_pw   = email_pw   or keyring.get_password("gov-il-connect", "email_password") or ""
+        except Exception:
+            pass
 
     if not email_addr or not email_pw:
-        return
-
-    # SMTP host derived from IMAP host
-    smtp_host = imap_host.replace("imap.", "smtp.")
-    smtp_port = 587
+        raise RuntimeError(
+            "אין פרטי SMTP — הזן כתובת Gmail וסיסמת אפליקציה בהגדרות › לוג (שליחת לוג)"
+        )
 
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = subject
     msg["From"]    = email_addr
     msg["To"]      = to_addr
 
-    try:
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as s:
-            s.ehlo()
-            s.starttls()
-            s.login(email_addr, email_pw)
-            s.sendmail(email_addr, [to_addr], msg.as_string())
-        print(f"[scheduler] log email sent to {to_addr}")
-    except Exception as e:
-        print(f"[scheduler] SMTP error: {e}")
+    with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as s:
+        s.ehlo()
+        s.starttls()
+        s.login(email_addr, email_pw)
+        s.sendmail(email_addr, [to_addr], msg.as_string())
+    print(f"[scheduler] log email sent to {to_addr}")
 
 
 def start(project_root: Path) -> None:
