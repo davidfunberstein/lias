@@ -22,7 +22,7 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-COURT_URL    = "https://www.court.gov.il/NGCS.Web.Site/HomePage.aspx"
+COURT_URL    = "https://www.court.gov.il/NGCS.Web.Site/LocateDecisions/LocateDecisionQuering.aspx"
 TIMEOUT_MS   = 30_000
 NAV_TIMEOUT  = 60_000
 DL_TIMEOUT   = 60_000  # per PDF
@@ -78,29 +78,18 @@ def scrape_verdicts(
 
         try:
             log(f"navigating to {COURT_URL}")
-            progress(0.02, "פותח את אתר בתי המשפט…")
+            progress(0.02, "פותח טופס איתור החלטות…")
             page.goto(COURT_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
-
-            # ── Click "איתור החלטות" via doPostBack ──────────────────────────
-            log("clicking איתור החלטות")
-            page.evaluate(
-                "javascript:__doPostBack('Header1$UpperMenu1$btnVerdictLocalization','')"
-            )
-            page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
-            progress(0.05, "עובר למסך איתור החלטות…")
-
-            # ── Switch to "איתור לפי פרמטרים" tab ───────────────────────────
-            log("switching to parameters tab")
-            try:
-                page.click("a[href='#tabOrderDetails']", timeout=10_000)
-            except Exception:
-                page.evaluate("javascript:$('#tabOrderDetails').click()")
             page.wait_for_timeout(800)
-            progress(0.08, "בחירת טאב איתור לפי פרמטרים…")
+            progress(0.08, "הדף נטען…")
 
-            # ── Select court ─────────────────────────────────────────────────
+            # ── Select court — triggers postback that populates judges ────────
             log(f"selecting court {court_id}")
-            page.select_option("#LocateByParameters1_ddlSelectCourt", court_id)
+            try:
+                page.select_option("#LocateByParameters1_ddlCourt", court_id)
+            except Exception:
+                page.select_option("#LocateByParameters1_ddlSelectCourt", court_id)
+            page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
             page.wait_for_timeout(1200)  # judge list loads dynamically
             progress(0.12, "בחירת בית משפט…")
 
@@ -364,8 +353,8 @@ def register_verdict_handler():
             except Exception:
                 pass
 
-            # Run headless in the worker thread directly — no BrowserManager needed
-            # (court.gov.il is public; no portal login required)
+            # Use the NET BrowserManager (existing Chrome window, new tab).
+            # Falls back to standalone headless if ctx.browser is None.
             verdicts = scrape_verdicts(
                 court_id=court_id,
                 judge_name=judge_name,
@@ -374,7 +363,7 @@ def register_verdict_handler():
                 output_dir=output_dir,
                 max_pages=max_pages,
                 progress_cb=ctx.progress,
-                browser_manager=None,
+                browser_manager=ctx.browser,
             )
 
             # Save run manifest

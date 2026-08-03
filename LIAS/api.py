@@ -1428,18 +1428,49 @@ def verdicts_courts():
     return {"courts": _VERDICT_COURTS}
 
 
+_JUDGES_CACHE: dict[str, list] = {}   # court_id → [{value, name}]
+
+def _load_judges_from_csv(csv_path) -> list[dict]:
+    import csv as _csv
+    rows = []
+    try:
+        with open(csv_path, encoding="utf-8-sig") as f:
+            for row in _csv.DictReader(f):
+                name  = (row.get("שם השופט/ת") or row.get("שם") or "").strip()
+                value = (row.get("ערך ב-dropdown (value)") or row.get("value") or "").strip()
+                if name and value:
+                    rows.append({"value": value, "name": name})
+    except Exception:
+        pass
+    return rows
+
+
 @app.get("/api/verdicts/judges")
 async def verdicts_judges(court_id: str = "-1"):
-    """Fetch the judge dropdown options for a given court from court.gov.il (headless)."""
+    """Fetch the judge dropdown options for a given court.
+    Court 30 (שלום ירושלים) is served from the bundled CSV — instant.
+    Other courts are scraped live from court.gov.il (headless, ~10 s).
+    """
     if court_id in ("-1", ""):
         return {"judges": []}
+
+    if court_id in _JUDGES_CACHE:
+        return {"judges": _JUDGES_CACHE[court_id]}
+
+    # ── Fast path: bundled CSV for שלום ירושלים ─────────────────────────────
+    if court_id == "30":
+        csv_path = config.PROJECT_ROOT / "assets" / "judges_jerusalem_shalom.csv"
+        judges = _load_judges_from_csv(csv_path)
+        if judges:
+            _JUDGES_CACHE[court_id] = judges
+            return {"judges": judges}
     import asyncio, concurrent.futures
     def _fetch():
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
             return []
-        COURT_URL = "https://www.court.gov.il/NGCS.Web.Site/HomePage.aspx"
+        COURT_URL = "https://www.court.gov.il/NGCS.Web.Site/LocateDecisions/LocateDecisionQuering.aspx"
         judges = []
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
@@ -1449,14 +1480,12 @@ async def verdicts_judges(court_id: str = "-1"):
                 page = ctx.new_page()
                 page.set_default_timeout(30_000)
                 page.goto(COURT_URL, wait_until="domcontentloaded", timeout=60_000)
-                page.evaluate("javascript:__doPostBack('Header1$UpperMenu1$btnVerdictLocalization','')")
-                page.wait_for_load_state("domcontentloaded", timeout=60_000)
+                page.wait_for_timeout(800)
                 try:
-                    page.click("a[href='#tabOrderDetails']", timeout=8_000)
+                    page.select_option("#LocateByParameters1_ddlCourt", court_id)
                 except Exception:
-                    page.evaluate("javascript:$('#tabOrderDetails').click()")
-                page.wait_for_timeout(600)
-                page.select_option("#LocateByParameters1_ddlSelectCourt", court_id)
+                    page.select_option("#LocateByParameters1_ddlSelectCourt", court_id)
+                page.wait_for_load_state("domcontentloaded", timeout=60_000)
                 page.wait_for_timeout(1800)  # judge list loads dynamically
                 judges = page.evaluate("""
                     (() => {
@@ -1470,6 +1499,8 @@ async def verdicts_judges(court_id: str = "-1"):
             finally:
                 try: browser.close()
                 except Exception: pass
+        if judges:
+            _JUDGES_CACHE[court_id] = judges
         return judges
     loop = asyncio.get_event_loop()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
