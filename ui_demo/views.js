@@ -1020,11 +1020,19 @@ async function _loadVerdictCourts(){
   const sel = $('v-court');
   if(!sel) return;
   try{
-    const r = await fetch('/api/verdicts/courts');
-    const courts = await r.json();
+    const [courtsRes, settingsRes] = await Promise.all([
+      fetch('/api/verdicts/courts'),
+      fetch('/api/settings'),
+    ]);
+    const courts   = await courtsRes.json();
+    const settings = await settingsRes.json();
     window._verdictCourts = courts;
     sel.innerHTML = '<option value="">-- כל בתי המשפט --</option>'
       + courts.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+    // Restore last-used values
+    if(settings.verdict_last_court) sel.value = settings.verdict_last_court;
+    if(settings.verdict_last_judge && $('v-judge'))
+      $('v-judge').value = settings.verdict_last_judge;
   } catch(e){
     sel.innerHTML = '<option value="">-- כל בתי המשפט --</option>';
   }

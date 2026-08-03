@@ -49,11 +49,14 @@ def scrape_verdicts(
     max_pages: int = 5,
     progress_cb=None,
     logger=None,
+    browser_manager=None,   # LIAS BrowserManager — reuses existing NET browser
 ) -> list[dict]:
     """Scrape verdicts and download PDFs.
 
     Returns list of verdict metadata dicts.
     progress_cb(fraction, message) called throughout.
+    If browser_manager is provided, a new tab is opened inside the existing NET
+    browser context instead of launching a separate headless browser.
     """
     def log(msg: str):
         if logger:
@@ -65,25 +68,13 @@ def scrape_verdicts(
         if progress_cb:
             progress_cb(frac, msg)
 
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        raise RuntimeError("playwright לא מותקן — הרץ: pip install playwright && playwright install chromium")
-
     pdf_dir = output_dir / "pdfs"
     pdf_dir.mkdir(parents=True, exist_ok=True)
 
     verdicts: list[dict] = []
 
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
-        context = browser.new_context(
-            accept_downloads=True,
-            locale="he-IL",
-            extra_http_headers={"Accept-Language": "he-IL,he;q=0.9"},
-        )
-        page = context.new_page()
-        page.set_default_timeout(TIMEOUT_MS)
+    def _run_on_page(page):
+        """Execute the full scrape flow on a given Playwright page."""
 
         try:
             log(f"navigating to {COURT_URL}")
@@ -231,7 +222,7 @@ def scrape_verdicts(
                         if not pdf_path.exists():
                             log(f"  downloading doc {i+1}/{len(rows_data)}: {row['case_num']}")
                             # Open document — this triggers a new page/tab
-                            with context.expect_page() as new_page_info:
+                            with page.context.expect_page() as new_page_info:
                                 page.evaluate(
                                     f"javascript:__doPostBack('btnDocument','{row['doc_param']}')"
                                 )
@@ -293,8 +284,45 @@ def scrape_verdicts(
                 page.wait_for_timeout(2000)
 
         finally:
+            pass  # page cleanup handled by caller
+
+    # ── Caller A: reuse the NET browser ──────────────────────────────────────
+    if browser_manager is not None:
+        def _run_in_net_browser(main_page):
+            vpage = main_page.context.new_page()
+            vpage.set_default_timeout(TIMEOUT_MS)
             try:
-                browser.close()
+                _run_on_page(vpage)
+            finally:
+                try:
+                    vpage.close()
+                except Exception:
+                    pass
+        browser_manager.run("verdict_scrape", _run_in_net_browser,
+                            timeout=max_pages * 120 + 120)
+        progress(0.95, f"הורדו {len(verdicts)} החלטות")
+        return verdicts
+
+    # ── Caller B: standalone headless browser ────────────────────────────────
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise RuntimeError("playwright לא מותקן — הרץ: pip install playwright && playwright install chromium")
+
+    with sync_playwright() as pw:
+        _browser = pw.chromium.launch(headless=True)
+        try:
+            _ctx = _browser.new_context(
+                accept_downloads=True,
+                locale="he-IL",
+                extra_http_headers={"Accept-Language": "he-IL,he;q=0.9"},
+            )
+            _page = _ctx.new_page()
+            _page.set_default_timeout(TIMEOUT_MS)
+            _run_on_page(_page)
+        finally:
+            try:
+                _browser.close()
             except Exception:
                 pass
 
@@ -323,6 +351,19 @@ def register_verdict_handler():
             output_dir = config.COURT_DOCS_DIR / "verdicts"
             output_dir.mkdir(parents=True, exist_ok=True)
 
+            # Save last-used court/judge for the UI to restore
+            try:
+                import json as _json
+                sd_path = config.PROJECT_ROOT / "session_defaults.json"
+                sd: dict = {}
+                if sd_path.exists():
+                    sd = _json.loads(sd_path.read_text(encoding="utf-8"))
+                sd["verdict_last_court"] = court_id
+                sd["verdict_last_judge"] = judge_name
+                sd_path.write_text(_json.dumps(sd, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
             verdicts = scrape_verdicts(
                 court_id=court_id,
                 judge_name=judge_name,
@@ -331,6 +372,7 @@ def register_verdict_handler():
                 output_dir=output_dir,
                 max_pages=max_pages,
                 progress_cb=ctx.progress,
+                browser_manager=ctx.browser,   # reuse NET browser
             )
 
             # Save run manifest

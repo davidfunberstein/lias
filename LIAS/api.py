@@ -1020,6 +1020,9 @@ def get_settings():
         # Developer log email
         "log_email_enabled":       d.get("log_email_enabled", False),
         "log_email_to":            d.get("log_email_to", ""),
+        # Verdict scraper — last used values
+        "verdict_last_court":      d.get("verdict_last_court", ""),
+        "verdict_last_judge":      d.get("verdict_last_judge", ""),
     }
 
 
