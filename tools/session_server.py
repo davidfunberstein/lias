@@ -36,9 +36,15 @@ PORTALS = {
     "eca": {"url": "https://publicsso.eca.gov.il/he/home/OpenCase",   "label": "הוצאה לפועל"},
 }
 
-portal_key = (sys.argv[1] if len(sys.argv) > 1 else "bdr").lower()
-if portal_key not in PORTALS:
-    print(f"פורטל לא מוכר: {portal_key}  —  בחר: bdr / net / eca"); sys.exit(2)
+portal_key = (sys.argv[1] if len(sys.argv) > 1 else "auto").lower()
+if portal_key == "auto":
+    # Generic gov.il login — works for all portals
+    PORTALS["auto"] = {
+        "url":   "https://www.gov.il/he",
+        "label": "gov.il (כל הפורטלים)",
+    }
+elif portal_key not in PORTALS:
+    print(f"פורטל לא מוכר: {portal_key}  —  בחר: auto / bdr / net / eca"); sys.exit(2)
 
 email_to = ""
 for i, a in enumerate(sys.argv):
