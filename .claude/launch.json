@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "legal-ai-app",
-      "runtimeExecutable": "python3",
+      "runtimeExecutable": "/usr/bin/python3",
       "runtimeArgs": [
         "app.py",
         "--no-browser"
