@@ -129,6 +129,15 @@ curl "http://localhost:8500/api/vector/search?q=חוזה&limit=5"
 
 Base URL: `http://localhost:8500`
 
+### Interactive API docs (Swagger UI)
+
+```
+http://localhost:8500/docs
+```
+
+רשימה מלאה של כל ה-endpoints עם אפשרות לנסות כל אחד ישירות מהדפדפן.
+
+
 ### Cases
 | Method | Endpoint | Description |
 |--------|----------|-------------|
