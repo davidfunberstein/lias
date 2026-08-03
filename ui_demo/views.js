@@ -965,18 +965,16 @@ function renderVerdicts(){
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
         <div>
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">בית משפט</label>
-          <select id="v-court" onchange="_loadVerdictJudges(this.value)"
-            style="width:100%;padding:8px 10px;border-radius:8px;
+          <select id="v-court" style="width:100%;padding:8px 10px;border-radius:8px;
             border:1px solid var(--line);background:var(--surface);font-size:13px">
             <option value="">-- טוען… --</option>
           </select>
         </div>
         <div>
-          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">שופט</label>
-          <select id="v-judge" style="width:100%;padding:8px 10px;border-radius:8px;
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">שם שופט (חלקי)</label>
+          <input id="v-judge" type="text" placeholder="לדוגמה: כהן"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;
             border:1px solid var(--line);background:var(--surface);font-size:13px">
-            <option value="">-- בחר בית משפט תחילה --</option>
-          </select>
         </div>
         <div>
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">מתאריך</label>
@@ -995,9 +993,6 @@ function renderVerdicts(){
           border:none;background:var(--accent);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer">
           🔍 חפש
         </button>
-        <button onclick="_refreshVerdictJudges()" title="רענן רשימת שופטים מנט המשפט"
-          style="padding:9px 14px;border-radius:10px;border:1px solid var(--line);
-          background:var(--surface2);cursor:pointer;font-size:13px">🔄 רענן שופטים</button>
         <button id="v-dl-btn" onclick="downloadVerdicts()" style="display:none;padding:9px 18px;
           border-radius:10px;border:2px solid var(--accent);background:var(--accent-soft,#dce8ff);
           color:var(--accent-strong,#1a4b9e);font-weight:700;font-size:13px;cursor:pointer">
@@ -1021,92 +1016,23 @@ function renderVerdicts(){
   _loadVerdictCourts();
 }
 
-async function _refreshVerdictJudges(){
-  const status = $('v-status');
-  if(status) status.textContent = 'פותח נט המשפט לרענון רשימת שופטים…';
-  try{
-    const r = await fetch('/api/verdicts/refresh_judges', {method:'POST'});
-    const d = await r.json();
-    if(d.job_id){
-      if(status) status.textContent = 'רענון שופטים רץ ברקע — יעדכן את ה-dropdown בסיום';
-      // Poll until job done, then reload current court's judges
-      let attempts = 0;
-      const timer = setInterval(async ()=>{
-        attempts++;
-        if(attempts > 120){ clearInterval(timer); return; }
-        try{
-          const jr = await fetch('/api/jobs/'+d.job_id);
-          const jd = await jr.json();
-          if(jd.status === 'DONE' || jd.status === 'ERROR'){
-            clearInterval(timer);
-            const courtId = $('v-court')?.value;
-            if(courtId) await _loadVerdictJudges(courtId);
-            if(status) status.textContent = jd.status==='DONE' ? 'רשימת שופטים עודכנה ✓' : 'רענון נכשל';
-          }
-        } catch(e){ clearInterval(timer); }
-      }, 3000);
-    }
-  } catch(e){
-    if(status) status.textContent = 'שגיאה: '+e.message;
-  }
-}
-
 async function _loadVerdictCourts(){
   const sel = $('v-court');
   if(!sel) return;
   try{
-    const [courtsRes, settingsRes] = await Promise.all([
-      fetch('/api/verdicts/courts'),
-      fetch('/api/settings'),
-    ]);
-    const courts   = await courtsRes.json();
-    const settings = await settingsRes.json();
-    window._verdictCourts   = courts;
-    window._verdictLastJudge = settings.verdict_last_judge || '';
+    const r = await fetch('/api/verdicts/courts');
+    const courts = await r.json();
+    window._verdictCourts = courts;
     sel.innerHTML = '<option value="">-- כל בתי המשפט --</option>'
       + courts.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-    if(settings.verdict_last_court){
-      sel.value = settings.verdict_last_court;
-      // Load judges for the restored court, then restore judge selection
-      await _loadVerdictJudges(settings.verdict_last_court);
-    }
   } catch(e){
     sel.innerHTML = '<option value="">-- כל בתי המשפט --</option>';
   }
 }
 
-async function _loadVerdictJudges(courtId){
-  const jsel = $('v-judge');
-  if(!jsel) return;
-  if(!courtId){
-    jsel.innerHTML = '<option value="">-- בחר בית משפט תחילה --</option>';
-    return;
-  }
-  jsel.innerHTML = '<option value="">טוען שופטים…</option>';
-  try{
-    const r = await fetch('/api/verdicts/judges?court_id='+encodeURIComponent(courtId));
-    const d = await r.json();
-    const judges = d.judges || [];
-    jsel.innerHTML = '<option value="">-- כל השופטים --</option>'
-      + judges.map(j=>`<option value="${j.value}">${j.name}</option>`).join('');
-    // Restore last judge if available
-    const last = window._verdictLastJudge;
-    if(last){
-      // Try exact value match first, then name match
-      const opt = [...jsel.options].find(o => o.value === last || o.text === last);
-      if(opt) jsel.value = opt.value;
-      window._verdictLastJudge = ''; // consume
-    }
-  } catch(e){
-    jsel.innerHTML = '<option value="">-- שגיאה בטעינת שופטים --</option>';
-  }
-}
-
 async function searchVerdicts(){
   const courtId  = $('v-court')?.value  || '';
-  const judgeEl  = $('v-judge');
-  const judge    = judgeEl?.value || '';
-  const judgeName = judgeEl ? (judgeEl.options[judgeEl.selectedIndex]?.text || '') : '';
+  const judge    = $('v-judge')?.value  || '';
   const dateFrom = $('v-from')?.value   || '';
   const dateTo   = $('v-to')?.value     || '';
   const status   = $('v-status');

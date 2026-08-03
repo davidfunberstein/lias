@@ -1157,11 +1157,6 @@ def net_auto_update(payload: dict, ctx: JobContext) -> str:
     ctx.progress(0.9, "re-importing CSVs")
     n = _reimport_folder(config.COURT_DOCS_DIR / "downloads")
     jobs.broadcast({"type": "file", "name": "auto-update", "status": "SYNC_DONE"})
-    # Refresh judges cache in background after every NET sync
-    try:
-        jobs.submit("verdicts_refresh_judges", {})
-    except Exception:
-        pass
     return f"net auto-update ok, {n} docs re-imported"
 
 
@@ -1967,64 +1962,3 @@ try:
     register_verdict_handler()
 except Exception as _ve:
     print(f"[collector_bridge] verdict handler not registered: {_ve}")
-
-
-# ---------------------------------------------------------------------------
-# Judges cache refresh — populates judges per court from court.gov.il NGCS
-# ---------------------------------------------------------------------------
-@handler("verdicts_refresh_judges")
-def _refresh_judges_handler(payload: dict, ctx: JobContext) -> str:
-    """Open a new tab in the NET browser, iterate all courts on court.gov.il/NGCS,
-    scrape each court's judges dropdown, and save to disk cache."""
-    # lazy import avoids circular-import at module load time
-    from .api import _VERDICT_COURTS, _JUDGES_CACHE, _save_judges_cache_to_disk  # noqa: PLC0415
-
-    COURT_URL = "https://www.court.gov.il/NGCS.Web.Site/LocateDecisions/LocateDecisionQuering.aspx"
-    bm = ctx.browser
-    if bm is None:
-        raise RuntimeError("NET browser not available")
-
-    updated = 0
-
-    def _run(main_page):
-        nonlocal updated
-        page = main_page.context.new_page()
-        page.set_default_timeout(30_000)
-        try:
-            page.goto(COURT_URL, wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_timeout(800)
-            for court in _VERDICT_COURTS:
-                cid = court["id"]
-                if cid in ("-1", ""):
-                    continue
-                try:
-                    try:
-                        page.select_option("#LocateByParameters1_ddlCourt", cid)
-                    except Exception:
-                        page.select_option("#LocateByParameters1_ddlSelectCourt", cid)
-                    page.wait_for_load_state("domcontentloaded", timeout=30_000)
-                    page.wait_for_timeout(1200)
-                    judges = page.evaluate("""
-                        (() => {
-                            const sel = document.querySelector('#LocateByParameters1_ddlJudgeName');
-                            if (!sel) return [];
-                            return Array.from(sel.options)
-                                .filter(o => o.value && o.value !== '0' && o.value !== '-1')
-                                .map(o => ({value: o.value, name: o.text.trim()}));
-                        })()
-                    """)
-                    if judges:
-                        _JUDGES_CACHE[cid] = judges
-                        updated += 1
-                        print(f"[verdicts_refresh] {court['name']}: {len(judges)} judges")
-                except Exception as e:
-                    print(f"[verdicts_refresh] {court['name']} failed: {e}")
-            _save_judges_cache_to_disk()
-        finally:
-            try:
-                page.close()
-            except Exception:
-                pass
-
-    bm.run("verdicts_refresh_judges", _run, timeout=600)
-    return f"judges refreshed — {updated} courts updated"

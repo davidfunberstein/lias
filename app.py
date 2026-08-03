@@ -391,8 +391,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"tasks": tasks, "log_tail": log_tail})
         elif path.startswith("/api/doc_pdf/") or path.startswith("/api/query") \
                 or path.startswith("/api/stats") \
-                or path.startswith("/api/verdicts/") \
-                or path.startswith("/api/cases") \
                 or path in (
                 "/api/browser/screenshot", "/api/browser/status", "/api/log",
                 "/api/jobs"):
@@ -768,9 +766,6 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=_do_shutdown_all,
                              args=("user requested safe shutdown",),
                              daemon=True).start()
-        elif path.startswith("/api/actions/") or path.startswith("/api/verdicts/"):
-            code, resp_body, ct = engine_inproc.request("POST", self.path, raw)
-            self._send(code, resp_body, ct or "application/json")
         elif path.startswith("/api/proxy/"):
             proxy_path = full_path[len("/api/proxy/"):]
             import re as _re

@@ -1020,9 +1020,6 @@ def get_settings():
         # Developer log email
         "log_email_enabled":       d.get("log_email_enabled", False),
         "log_email_to":            d.get("log_email_to", ""),
-        # Verdict scraper — last used values
-        "verdict_last_court":      d.get("verdict_last_court", ""),
-        "verdict_last_judge":      d.get("verdict_last_judge", ""),
     }
 
 
@@ -1426,125 +1423,6 @@ _VERDICT_COURTS = [
 @app.get("/api/verdicts/courts")
 def verdicts_courts():
     return {"courts": _VERDICT_COURTS}
-
-
-_JUDGES_CACHE: dict[str, list] = {}   # court_id → [{value, name}]
-_JUDGES_CACHE_FILE = None             # set lazily to config.COURT_DOCS_DIR / "verdicts_judges_cache.json"
-
-def _judges_cache_path():
-    global _JUDGES_CACHE_FILE
-    if _JUDGES_CACHE_FILE is None:
-        _JUDGES_CACHE_FILE = config.COURT_DOCS_DIR / "verdicts_judges_cache.json"
-    return _JUDGES_CACHE_FILE
-
-def _load_judges_cache_from_disk():
-    import json as _j
-    p = _judges_cache_path()
-    if p.exists():
-        try:
-            data = _j.loads(p.read_text(encoding="utf-8"))
-            _JUDGES_CACHE.update(data)
-        except Exception:
-            pass
-
-def _save_judges_cache_to_disk():
-    import json as _j
-    try:
-        p = _judges_cache_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(_j.dumps(_JUDGES_CACHE, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-def _load_judges_from_csv(csv_path) -> list[dict]:
-    import csv as _csv
-    rows = []
-    try:
-        with open(csv_path, encoding="utf-8-sig") as f:
-            for row in _csv.DictReader(f):
-                name  = (row.get("שם השופט/ת") or row.get("שם") or "").strip()
-                value = (row.get("ערך ב-dropdown (value)") or row.get("value") or "").strip()
-                if name and value:
-                    rows.append({"value": value, "name": name})
-    except Exception:
-        pass
-    return rows
-
-
-@app.post("/api/verdicts/refresh_judges")
-async def verdicts_refresh_judges():
-    """Scrape judge lists for ALL courts from court.gov.il using the NET browser (visible).
-    Results saved to verdicts_judges_cache.json. Returns a job_id."""
-    _load_judges_cache_from_disk()
-    job_id = jobs.submit("verdicts_refresh_judges", {})
-    return {"job_id": job_id}
-
-
-@app.get("/api/verdicts/judges")
-async def verdicts_judges(court_id: str = "-1"):
-    """Fetch the judge dropdown options for a given court.
-    Court 30 (שלום ירושלים) is served from the bundled CSV — instant.
-    Other courts are scraped live from court.gov.il (headless, ~10 s).
-    """
-    if court_id in ("-1", ""):
-        return {"judges": []}
-
-    # Load disk cache if in-memory is empty
-    if not _JUDGES_CACHE:
-        _load_judges_cache_from_disk()
-
-    if court_id in _JUDGES_CACHE:
-        return {"judges": _JUDGES_CACHE[court_id], "from_cache": True}
-
-    # ── Fast path: bundled CSV for שלום ירושלים ─────────────────────────────
-    if court_id == "30":
-        csv_path = config.PROJECT_ROOT / "assets" / "judges_jerusalem_shalom.csv"
-        judges = _load_judges_from_csv(csv_path)
-        if judges:
-            _JUDGES_CACHE[court_id] = judges
-            return {"judges": judges}
-    import asyncio, concurrent.futures
-    def _fetch():
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            return []
-        COURT_URL = "https://www.court.gov.il/NGCS.Web.Site/LocateDecisions/LocateDecisionQuering.aspx"
-        judges = []
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
-            try:
-                ctx  = browser.new_context(locale="he-IL",
-                    extra_http_headers={"Accept-Language": "he-IL,he;q=0.9"})
-                page = ctx.new_page()
-                page.set_default_timeout(30_000)
-                page.goto(COURT_URL, wait_until="domcontentloaded", timeout=60_000)
-                page.wait_for_timeout(800)
-                try:
-                    page.select_option("#LocateByParameters1_ddlCourt", court_id)
-                except Exception:
-                    page.select_option("#LocateByParameters1_ddlSelectCourt", court_id)
-                page.wait_for_load_state("domcontentloaded", timeout=60_000)
-                page.wait_for_timeout(1800)  # judge list loads dynamically
-                judges = page.evaluate("""
-                    (() => {
-                        const sel = document.querySelector('#LocateByParameters1_ddlJudgeName');
-                        if (!sel) return [];
-                        return Array.from(sel.options)
-                            .filter(o => o.value && o.value !== '0' && o.value !== '-1')
-                            .map(o => ({value: o.value, name: o.text.trim()}));
-                    })()
-                """)
-            finally:
-                try: browser.close()
-                except Exception: pass
-        if judges:
-            _JUDGES_CACHE[court_id] = judges
-        return judges
-    loop = asyncio.get_event_loop()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        result = await loop.run_in_executor(pool, _fetch)
-    return {"judges": result}
 
 
 @app.post("/api/verdicts/search")
