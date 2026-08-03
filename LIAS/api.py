@@ -205,13 +205,26 @@ def open_doc(document_id: int):
 
 @app.get("/api/browser/status")
 def browser_status():
-    b = jobs._pool._browser if hasattr(jobs, "_pool") and jobs._pool else None
-    if not b:
-        return {"available": False, "headless": True, "alive": False, "busy": False}
-    # Cached values only — never blocks behind a running job.
-    # ערכים מהמטמון בלבד — לא נתקע מאחורי משימה רצה.
-    return {"available": True, "headless": b.headless,
-            "alive": b.is_alive() or b.busy, "busy": b.busy, "url": b.last_url}
+    pool = jobs._pool if hasattr(jobs, "_pool") else None
+    ctx  = getattr(pool, "_ctx", None)
+
+    def _binfo(bm):
+        if not bm:
+            return {"available": False, "headless": True, "alive": False, "busy": False}
+        return {"available": True, "headless": bm.headless,
+                "alive": bm.is_alive() or bm.busy, "busy": bm.busy,
+                "url": getattr(bm, "last_url", "")}
+
+    main = getattr(ctx, "browser",     None) if ctx else None
+    bdr  = getattr(ctx, "bdr_browser", None) if ctx else None
+    eca  = getattr(ctx, "eca_browser", None) if ctx else None
+    return {
+        "main": _binfo(main),
+        "bdr":  _binfo(bdr),
+        "eca":  _binfo(eca),
+        # backwards compat
+        **_binfo(main),
+    }
 
 
 @app.post("/api/actions/browser/show")
@@ -333,6 +346,40 @@ def act_cancel_download(job_id: int = 0):
     from .collector_bridge import cancel_download
     cancel_download(job_id)
     return {"ok": True}
+
+
+@app.post("/api/actions/pause_download")
+def act_pause_download(job_id: int = 0):
+    from .collector_bridge import pause_download
+    pause_download(job_id)
+    return {"ok": True}
+
+
+@app.post("/api/actions/resume_download")
+def act_resume_download(job_id: int = 0):
+    from .collector_bridge import resume_download
+    resume_download(job_id)
+    return {"ok": True}
+
+
+@app.post("/api/actions/toggle_browser_visible")
+async def act_toggle_browser_visible(request: Request):
+    """Show or hide the automation browser window mid-download."""
+    from .collector_bridge import get_browser_for_portal
+    body = await request.json()
+    portal = (body.get("portal") or "NET").upper()
+    visible = bool(body.get("visible", True))
+    bm = get_browser_for_portal(portal)
+    if bm is None:
+        raise HTTPException(404, "no browser for portal")
+    try:
+        if visible:
+            bm.show()
+        else:
+            bm.hide()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    return {"ok": True, "visible": visible}
 
 
 @app.post("/api/actions/net_list_cases")
@@ -726,6 +773,62 @@ def act_reorganize_folders():
         from LIAS.migrate_csv import migrate
         migrate()
     return result
+
+
+@app.post("/api/actions/reorganize_by_client")
+def act_reorganize_by_client():
+    """Re-assign all cases to inferred clients (by recurring party name) and re-import."""
+    from core.client_inference import reorganize_cases_by_client
+    from core.download import SESSION_SETTINGS
+    from ui_modules import db as _db
+    import config
+    lawyer = SESSION_SETTINGS.get("lawyer_name") or SESSION_SETTINGS.get("share_name") or ""
+    if not lawyer:
+        raise HTTPException(400, "lawyer_name not set in session — run a sync first")
+    moved = reorganize_cases_by_client(config.COURT_DOCS_DIR / "downloads", lawyer)
+    # re-import so dashboard reflects new client assignments
+    from LIAS.collector_bridge import _reimport_folder
+    n = _reimport_folder(config.COURT_DOCS_DIR / "downloads")
+    return {"moved": moved, "reimported": n}
+
+
+@app.get("/api/cases/{sub_case_id}/viewers")
+def get_case_viewers(sub_case_id: int):
+    """Return viewers_registry.csv data for a NET case."""
+    import csv as _csv
+    import config
+    from ui_modules.db import get_conn
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT c.case_number, c.portal FROM sub_cases s "
+            "JOIN cases c ON c.case_id=s.case_id "
+            "WHERE s.sub_case_id=?", (sub_case_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "case not found")
+    if row["portal"] != "NET":
+        return {"viewers": [], "note": "only NET portal tracks viewers"}
+    # Find the case folder(s) that match case_number
+    base = config.COURT_DOCS_DIR / "downloads"
+    case_num = row["case_number"] or ""
+    matches = list(base.rglob(f"*{case_num}*"))
+    viewers: list[dict] = []
+    seen: set[tuple] = set()
+    for m in matches:
+        reg = m if m.is_file() and m.name == "viewers_registry.csv" \
+              else m / "viewers_registry.csv" if m.is_dir() else None
+        if not reg or not reg.exists():
+            continue
+        try:
+            with reg.open(encoding="utf-8-sig", newline="") as f:
+                for r in _csv.DictReader(f):
+                    key = (r.get("שם",""), r.get("אופן צפיה",""))
+                    if key not in seen:
+                        seen.add(key)
+                        viewers.append(r)
+        except Exception:
+            pass
+    return {"viewers": viewers, "case_number": case_num}
 
 
 @app.post("/api/actions/delete_case")

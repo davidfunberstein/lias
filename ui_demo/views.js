@@ -458,6 +458,46 @@ async function deleteCase(){
   await act('delete_case?sub_case_id='+K.sub_case_id, 'מחיקת תיק');
   setTimeout(()=>go('home'), 1200);
 }
+async function showViewers(subCaseId){
+  const r = await fetch(`/api/cases/${subCaseId}/viewers`).then(r=>r.json()).catch(()=>null);
+  if(!r){ toast('שגיאה בטעינת צופים', true); return; }
+  const viewers = r.viewers || [];
+  let el = document.getElementById('viewers-modal');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'viewers-modal';
+    el.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
+      +'z-index:9990;background:var(--card-bg,#1a2332);border:1px solid rgba(255,255,255,.2);'
+      +'border-radius:14px;padding:20px 22px;min-width:360px;max-width:90vw;max-height:80vh;'
+      +'overflow-y:auto;direction:rtl;box-shadow:0 16px 48px rgba(0,0,0,.5)';
+    document.body.appendChild(el);
+  }
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <b style="font-size:15px">👁 מי צפה — ${r.case_number||''}</b>
+      <button onclick="document.getElementById('viewers-modal').style.display='none'"
+        style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--ink-soft)">✕</button>
+    </div>
+    ${!viewers.length
+      ? `<div style="color:var(--ink-soft);text-align:center;padding:20px">אין נתוני צפייה לתיק זה</div>`
+      : `<table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead><tr style="border-bottom:1px solid rgba(255,255,255,.15);opacity:.6">
+            <th style="padding:5px 8px;text-align:right">שם</th>
+            <th style="padding:5px 8px;text-align:right">מעמד</th>
+            <th style="padding:5px 8px;text-align:right">משרד מייצג</th>
+            <th style="padding:5px 8px;text-align:right">אופן צפיה</th>
+          </tr></thead>
+          <tbody>${viewers.map((v,i)=>`
+            <tr style="border-bottom:1px solid rgba(255,255,255,.07);background:${i%2?'rgba(255,255,255,.03)':'none'}">
+              <td style="padding:5px 8px">${v['שם']||'—'}</td>
+              <td style="padding:5px 8px;opacity:.7">${v['מעמד']||'—'}</td>
+              <td style="padding:5px 8px;opacity:.7">${v['משרד מייצג']||'—'}</td>
+              <td style="padding:5px 8px">${v['אופן צפיה']||'—'}</td>
+            </tr>`).join('')}
+          </tbody></table>`}`;
+}
+
 async function openCaseInPortal(){
   if(!K) return;
   const portal = K.portal || (K.arkaa==='הוצאה לפועל'?'ECA':K.arkaa?.includes('רבני')?'BDR':'NET');
@@ -504,6 +544,7 @@ function renderCase(){
       ${K?`<button class="fv-btn" style="font-size:11px" onclick="openCaseInPortal()" title="פתח את התיק בפורטל בדפדפן לצפייה ויזואלית">🌐 פתח בפורטל</button>
         <button class="fv-btn" style="font-size:11px" onclick="uploadToCase()" title="העלה מסמך אחד או כמה לתיק — יסומנו 'לא מהתיק'">➕ הוסף מסמכים</button>
         <button class="fv-btn" style="font-size:11px" onclick="shareCase()" title="שתף רק את התיק הזה בצפייה">🔗 שתף תיק</button>
+        ${(K.portal||'')==='NET'?`<button class="fv-btn" style="font-size:11px" onclick="showViewers(${K.sub_case_id})" title="מי צפה בהחלטות ובמסמכים (מידע מהפורטל)">👁 מי צפה</button>`:''}
         <button class="fv-btn" style="font-size:11px;color:var(--danger)" onclick="deleteCase()" title="מחק את כל התיק (ל-trash + דרייב)">🗑 מחק תיק</button>`:''}</h1>
     ${K&&(K.parties?.length||K.location)?`<div class="sub" style="margin-top:8px;padding:8px 12px;border-radius:8px;background:var(--accent-soft,rgba(47,125,246,.08))">
       ${K.parties?.length?`⚖ <b>הצדדים:</b> ${K.parties.join(' &nbsp;נ׳&nbsp; ')}`:''}

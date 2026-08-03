@@ -490,7 +490,8 @@ def eca_sync(payload: dict, ctx: JobContext) -> str:
         return run_eca_download(page, config.COURT_DOCS_DIR, cases_filter=cases,
                                 progress=ctx.progress, job_id=ctx.job_id,
                                 should_cancel=lambda case=None: _is_case_cancelled(ctx.job_id, case),
-                                on_case_done=lambda d, num: import_one_case(d, "ECA", num))
+                                on_case_done=lambda d, num: import_one_case(d, "ECA", num),
+                                wait_if_paused=lambda: _wait_if_paused(ctx.job_id))
 
     try:
         result = _run_portal(ctx, "eca_sync", _run, timeout=3600)
@@ -712,12 +713,10 @@ def _run_portal_locked(ctx: JobContext, name: str, fn, timeout: int):
     last_exc = None
     for attempt, (wait_s, want_visible) in enumerate(ladder, 1):
         if wait_s:
-            ctx.progress(0.08, f"הפורטל חוסם — ממתין {wait_s} שניות ומנסה שוב ({attempt}/{len(ladder)})")
+            # Only log to console — not broadcast to UI (noise reduction)
+            print(f"[portal] retry {attempt}/{len(ladder)} — waiting {wait_s}s")
             _t.sleep(wait_s)
         if want_visible and ctx.browser._headless:
-            ctx.progress(0.09, "עובר לדפדפן גלוי — הפורטל דורש חלון אמיתי")
-            jobs.broadcast({"type": "job", "job_id": ctx.job_id,
-                            "message": "נפתח חלון דפדפן — הפורטל חסם את המצב הסמוי"})
             try:
                 ctx.browser.show()
             except Exception:
@@ -728,7 +727,6 @@ def _run_portal_locked(ctx: JobContext, name: str, fn, timeout: int):
             last_exc = exc
             if not any(k in str(exc) for k in _BLOCK_MARKS):
                 raise                      # real error — not a block / שגיאה אמיתית
-            ctx.progress(0.07, f"ניסיון {attempt} נחסם ({str(exc)[:80]}…)")
     # Diagnose: is the whole IP blocked, or only the browser?
     # אבחון: האם כל הכתובת חסומה, או רק הדפדפן?
     diag = _probe_net()
@@ -1303,6 +1301,7 @@ def bdr_batch(payload: dict, ctx: JobContext) -> str:
             on_case_done=lambda d, num: import_one_case(d, "BDR", num),
             progress_cb=_bdr_broadcast,
             should_cancel=lambda case=None: _is_case_cancelled(ctx.job_id, case),
+            wait_if_paused=lambda: _wait_if_paused(ctx.job_id),
         )
         batch.run(run_settings, config.COURT_DOCS_DIR)
         return "bdr batch done"
@@ -1375,17 +1374,54 @@ _cancel_flags: dict[int, bool] = {}
 # Per-case cancel — {job_id: set(case_numbers)} so the user can stop ONE case
 # without aborting the whole batch.
 _cancel_cases: dict[int, set] = {}
+# Pause flag — download loops sleep while True, then continue
+_pause_flags: dict[int, bool] = {}
+
+
+def get_browser_for_portal(portal: str):
+    """Return the BrowserManager for a given portal code (NET/BDR/ECA)."""
+    pool = getattr(jobs, "_pool", None)
+    if pool is None:
+        return None
+    ctx = getattr(pool, "_ctx", None)
+    if ctx is None:
+        return None
+    if portal == "BDR":
+        return ctx.bdr_browser or ctx.browser
+    if portal == "ECA":
+        return ctx.eca_browser or ctx.browser
+    return ctx.browser
 
 
 def cancel_download(job_id: int) -> None:
     """Signal a running net_smart_download / bdr_batch / eca_sync to stop after
     the current case (stop-all)."""
     _cancel_flags[job_id] = True
+    _pause_flags.pop(job_id, None)   # cancel clears pause
 
 
 def cancel_case(job_id: int, case_number: str) -> None:
     """Signal a running download to SKIP one specific case (per-case stop)."""
     _cancel_cases.setdefault(job_id, set()).add(str(case_number))
+
+
+def pause_download(job_id: int) -> None:
+    """Pause a running download — loops will idle until resume_download()."""
+    _pause_flags[job_id] = True
+    jobs.broadcast({"type": "download_paused", "job_id": job_id})
+
+
+def resume_download(job_id: int) -> None:
+    """Resume a paused download."""
+    _pause_flags.pop(job_id, None)
+    jobs.broadcast({"type": "download_resumed", "job_id": job_id})
+
+
+def _wait_if_paused(job_id: int) -> None:
+    """Block until paused flag is cleared (called from download loops)."""
+    import time as _t
+    while _pause_flags.get(job_id):
+        _t.sleep(0.5)
 
 
 def _is_case_cancelled(job_id: int, case_number=None) -> bool:
@@ -1589,6 +1625,7 @@ def net_smart_download(payload: dict, ctx: JobContext) -> str:
         _broadcast_stats()
 
         for idx, case_info in enumerate(queue, 1):
+            _wait_if_paused(ctx.job_id)
             if _cancel_flags.get(ctx.job_id):
                 ctx.progress(idx / (len(queue) + 1),
                              f"הופסק על ידי המשתמש — {stats['done']} תיקים הורדו")

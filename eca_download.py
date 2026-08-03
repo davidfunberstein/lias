@@ -1228,7 +1228,7 @@ def _write_case_manifest(case_dir: Path, case_num: str) -> None:
 
 def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None = None,
                      progress=None, should_cancel=None, job_id=None,
-                     on_case_done=None) -> str:
+                     on_case_done=None, wait_if_paused=None) -> str:
     """Download all ECA cases into root_output_dir/downloads/{client}/הוצאה לפועל/{case}.
 
     Assumes the caller provides a Playwright page; handles ECA login itself
@@ -1278,6 +1278,8 @@ def run_eca_download(page, root_output_dir: Path, cases_filter: list[str] | None
     ok = 0
     skipped = 0
     for case in cases:
+        if wait_if_paused:
+            wait_if_paused()
         if _cancel():                                    # stop-all
             _log("⏹ ההורדה נעצרה על ידי המשתמש")
             return f"נעצר: {ok}/{len(cases)} תיקים ({_STATS['done']} מסמכים)"

@@ -287,6 +287,24 @@
     <div id="g-sync-ok" class="sub" style="min-height:16px;margin-top:4px"></div>
 
     <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
+      <b style="font-size:13px">⬇ הורדה לפי עדיפות עדכון</b>
+      <div class="note" style="margin:4px 0 8px">
+        מוריד רק תיקים <b>פתוחים</b> שלא נבדקו מול הפורטל זמן רב — הכי פחות מעודכן ראשון.
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font-size:12.5px">לא נבדק יותר מ-</span>
+        <input type="number" id="stale-days" value="7" min="1" max="365"
+          style="width:52px;font-size:13px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface2);text-align:center">
+        <span style="font-size:12.5px">ימים</span>
+        <button onclick="_downloadStaleCases()"
+          style="font-size:13px;font-weight:600;padding:5px 14px;border:1px solid var(--accent,#4a7cc7);border-radius:6px;background:var(--accent-soft,#dce8ff);color:var(--accent-strong,#1a4b9e);cursor:pointer;white-space:nowrap;margin-right:auto">
+          ⬇ הורד
+        </button>
+      </div>
+      <div id="stale-status" style="font-size:12px;margin-top:6px;color:var(--ink-soft)"></div>
+    </div>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
       <b style="font-size:13px">ייבוא סשן לקוח</b>
       <div class="note" style="margin:4px 0 8px">
         לחיבור כלקוח (לא עורך דין) — ייצא קובץ session_*.json עם
@@ -311,6 +329,12 @@
     <option value="he">עברית</option>
     <option value="en">English</option>
   </select>
+
+  <label style="margin-top:16px;font-weight:600">🗂 ארגון תיקיות</label>
+  <div class="note" style="margin-bottom:8px">שייך מחדש כל תיק ללקוח לפי שם שחוזר על עצמו בין תיקיו (הסק אוטומטי). מועיל אחרי ייבוא ראשוני.</div>
+  <button class="btn-accent" style="width:100%;font-size:12.5px" onclick="act('reorganize_by_client','שיוך תיקים ללקוחות').then(()=>refresh(true))">🔄 ארגן תיקים לפי לקוחות מחדש</button>
+  <div class="note" style="margin-top:6px;margin-bottom:8px">מעביר תיקיות פיזיות לתת-תיקיות לפי ערכאה (בימ"ש שלום, מחוזי, …).</div>
+  <button class="btn-accent" style="width:100%;font-size:12.5px;margin-top:4px" onclick="act('reorganize_folders','ארגון מחדש של תיקיות').then(()=>refresh(true))">📁 ארגן תיקיות לפי ערכאה</button>
   </div>
   <button style="width:100%;margin-top:10px;font-size:12.5px;color:var(--ink-soft)" onclick="closeSettings()">סגור</button>
 </div>

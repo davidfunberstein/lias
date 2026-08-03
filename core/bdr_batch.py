@@ -479,12 +479,14 @@ class BdrBatchRunner:
     def __init__(self, page: Page, logger: "Logger | None" = None,
                  on_case_done: "Callable[[Path, str], None] | None" = None,
                  progress_cb: "Callable[[dict], None] | None" = None,
-                 should_cancel: "Callable[[str | None], bool] | None" = None) -> None:
+                 should_cancel: "Callable[[str | None], bool] | None" = None,
+                 wait_if_paused: "Callable[[], None] | None" = None) -> None:
         self.page = page
         self.logger = logger
         self._on_case_done = on_case_done
         self._progress_cb = progress_cb
         self._should_cancel = should_cancel
+        self._wait_if_paused = wait_if_paused
         self._case_data: dict[str, "BdrCase"] = {}
         self._sub_cases: dict[str, "SubCase"] = {}
         self._case_dirs: dict[str, Path] = {}
@@ -776,6 +778,8 @@ class BdrBatchRunner:
 
         try:
             for idx, sc in enumerate(all_sub_cases):
+                if self._wait_if_paused:
+                    self._wait_if_paused()
                 if self._should_cancel and self._should_cancel(None):
                     self._log("הופסק על ידי המשתמש")
                     break
