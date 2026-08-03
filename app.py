@@ -507,6 +507,9 @@ class Handler(BaseHTTPRequestHandler):
                     con.close()
             self._json({"ok": True, "db": con is not None, "docs": docs,
                         "full_ui_alive": _do_full_ui_alive()})
+        elif path in ("/docs", "/redoc", "/openapi.json") or path.startswith("/docs/"):
+            code, body, ct = engine_inproc.request("GET", self.path)
+            self._send(code, body, ct or "text/html; charset=utf-8")
         else:
             self._json({"error": "not found"}, 404)
 
