@@ -203,6 +203,8 @@ class H(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ct)
         self.send_header("Content-Length", str(len(b)))
+        self.send_header("ngrok-skip-browser-warning", "1")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(b)
 
@@ -213,7 +215,10 @@ class H(BaseHTTPRequestHandler):
             self._send(200, html)
         elif self.path == "/result":
             if not _state["ready"]:
-                self._send(302, b""); self.send_header("Location","/"); self.end_headers(); return
+                self.send_response(302)
+                self.send_header("Location", "/")
+                self.end_headers()
+                return
             n = len((_state["payload"] or {}).get("storage_state",{}).get("cookies",[]))
             html = (_PAGE_RESULT
                     .replace("__LABEL__", P["label"])
