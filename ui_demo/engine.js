@@ -2180,13 +2180,66 @@ async function openProfileManager(){
 }
 
 let _profileCookieData = null;
-async function exportMySession(){
-  toast('מייצא עוגיות…');
+let _exportSessionPanel = null;
+function exportMySession(){
+  if(_exportSessionPanel){ _exportSessionPanel.remove(); _exportSessionPanel=null; return; }
+  const _isDark = document.documentElement.dataset.theme==='dark'
+    || (!document.documentElement.dataset.theme && window.matchMedia('(prefers-color-scheme:dark)').matches);
+  const box = document.createElement('div');
+  box.style.cssText = `position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:9999;
+    width:340px;border-radius:16px;padding:20px;
+    background:${_isDark?'#1e2130':'#ffffff'};color:${_isDark?'#e2e8f0':'#1a1a2e'};
+    border:1px solid ${_isDark?'rgba(255,255,255,.12)':'rgba(0,0,0,.1)'};
+    box-shadow:0 16px 48px rgba(0,0,0,.35);direction:rtl;font-family:inherit`;
+  box.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <span style="font-weight:700;font-size:14px">📤 שלח עוגיות לעמית</span>
+      <button onclick="exportMySession()" style="background:none;border:none;cursor:pointer;font-size:16px;color:inherit;opacity:.6">✕</button>
+    </div>
+    <div style="font-size:12px;opacity:.7;line-height:1.6;margin-bottom:14px">
+      <b>שלב 1</b> — פתח את דפדפן נט המשפט והתחבר עם הפרטים שלך<br>
+      <b>שלב 2</b> — לחץ "הורד JSON" ושלח את הקובץ לעמית
+    </div>
+    <button id="exp-open-btn" onclick="_expOpenBrowser()"
+      style="width:100%;padding:8px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;
+      background:rgba(59,130,246,.2);border:1px solid rgba(59,130,246,.4);color:inherit;margin-bottom:8px">
+      🌐 פתח נט המשפט לכניסה
+    </button>
+    <button onclick="_expDownload()"
+      style="width:100%;padding:8px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;
+      background:rgba(16,185,129,.2);border:1px solid rgba(16,185,129,.4);color:inherit">
+      ⬇ הורד JSON (אחרי כניסה)
+    </button>
+    <div id="exp-status" style="font-size:11.5px;margin-top:8px;min-height:16px;opacity:.8"></div>`;
+  document.body.appendChild(box);
+  _exportSessionPanel = box;
+}
+
+async function _expOpenBrowser(){
+  const st = $('exp-status'), btn = $('exp-open-btn');
+  if(st) st.textContent = 'מפעיל מנוע…';
+  if(!D?.live){
+    const ok = await startEngine();
+    if(!ok){ if(st) st.textContent='✗ המנוע לא עלה'; return; }
+  }
+  if(st) st.textContent = 'פותח דפדפן…';
+  try{
+    const r = await fetch('/api/proxy/actions/browser/show',{method:'POST'});
+    if(r.ok || r.status < 500){
+      if(st) st.textContent = '✓ דפדפן פתוח — התחבר ואז לחץ "הורד JSON"';
+      if(btn) btn.style.background='rgba(16,185,129,.2)';
+    } else throw new Error(r.status);
+  }catch(e){ if(st) st.textContent='✗ '+e.message; }
+}
+
+async function _expDownload(){
+  const st = $('exp-status');
+  if(st) st.textContent = 'מייצא…';
   try{
     const r = await fetch('/api/tools/export_session?portal=NET');
     if(!r.ok){
       const d = await r.json().catch(()=>({}));
-      if(r.status===503) throw new Error('המנוע לא פעיל — הפעל סנכרון קודם והתחבר לנט המשפט');
+      if(r.status===503) throw new Error('לא מחובר — התחבר לנט המשפט בדפדפן שנפתח');
       throw new Error(d.detail || r.status);
     }
     const data = await r.json();
@@ -2195,8 +2248,9 @@ async function exportMySession(){
     a.href = URL.createObjectURL(blob);
     a.download = `session_${Date.now()}.json`;
     a.click();
-    toast('✓ קובץ עוגיות הורד — שלח אותו לעמית');
-  }catch(err){ toast('✗ '+err.message, true); }
+    if(st) st.textContent = '✓ קובץ JSON הורד — שלח לעמית';
+    setTimeout(()=>{ if(_exportSessionPanel){_exportSessionPanel.remove();_exportSessionPanel=null;} }, 3000);
+  }catch(err){ if(st) st.textContent='✗ '+err.message; }
 }
 
 async function _profileOpenNet(){
