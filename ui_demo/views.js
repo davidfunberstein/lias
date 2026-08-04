@@ -1034,7 +1034,7 @@ function renderVerdicts(){
     </div>
   </div>
   <div class="grid">
-    <div class="card c12" style="max-width:720px">
+    <div class="card c8">
       <div class="kpi-top" style="display:flex;justify-content:space-between;align-items:center">
         <h2 style="margin:0">חיפוש החלטות</h2>
         <button onclick="verdictRefreshJudges()" id="v-refresh-btn"
@@ -1101,9 +1101,7 @@ function renderVerdicts(){
       </div>
     </div>
 
-    <div id="v-results" style="margin-top:12px;width:100%">
-      <div style="color:var(--ink-soft);font-size:13px;padding:8px 0">בצע חיפוש כדי לראות תוצאות</div>
-    </div>
+    <div id="v-results" class="c12" style="margin-top:0"></div>
   </div>
   `;
 
@@ -1342,7 +1340,8 @@ function _pollVerdictSearch(jobId){
       if(job.status==='done'){
         clearInterval(t);
         if(st) st.textContent = '';
-        _showCachedVerdictResults();
+        await _showCachedVerdictResults();
+        $('v-results')?.scrollIntoView({behavior:'smooth',block:'start'});
       } else if(job.status==='error'){
         clearInterval(t);
         if(st) st.textContent = `✗ ${job.error||'שגיאה'}`;
@@ -1355,97 +1354,153 @@ async function _showCachedVerdictResults(){
   try{
     const r = await fetch('/api/verdicts/results');
     const d = await r.json();
-    window._verdictRunFile    = d.run_file    || '';
+    window._verdictRunFile      = d.run_file      || '';
     window._verdictSearchParams = d.search_params || {};
+    window._verdictSortKey = window._verdictSortKey || 'date';
+    window._verdictSortAsc = window._verdictSortAsc ?? false;
     _renderVerdictResults(d.verdicts||[]);
   } catch(e){}
+}
+
+// Sort helper — Israeli date "DD/MM/YYYY" → sortable string "YYYY/MM/DD"
+function _vDateSort(s){ const p=s.split('/'); return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:s; }
+
+function _verdictSort(key){
+  if(window._verdictSortKey===key) window._verdictSortAsc=!window._verdictSortAsc;
+  else { window._verdictSortKey=key; window._verdictSortAsc=false; }
+  _renderVerdictResults(window._verdictRows||[]);
 }
 
 function _renderVerdictResults(rows){
   const el = $('v-results');
   if(!el) return;
   if(!rows.length){
-    el.innerHTML='<div style="color:var(--ink-soft);font-size:13px;padding:8px 0">לא נמצאו תוצאות — נסה שוב עם פרמטרים שונים</div>';
+    el.innerHTML='<div style="color:var(--ink-soft);font-size:13px;padding:12px 0">לא נמצאו תוצאות — נסה שוב עם פרמטרים שונים</div>';
     return;
   }
   window._verdictRows = rows;
+
+  // Sort
+  const sk  = window._verdictSortKey || 'date';
+  const asc = window._verdictSortAsc ?? false;
+  const sorted = [...rows].sort((a,b)=>{
+    let va = sk==='date' ? _vDateSort(a.date||'') : (a[sk]||'');
+    let vb = sk==='date' ? _vDateSort(b.date||'') : (b[sk]||'');
+    const c = va.localeCompare(vb,'he');
+    return asc ? c : -c;
+  });
+
   const alreadyDl = rows.filter(r=>r.pdf_path).length;
-  const th = (t,w) => `<th style="padding:6px 10px;text-align:right;font-size:11.5px;font-weight:600;
-    white-space:nowrap${w?`;width:${w}`:''};">${t}</th>`;
-  const td = (v,extra='') => `<td style="padding:6px 10px;font-size:12.5px;direction:rtl;${extra}">${v||''}</td>`;
+  const newCount  = rows.length - alreadyDl;
+  const arrow = (k) => sk===k ? (asc?'↑':'↓') : '⇅';
+  const thSort = (label, key, w) =>
+    `<th onclick="_verdictSort('${key}')" style="padding:6px 10px;text-align:right;
+      font-size:11.5px;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none
+      ${w?`;width:${w}`:''}">
+      ${label} <span style="opacity:.6;font-size:10px">${arrow(key)}</span></th>`;
+  const th0 = `<th style="padding:6px 10px;width:34px"></th>`;
+  const thPdf = `<th style="padding:6px 10px;width:50px;font-size:11.5px;font-weight:600">PDF</th>`;
+  const td = (v,extra='') => `<td style="padding:6px 10px;font-size:12.5px;direction:rtl;${extra}">${v??''}</td>`;
+
   el.innerHTML = `
-  <div class="card c12" style="overflow-x:auto">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
-      <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;cursor:pointer">
-        <input type="checkbox" id="v-select-all" onchange="_verdictToggleAll(this.checked)" style="cursor:pointer">
-        ${rows.length} תוצאות${alreadyDl ? ` <span style="font-weight:400;color:var(--ink-soft);font-size:11.5px">(${alreadyDl} כבר הורדו ✓)</span>` : ''}
-      </label>
+  <div style="margin-bottom:8px;padding:10px 14px;border-radius:10px;
+    background:var(--accent);color:#fff;font-size:13px;font-weight:600;display:flex;align-items:center;gap:10px">
+    📋 נמצאו ${rows.length} החלטות
+    ${newCount ? `<span style="background:rgba(255,255,255,.25);border-radius:6px;padding:2px 8px;font-size:12px">${newCount} טרם הורדו</span>` : ''}
+    ${alreadyDl ? `<span style="background:rgba(255,255,255,.15);border-radius:6px;padding:2px 8px;font-size:12px">✓ ${alreadyDl} כבר הורדו</span>` : ''}
+  </div>
+  <div class="card" style="overflow-x:auto;width:100%;box-sizing:border-box">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <button onclick="_verdictSelectNew()" style="padding:5px 12px;border-radius:7px;border:1px solid var(--line);background:var(--surface);font-size:12px;cursor:pointer" title="בחר עד 10 שלא הורדו">☐ בחר חדשים (עד 10)</button>
+        <button onclick="_verdictSelectAll()" style="padding:5px 12px;border-radius:7px;border:1px solid var(--line);background:var(--surface);font-size:12px;cursor:pointer">☑ בחר הכל</button>
+        <button onclick="_verdictDeselectAll()" style="padding:5px 12px;border-radius:7px;border:1px solid var(--line);background:var(--surface);font-size:12px;cursor:pointer">☐ בטל הכל</button>
+        <span id="v-sel-count" style="font-size:12px;color:var(--ink-soft)"></span>
+      </div>
       <div style="display:flex;gap:8px;align-items:center">
         <span id="v-dl-status" style="font-size:12px;color:var(--ink-soft)"></span>
-        <button onclick="verdictDownloadSelected()" style="padding:6px 14px;border-radius:8px;
-          border:1px solid var(--accent);background:var(--accent-soft,#dce8ff);
-          color:var(--accent);font-size:12.5px;cursor:pointer">⬇ הורד נבחרים</button>
-        <button onclick="verdictDownloadAll()" style="padding:6px 14px;border-radius:8px;
-          border:none;background:var(--accent);color:#fff;font-size:12.5px;cursor:pointer">⬇ הורד הכל</button>
+        <button onclick="verdictDownloadSelected()" id="v-dl-btn" style="padding:7px 18px;border-radius:8px;
+          border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:600;cursor:pointer">⬇ הורד נבחרים</button>
       </div>
     </div>
     <table style="width:100%;border-collapse:collapse;direction:rtl">
       <thead style="background:var(--surface2)"><tr>
-        ${th('','34px')}${th('תאריך','90px')}${th('בית משפט')}${th('שופט')}${th('תיק')}${th('סוג')}${th('PDF','50px')}
+        ${th0}
+        ${thSort('תאריך','date','88px')}
+        ${thSort('בית משפט','court','')}
+        ${thSort('שופט','interest','')}
+        ${thSort('תיק','case_num','')}
+        ${thSort('סוג','dec_type','')}
+        ${thPdf}
       </tr></thead>
-      <tbody>${rows.map((row,i)=>{
+      <tbody>${sorted.map((row,i)=>{
         const dl = !!row.pdf_path;
         const bg = dl ? 'background:rgba(34,197,94,.07)' : (i%2?'background:var(--surface)':'background:var(--surface2)');
-        return `<tr style="${bg}">
-          ${td(`<input type="checkbox" class="v-row-cb"
-            data-param="${(row.doc_param||'').replace(/"/g,'&quot;')}"
-            data-pdf="${row.pdf_path||''}"
-            ${dl ? 'checked' : ''}
-            style="cursor:pointer">`,'text-align:center')}
+        return `<tr style="${bg}" class="${dl?'v-row-dl':''}">
+          <td style="padding:6px 8px;text-align:center">
+            <input type="checkbox" class="v-row-cb"
+              data-param="${(row.doc_param||'').replace(/"/g,'&quot;')}"
+              data-pdf="${row.pdf_path||''}"
+              onchange="_verdictCbChange(this)"
+              style="cursor:pointer;width:15px;height:15px">
+          </td>
           ${td(row.date||'')}
           ${td(row.court||'')}
           ${td((row.interest||'').split('\\n')[0]||'')}
           ${td(row.case_num||'')}
           ${td(row.dec_type||'')}
-          ${td(dl ? `<a href="/api/verdicts/download/${encodeURIComponent(row.pdf_path.split('/').pop())}"
-            target="_blank" style="color:var(--accent);text-decoration:none" title="פתח PDF">✅</a>`
-            : `<span style="color:var(--ink-soft);font-size:11px">—</span>`)}
+          <td style="padding:6px 8px;text-align:center">
+            ${dl ? `<a href="/api/verdicts/download/${encodeURIComponent(row.pdf_path.split('/').pop())}"
+              target="_blank" style="color:var(--accent);text-decoration:none;font-size:16px" title="פתח PDF">✅</a>`
+              : `<span style="color:var(--ink-soft);font-size:11px">—</span>`}
+          </td>
         </tr>`;
       }).join('')}
       </tbody>
     </table>
   </div>`;
+
+  // Default selection: up to 10 new (undownloaded) rows
+  _verdictSelectNew();
 }
 
-function _verdictToggleAll(checked){
-  document.querySelectorAll('.v-row-cb').forEach(c=>c.checked=checked);
-}
-
-async function verdictDownloadSelected(){
-  const checks = Array.from(document.querySelectorAll('.v-row-cb:checked'));
-  const toDownload = checks.filter(c => !c.dataset.pdf); // only those not yet downloaded
-  const alreadyHave = checks.filter(c => c.dataset.pdf);
-
-  if(alreadyHave.length && !toDownload.length){
-    // All selected already downloaded — just serve the files
-    _serveDownloadedPdfs(alreadyHave.map(c=>c.dataset.pdf));
-    return;
+function _verdictCbChange(cb){
+  const checked = document.querySelectorAll('.v-row-cb:checked').length;
+  if(cb.checked && checked > 10){
+    cb.checked = false;
+    toast('ניתן לבחור עד 10 מסמכים בו-זמנית', true);
   }
-  if(alreadyHave.length){
-    _serveDownloadedPdfs(alreadyHave.map(c=>c.dataset.pdf));
-  }
-  if(!toDownload.length){ toast('אין מסמכים חדשים להורדה — הכל כבר הורד'); return; }
-  const params = toDownload.map(c=>c.dataset.param).filter(Boolean);
-  await _startVerdictDownloadJob(params);
+  _verdictUpdateCount();
 }
 
-async function verdictDownloadAll(){
-  const rows = window._verdictRows || [];
-  const toDownload = rows.filter(r => !r.pdf_path && r.doc_param);
-  const alreadyHave = rows.filter(r => r.pdf_path);
-  if(alreadyHave.length) _serveDownloadedPdfs(alreadyHave.map(r=>r.pdf_path));
-  if(!toDownload.length){ if(!alreadyHave.length) toast('אין מסמכים להורדה'); return; }
-  await _startVerdictDownloadJob(toDownload.map(r=>r.doc_param));
+function _verdictUpdateCount(){
+  const n = document.querySelectorAll('.v-row-cb:checked').length;
+  const el = $('v-sel-count');
+  if(el) el.textContent = n ? `${n} נבחרו` : '';
+}
+
+function _verdictSelectNew(){
+  let count = 0;
+  document.querySelectorAll('.v-row-cb').forEach(cb=>{
+    const isNew = !cb.dataset.pdf;
+    cb.checked = isNew && count < 10;
+    if(isNew && count < 10) count++;
+  });
+  _verdictUpdateCount();
+}
+
+function _verdictSelectAll(){
+  let count = 0;
+  document.querySelectorAll('.v-row-cb').forEach(cb=>{
+    cb.checked = count < 10;
+    if(count < 10) count++;
+  });
+  _verdictUpdateCount();
+}
+
+function _verdictDeselectAll(){
+  document.querySelectorAll('.v-row-cb').forEach(cb=>cb.checked=false);
+  _verdictUpdateCount();
 }
 
 function _serveDownloadedPdfs(pdfPaths){
