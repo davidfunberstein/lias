@@ -949,7 +949,7 @@ function renderVerdicts(){
   $('crumbs').innerHTML = '';
   $('view').innerHTML = `
   <div class="hello">
-    <div class="small">פורטל בתי המשפט הממשלתי · ציבורי · ללא התחברות</div>
+    <div class="small">פורטל בתי המשפט הממשלתי · ציבורי · ללא הזדהות</div>
     <h1>החלטות שפורסמו</h1>
     <div style="max-width:560px;margin-top:8px;font-size:13.5px;line-height:1.7;color:var(--ink-soft)">
       בתי המשפט בישראל מפרסמים חלק מהחלטותיהם לציבור הרחב דרך
