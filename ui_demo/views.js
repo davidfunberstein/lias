@@ -1297,23 +1297,23 @@ function _pollVerdictRefresh(jobId){
     n++;
     if(n > 120){ clearInterval(t); return; }
     try{
-      const d = await (await fetch('/api/jobs')).json();
-      const job = (d.jobs||[]).find(j=>j.id===jobId);
+      const jobs = await (await fetch('/api/jobs')).json();
+      const job = (jobs||[]).find(j=>j.job_id===jobId);
       const st  = $('v-refresh-status');
       const btn = $('v-refresh-btn');
       if(!job) return;
-      if(job.status==='done'){
+      if(job.state==='COMPLETED'){
         clearInterval(t);
         if(st)  st.textContent = `✓ שופטים עודכנו`;
         if(btn) btn.disabled = false;
         const court = $('v-court')?.value;
         if(court) _loadVerdictJudges(court);
-      } else if(job.status==='error'){
+      } else if(job.state==='FAILED'){
         clearInterval(t);
         if(st)  st.textContent = `✗ שגיאה: ${job.error||''}`;
         if(btn) btn.disabled = false;
-      } else if(job.progress){
-        if(st) st.textContent = `⏳ ${job.progress.message||'רץ…'} (${Math.round((job.progress.value||0)*100)}%)`;
+      } else if(job.message){
+        if(st) st.textContent = `⏳ ${job.message} (${Math.round((job.progress||0)*100)}%)`;
       }
     } catch(e){}
   }, 2000);
@@ -1358,18 +1358,17 @@ function _pollVerdictSearch(jobId){
     n++;
     if(n > 120){ clearInterval(t); return; }
     try{
-      const d = await (await fetch('/api/jobs')).json();
-      const job = (d.jobs||[]).find(j=>j.id===jobId);
+      const jobs = await (await fetch('/api/jobs')).json();
+      const job = (jobs||[]).find(j=>j.job_id===jobId);
       const st  = $('v-status');
       if(!job) return;
-      if(job.progress && st)
-        st.textContent = `⏳ ${job.progress.message||'מחפש…'} (${Math.round((job.progress.value||0)*100)}%)`;
-      if(job.status==='done'){
+      if(job.message && st)
+        st.textContent = `⏳ ${job.message} (${Math.round((job.progress||0)*100)}%)`;
+      if(job.state==='COMPLETED'){
         clearInterval(t);
         if(st) st.textContent = '';
         await _showCachedVerdictResults();
         await _renderLibrary();
-        // Auto-select the searched judge so decisions appear immediately
         const sp = window._verdictSearchParams || {};
         const jn = sp.judge || sp.judge_name || '';
         if(jn && window._libRows?.some(r => r.judge_name === jn)){
@@ -1378,7 +1377,7 @@ function _pollVerdictSearch(jobId){
           window._libSelLevel2 = null;
           _renderLibGroups(window._libRows);
         }
-      } else if(job.status==='error'){
+      } else if(job.state==='FAILED'){
         clearInterval(t);
         if(st) st.textContent = `✗ ${job.error||'שגיאה'}`;
       }
@@ -1388,10 +1387,10 @@ function _pollVerdictSearch(jobId){
 
 async function _resumeVerdictJobIfActive(){
   try{
-    const d = await (await fetch('/api/jobs')).json();
-    const active = (d.jobs||[]).find(j =>
-      (j.type==='verdict_scrape' || j.type==='verdict_download') &&
-      (j.status==='running' || j.status==='pending'));
+    const jobs = await (await fetch('/api/jobs')).json();
+    const active = (jobs||[]).find(j =>
+      (j.kind==='verdict_scrape' || j.kind==='verdict_download') &&
+      (j.state==='RUNNING' || j.state==='PENDING'));
     if(active){
       const st = $('v-status');
       if(st) st.textContent = `⏳ ממשיך משימה ${active.id}…`;
@@ -1905,17 +1904,17 @@ function _pollVerdictDownload(jobId){
     n++;
     if(n>120){ clearInterval(t); return; }
     try{
-      const d = await (await fetch('/api/jobs')).json();
-      const job = (d.jobs||[]).find(j=>j.id===jobId);
+      const jobs = await (await fetch('/api/jobs')).json();
+      const job = (jobs||[]).find(j=>j.job_id===jobId);
       const st = $('v-dl-status');
       if(!job) return;
-      if(job.progress && st) st.textContent=`⏳ ${job.progress.message||'מוריד…'} (${Math.round((job.progress.value||0)*100)}%)`;
-      if(job.status==='done'){
+      if(job.message && st) st.textContent=`⏳ ${job.message} (${Math.round((job.progress||0)*100)}%)`;
+      if(job.state==='COMPLETED'){
         clearInterval(t);
         if(st) st.textContent='✓ ההורדה הסתיימה';
-        _showCachedVerdictResults(); // refresh download table
-        _renderLibrary();            // refresh library with new PDFs
-      } else if(job.status==='error'){
+        _showCachedVerdictResults();
+        _renderLibrary();
+      } else if(job.state==='FAILED'){
         clearInterval(t);
         if(st) st.textContent=`✗ שגיאה: ${job.error||''}`;
       }
