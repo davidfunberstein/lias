@@ -41,7 +41,7 @@ PORTALS = {
 
 portal_key   = (sys.argv[1] if len(sys.argv) > 1 else "auto").lower()
 if portal_key == "auto":
-    PORTALS["auto"] = {"url": "https://iam.gov.il/idp/", "label": "gov.il"}
+    PORTALS["auto"] = {"url": "https://login.gov.il/nidp/saml2/sso", "label": "gov.il"}
 elif portal_key not in PORTALS:
     print(f"פורטל לא מוכר: {portal_key}  —  בחר: auto / bdr / net / eca"); sys.exit(2)
 
