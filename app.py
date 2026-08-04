@@ -890,6 +890,14 @@ class Handler(BaseHTTPRequestHandler):
                         pass
 
                 if public_url:
+                    # Wait until session_server.py is actually listening on 7777
+                    import socket as _sock
+                    for _ in range(20):
+                        try:
+                            s = _sock.create_connection(("127.0.0.1", 7777), timeout=0.5)
+                            s.close(); break
+                        except OSError:
+                            _time.sleep(0.5)
                     self._json({"ok": True, "url": public_url})
                 else:
                     for _p in _invite_state["procs"]:
