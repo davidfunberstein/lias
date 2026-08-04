@@ -261,55 +261,19 @@ def scrape_verdicts(
 
                 log(f"found {len(rows_data)} rows on page {page_num}")
 
-                for i, row in enumerate(rows_data):
+                for row in rows_data:
                     if not row.get("doc_param"):
                         continue
                     verdict = dict(row)
-                    verdict["downloaded_at"] = _ts()
                     verdict["pdf_path"] = ""
-
-                    # Download the document
-                    try:
-                        pdf_name = _safe_name(
-                            f"{row['date']}_{row['court']}_{row['case_num']}_{row['dec_type']}"
-                        ) + ".pdf"
-                        pdf_path = pdf_dir / pdf_name
-
-                        if not pdf_path.exists():
-                            log(f"  downloading doc {i+1}/{len(rows_data)}: {row['case_num']}")
-                            # Open document — this triggers a new page/tab
-                            with context.expect_page() as new_page_info:
-                                page.evaluate(
-                                    f"javascript:__doPostBack('btnDocument','{row['doc_param']}')"
-                                )
-                            doc_page = new_page_info.value
-                            doc_page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
-                            doc_page.wait_for_timeout(1500)
-
-                            # Click save button
-                            try:
-                                with doc_page.expect_download(timeout=DL_TIMEOUT) as dl_info:
-                                    doc_page.click("#btnSave", timeout=10_000)
-                                dl = dl_info.value
-                                dl.save_as(str(pdf_path))
-                                verdict["pdf_path"] = str(pdf_path.relative_to(output_dir))
-                                log(f"    saved: {pdf_name}")
-                            except Exception as e:
-                                log(f"    download failed: {e}")
-                            finally:
-                                try:
-                                    doc_page.close()
-                                except Exception:
-                                    pass
-                        else:
-                            verdict["pdf_path"] = str(pdf_path.relative_to(output_dir))
-                            log(f"  already have: {pdf_name}")
-
-                    except Exception as e:
-                        log(f"  doc download error for {row['case_num']}: {e}")
-
+                    # Check if already downloaded from a previous session
+                    pdf_name = _safe_name(
+                        f"{row['date']}_{row['court']}_{row['case_num']}_{row['dec_type']}"
+                    ) + ".pdf"
+                    if (pdf_dir / pdf_name).exists():
+                        verdict["pdf_path"] = str((pdf_dir / pdf_name).relative_to(output_dir))
+                        log(f"  already have: {pdf_name}")
                     verdicts.append(verdict)
-                    time.sleep(0.5)  # be polite
 
                 # Try to go to next page
                 has_next = page.evaluate("""
@@ -345,8 +309,214 @@ def scrape_verdicts(
             except Exception:
                 pass
 
-    progress(0.95, f"הורדו {len(verdicts)} החלטות")
+    progress(0.95, f"נמצאו {len(verdicts)} החלטות")
     return verdicts
+
+
+# ---------------------------------------------------------------------------
+# Download selected verdicts — opens browser, re-searches, downloads chosen
+# ---------------------------------------------------------------------------
+
+def download_selected_verdicts(
+    court_id: str,
+    judge_name: str,
+    date_from: str,
+    date_to: str,
+    doc_params: list,          # list of doc_param strings to download
+    output_dir: Path,
+    run_file: Optional[str] = None,   # path to run JSON to update pdf_paths
+    progress_cb=None,
+    logger=None,
+    headless: bool = False,
+) -> list[dict]:
+    """Open browser, re-run search, download only the requested doc_params."""
+    def log(msg: str):
+        if logger:
+            logger.info(msg)
+        else:
+            print(f"[verdict_dl] {msg}")
+
+    def progress(frac: float, msg: str = ""):
+        if progress_cb:
+            progress_cb(frac, msg)
+
+    if not doc_params:
+        return []
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise RuntimeError("playwright לא מותקן")
+
+    pdf_dir = output_dir / "pdfs"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+
+    downloaded: list[dict] = []
+
+    with sync_playwright() as pw:
+        _args = ["--disable-blink-features=AutomationControlled",
+                 "--no-first-run", "--no-default-browser-check"]
+        log(f"פותח דפדפן {'ברקע' if headless else 'גלוי'} להורדת {len(doc_params)} מסמכים…")
+        if headless:
+            browser = pw.chromium.launch(headless=True, args=_args)
+        else:
+            try:
+                browser = pw.chromium.launch(channel="chrome", headless=False, args=_args)
+            except Exception:
+                browser = pw.chromium.launch(headless=False, args=_args)
+
+        try:
+            context = browser.new_context(
+                accept_downloads=True,
+                locale="he-IL",
+                extra_http_headers={"Accept-Language": "he-IL,he;q=0.9"},
+            )
+            page = context.new_page()
+            page.set_default_timeout(TIMEOUT_MS)
+
+            def _dismiss():
+                try:
+                    btn = page.locator(
+                        'button:has-text("אישור"),input[type="button"][value="אישור"],'
+                        'input[type="submit"][value="אישור"],a:has-text("אישור")'
+                    )
+                    if btn.count() > 0 and btn.first.is_visible(timeout=2000):
+                        btn.first.click(); page.wait_for_timeout(500)
+                except Exception:
+                    pass
+
+            # Navigate to search page (same as scrape_verdicts)
+            progress(0.03, "פותח נט המשפט…")
+            page.goto(COURT_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+            page.wait_for_timeout(1500); _dismiss()
+            try:
+                page.click('a:has-text("איתור החלטות"),a[href*="LocateDecision"],'
+                           'span:has-text("איתור החלטות")', timeout=8_000)
+                page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
+            except Exception:
+                pass
+            page.wait_for_timeout(1000); _dismiss()
+            page.evaluate("javascript:__doPostBack('Header1$UpperMenu1$btnVerdictLocalization','')")
+            page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
+            try:
+                page.click("a[href='#tabOrderDetails']", timeout=10_000)
+            except Exception:
+                page.evaluate("javascript:$('#tabOrderDetails').click()")
+            page.wait_for_timeout(800)
+
+            progress(0.10, "מגדיר פרמטרי חיפוש…")
+            page.select_option("#LocateByParameters1_ddlSelectCourt", court_id)
+            page.wait_for_timeout(1000)
+            if judge_name:
+                try:
+                    page.select_option("#LocateByParameters1_ddlJudgeName", label=judge_name)
+                    page.wait_for_timeout(500)
+                except Exception:
+                    pass
+            if date_from:
+                page.fill("#LocateByParameters1_dateFrom", date_from)
+                page.evaluate("document.querySelector('#LocateByParameters1_dateFrom').dispatchEvent(new Event('change'))")
+            if date_to:
+                page.fill("#LocateByParameters1_DateTo", date_to)
+                page.evaluate("document.querySelector('#LocateByParameters1_DateTo').dispatchEvent(new Event('change'))")
+            page.wait_for_timeout(500)
+
+            progress(0.20, "מחפש תוצאות…")
+            page.evaluate("javascript:__doPostBack('ButtonsGroup1$btnLocate','')")
+            page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
+            page.wait_for_timeout(2000)
+
+            # Download loop — iterate pages until all requested params found
+            params_remaining = set(doc_params)
+            page_num = 0
+            max_pages = 20
+
+            while params_remaining and page_num < max_pages:
+                page_num += 1
+                rows_data = page.evaluate("""
+                    (() => {
+                        const rows = document.querySelectorAll('.ag-center-cols-container .ag-row');
+                        return Array.from(rows).map(row => {
+                            const docLink = row.querySelector('a[href*="btnDocument"]');
+                            const docHref = docLink ? docLink.getAttribute('href') : '';
+                            const m = docHref.match(/"btnDocument","([^"]+)"/);
+                            return { doc_param: m ? m[1] : '' };
+                        });
+                    })()
+                """)
+                for rw in rows_data:
+                    dp = rw.get("doc_param", "")
+                    if dp not in params_remaining:
+                        continue
+                    params_remaining.discard(dp)
+                    log(f"  downloading {dp[:20]}…  ({len(params_remaining)} remaining)")
+                    pdf_name_stub = f"verdict_{dp[:20].replace('/', '_')}.pdf"
+
+                    try:
+                        with context.expect_page() as new_page_info:
+                            page.evaluate(f"javascript:__doPostBack('btnDocument','{dp}')")
+                        doc_page = new_page_info.value
+                        doc_page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
+                        doc_page.wait_for_timeout(1500)
+                        try:
+                            with doc_page.expect_download(timeout=DL_TIMEOUT) as dl_info:
+                                doc_page.click("#btnSave", timeout=10_000)
+                            dl = dl_info.value
+                            dl_name = dl.suggested_filename or pdf_name_stub
+                            pdf_path = pdf_dir / _safe_name(dl_name)
+                            dl.save_as(str(pdf_path))
+                            downloaded.append({"doc_param": dp, "pdf_path": str(pdf_path.relative_to(output_dir))})
+                            log(f"    saved: {pdf_path.name}")
+                        except Exception as e:
+                            log(f"    save failed: {e}")
+                            downloaded.append({"doc_param": dp, "pdf_path": ""})
+                        finally:
+                            try: doc_page.close()
+                            except Exception: pass
+                    except Exception as e:
+                        log(f"    open failed: {e}")
+                        downloaded.append({"doc_param": dp, "pdf_path": ""})
+                    progress(0.20 + 0.75 * (len(doc_params) - len(params_remaining)) / len(doc_params),
+                             f"הורד {len(doc_params)-len(params_remaining)}/{len(doc_params)}")
+
+                if not params_remaining:
+                    break
+                has_next = page.evaluate("""
+                    (() => {
+                        const btn = Array.from(document.querySelectorAll('button.ag-paging-button'))
+                                        .find(b => b.textContent.includes('לדף הבא'));
+                        if(!btn || btn.disabled) return false;
+                        const p = btn.closest('[aria-disabled]');
+                        return !(p && p.getAttribute('aria-disabled')==='true');
+                    })()
+                """)
+                if not has_next:
+                    break
+                page.evaluate("""Array.from(document.querySelectorAll('button.ag-paging-button'))
+                    .find(b=>b.textContent.includes('לדף הבא'))?.click()""")
+                page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
+                page.wait_for_timeout(2000)
+
+        finally:
+            try: browser.close()
+            except Exception: pass
+
+    # Update run JSON if provided
+    if run_file and downloaded:
+        import json as _json
+        try:
+            rp = Path(run_file)
+            data = _json.loads(rp.read_text(encoding="utf-8"))
+            path_map = {d["doc_param"]: d["pdf_path"] for d in downloaded}
+            for v in data.get("verdicts", []):
+                if v.get("doc_param") in path_map:
+                    v["pdf_path"] = path_map[v["doc_param"]]
+            rp.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            log(f"run file update failed: {e}")
+
+    progress(1.0, f"הורדו {len([d for d in downloaded if d['pdf_path']])} מסמכים")
+    return downloaded
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +562,7 @@ def register_verdict_handler():
                 headless=headless,
             )
 
-            # Save run manifest
+            # Save run manifest (include search params for download job)
             run_file = output_dir / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             run_file.write_text(
                 json.dumps({
@@ -402,13 +572,50 @@ def register_verdict_handler():
                     "date_from": date_from,
                     "date_to":   date_to,
                     "count":     len(verdicts),
+                    "run_file":  str(run_file),
                     "verdicts":  verdicts,
                 }, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
 
-            ctx.progress(1.0, f"הסתיים — {len(verdicts)} החלטות הורדו")
-            return f"{len(verdicts)} verdicts downloaded"
+            ctx.progress(1.0, f"הסתיים — {len(verdicts)} החלטות נמצאו")
+            return f"{len(verdicts)} verdicts found"
+
+        @handler("verdict_download")
+        def _handle_verdict_download(payload: dict, ctx: JobContext):
+            court_id   = payload.get("court_id", "-1")
+            judge_name = payload.get("judge_name", "")
+            date_from  = payload.get("date_from", "")
+            date_to    = payload.get("date_to", "")
+            doc_params = payload.get("doc_params", [])
+            run_file   = payload.get("run_file", "")
+            headless   = bool(payload.get("headless", False))
+
+            output_dir = config.COURT_DOCS_DIR / "verdicts"
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            from LIAS import jobs as _jobs
+            def _logger(msg: str):
+                print(f"[verdict_download] {msg}")
+                _jobs.broadcast({"type": "log", "msg": f"[הורדה] {msg}"})
+
+            _logger(f"מוריד {len(doc_params)} מסמכים נבחרים…")
+            result = download_selected_verdicts(
+                court_id=court_id,
+                judge_name=judge_name,
+                date_from=date_from,
+                date_to=date_to,
+                doc_params=doc_params,
+                output_dir=output_dir,
+                run_file=run_file or None,
+                progress_cb=ctx.progress,
+                logger=type("L", (), {"info": lambda s,m: _logger(m),
+                                      "warn": lambda s,m: _logger(f"⚠ {m}"),
+                                      "error": lambda s,m: _logger(f"✗ {m}")})(),
+                headless=headless,
+            )
+            ctx.progress(1.0, f"הורדו {len([d for d in result if d['pdf_path']])} מסמכים")
+            return {"downloaded": result}
 
     except ImportError:
         pass  # standalone use without LIAS

@@ -1355,6 +1355,8 @@ async function _showCachedVerdictResults(){
   try{
     const r = await fetch('/api/verdicts/results');
     const d = await r.json();
+    window._verdictRunFile    = d.run_file    || '';
+    window._verdictSearchParams = d.search_params || {};
     _renderVerdictResults(d.verdicts||[]);
   } catch(e){}
 }
@@ -1362,18 +1364,24 @@ async function _showCachedVerdictResults(){
 function _renderVerdictResults(rows){
   const el = $('v-results');
   if(!el) return;
-  if(!rows.length){ el.innerHTML='<div style="color:var(--ink-soft);font-size:13px;padding:8px 0">לא נמצאו תוצאות</div>'; return; }
+  if(!rows.length){
+    el.innerHTML='<div style="color:var(--ink-soft);font-size:13px;padding:8px 0">לא נמצאו תוצאות — נסה שוב עם פרמטרים שונים</div>';
+    return;
+  }
+  window._verdictRows = rows;
+  const alreadyDl = rows.filter(r=>r.pdf_path).length;
   const th = (t,w) => `<th style="padding:6px 10px;text-align:right;font-size:11.5px;font-weight:600;
     white-space:nowrap${w?`;width:${w}`:''};">${t}</th>`;
   const td = (v,extra='') => `<td style="padding:6px 10px;font-size:12.5px;direction:rtl;${extra}">${v||''}</td>`;
   el.innerHTML = `
   <div class="card c12" style="overflow-x:auto">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;cursor:pointer">
         <input type="checkbox" id="v-select-all" onchange="_verdictToggleAll(this.checked)" style="cursor:pointer">
-        ${rows.length} תוצאות
+        ${rows.length} תוצאות${alreadyDl ? ` <span style="font-weight:400;color:var(--ink-soft);font-size:11.5px">(${alreadyDl} כבר הורדו ✓)</span>` : ''}
       </label>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="v-dl-status" style="font-size:12px;color:var(--ink-soft)"></span>
         <button onclick="verdictDownloadSelected()" style="padding:6px 14px;border-radius:8px;
           border:1px solid var(--accent);background:var(--accent-soft,#dce8ff);
           color:var(--accent);font-size:12.5px;cursor:pointer">⬇ הורד נבחרים</button>
@@ -1383,28 +1391,30 @@ function _renderVerdictResults(rows){
     </div>
     <table style="width:100%;border-collapse:collapse;direction:rtl">
       <thead style="background:var(--surface2)"><tr>
-        ${th('','30px')}${th('תאריך','90px')}${th('בית משפט')}${th('שופט')}${th('תיק')}${th('סוג')}${th('PDF','55px')}
+        ${th('','34px')}${th('תאריך','90px')}${th('בית משפט')}${th('שופט')}${th('תיק')}${th('סוג')}${th('PDF','50px')}
       </tr></thead>
-      <tbody>${rows.map((row,i)=>`
-        <tr style="background:${i%2?'var(--surface)':'var(--surface2)'}">
-          ${td(`<input type="checkbox" class="v-row-cb" data-pdf="${row.pdf_path||''}" style="cursor:pointer">`,'text-align:center')}
+      <tbody>${rows.map((row,i)=>{
+        const dl = !!row.pdf_path;
+        const bg = dl ? 'background:rgba(34,197,94,.07)' : (i%2?'background:var(--surface)':'background:var(--surface2)');
+        return `<tr style="${bg}">
+          ${td(`<input type="checkbox" class="v-row-cb"
+            data-param="${(row.doc_param||'').replace(/"/g,'&quot;')}"
+            data-pdf="${row.pdf_path||''}"
+            ${dl ? 'checked' : ''}
+            style="cursor:pointer">`,'text-align:center')}
           ${td(row.date||'')}
           ${td(row.court||'')}
           ${td((row.interest||'').split('\\n')[0]||'')}
           ${td(row.case_num||'')}
           ${td(row.dec_type||'')}
-          ${td(row.pdf_path?`<a href="/api/verdicts/download/${encodeURIComponent(row.pdf_path.split('/').pop())}"
-            target="_blank" style="color:var(--accent)">⬇</a>`:'')}
-        </tr>`).join('')}
+          ${td(dl ? `<a href="/api/verdicts/download/${encodeURIComponent(row.pdf_path.split('/').pop())}"
+            target="_blank" style="color:var(--accent);text-decoration:none" title="פתח PDF">✅</a>`
+            : `<span style="color:var(--ink-soft);font-size:11px">—</span>`)}
+        </tr>`;
+      }).join('')}
       </tbody>
     </table>
   </div>`;
-  window._verdictRows = rows;
-}
-
-async function verdictDownloadAll(){
-  const rows = (window._verdictRows||[]).filter(r=>r.pdf_path);
-  await _verdictDownloadRows(rows);
 }
 
 function _verdictToggleAll(checked){
@@ -1412,20 +1422,88 @@ function _verdictToggleAll(checked){
 }
 
 async function verdictDownloadSelected(){
-  const checks = document.querySelectorAll('.v-row-cb:checked');
-  const paths  = Array.from(checks).map(c=>c.dataset.pdf).filter(Boolean);
-  const rows   = (window._verdictRows||[]).filter(r=>paths.includes(r.pdf_path));
-  await _verdictDownloadRows(rows);
+  const checks = Array.from(document.querySelectorAll('.v-row-cb:checked'));
+  const toDownload = checks.filter(c => !c.dataset.pdf); // only those not yet downloaded
+  const alreadyHave = checks.filter(c => c.dataset.pdf);
+
+  if(alreadyHave.length && !toDownload.length){
+    // All selected already downloaded — just serve the files
+    _serveDownloadedPdfs(alreadyHave.map(c=>c.dataset.pdf));
+    return;
+  }
+  if(alreadyHave.length){
+    _serveDownloadedPdfs(alreadyHave.map(c=>c.dataset.pdf));
+  }
+  if(!toDownload.length){ toast('אין מסמכים חדשים להורדה — הכל כבר הורד'); return; }
+  const params = toDownload.map(c=>c.dataset.param).filter(Boolean);
+  await _startVerdictDownloadJob(params);
 }
 
-async function _verdictDownloadRows(rows){
-  for(const row of rows){
-    const fn = row.pdf_path.split('/').pop();
-    const a  = document.createElement('a');
-    a.href     = '/api/verdicts/download/'+encodeURIComponent(fn);
-    a.download = fn;
-    a.click();
-    await new Promise(r=>setTimeout(r,300));
+async function verdictDownloadAll(){
+  const rows = window._verdictRows || [];
+  const toDownload = rows.filter(r => !r.pdf_path && r.doc_param);
+  const alreadyHave = rows.filter(r => r.pdf_path);
+  if(alreadyHave.length) _serveDownloadedPdfs(alreadyHave.map(r=>r.pdf_path));
+  if(!toDownload.length){ if(!alreadyHave.length) toast('אין מסמכים להורדה'); return; }
+  await _startVerdictDownloadJob(toDownload.map(r=>r.doc_param));
+}
+
+function _serveDownloadedPdfs(pdfPaths){
+  pdfPaths.forEach(async (p,i) => {
+    await new Promise(r=>setTimeout(r, i*300));
+    const fn = p.split('/').pop();
+    const a = document.createElement('a');
+    a.href = '/api/verdicts/download/'+encodeURIComponent(fn);
+    a.download = fn; a.click();
+  });
+  toast(`פותח ${pdfPaths.length} קבצים…`);
+}
+
+async function _startVerdictDownloadJob(docParams){
+  const sp = window._verdictSearchParams || {};
+  const headless = $('v-headless')?.checked || false;
+  const st = $('v-dl-status');
+  if(st) st.textContent = `⏳ מוריד ${docParams.length} מסמכים…`;
+  try{
+    const r = await fetch('/api/verdicts/download_selected', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        doc_params: docParams,
+        court_id:   sp.court_id  || '',
+        judge_name: sp.judge     || '',
+        date_from:  sp.date_from || '',
+        date_to:    sp.date_to   || '',
+        run_file:   window._verdictRunFile || '',
+        headless,
+      })
+    });
+    const d = await r.json();
+    if(d.detail){ if(st) st.textContent=`שגיאה: ${d.detail}`; return; }
+    if(d.job_id) _pollVerdictDownload(d.job_id);
+  } catch(e){
+    if(st) st.textContent=`שגיאה: ${e.message}`;
   }
-  toast(`מוריד ${rows.length} קבצים…`);
+}
+
+function _pollVerdictDownload(jobId){
+  let n=0;
+  const t = setInterval(async ()=>{
+    n++;
+    if(n>120){ clearInterval(t); return; }
+    try{
+      const d = await (await fetch('/api/jobs')).json();
+      const job = (d.jobs||[]).find(j=>j.id===jobId);
+      const st = $('v-dl-status');
+      if(!job) return;
+      if(job.progress && st) st.textContent=`⏳ ${job.progress.message||'מוריד…'} (${Math.round((job.progress.value||0)*100)}%)`;
+      if(job.status==='done'){
+        clearInterval(t);
+        if(st) st.textContent='✓ ההורדה הסתיימה';
+        _showCachedVerdictResults(); // refresh table with new pdf_paths
+      } else if(job.status==='error'){
+        clearInterval(t);
+        if(st) st.textContent=`✗ שגיאה: ${job.error||''}`;
+      }
+    } catch(e){}
+  }, 2000);
 }

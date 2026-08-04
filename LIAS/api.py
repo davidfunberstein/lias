@@ -1495,18 +1495,58 @@ async def verdicts_search(request: Request):
 
 @app.get("/api/verdicts/results")
 def verdicts_results(limit: int = 200):
-    """Return previously scraped verdicts from the verdict_runs log."""
+    """Return previously scraped verdicts. Returns most recent run only."""
     import json as _json
     results_dir = config.COURT_DOCS_DIR / "verdicts"
-    rows = []
-    if results_dir.exists():
-        for f in sorted(results_dir.glob("run_*.json"), reverse=True)[:10]:
-            try:
-                data = _json.loads(f.read_text(encoding="utf-8"))
-                rows.extend(data.get("verdicts", []))
-            except Exception:
-                pass
-    return {"verdicts": rows[:limit]}
+    if not results_dir.exists():
+        return {"verdicts": [], "run_file": "", "search_params": {}}
+    runs = sorted(results_dir.glob("run_*.json"), reverse=True)
+    if not runs:
+        return {"verdicts": [], "run_file": "", "search_params": {}}
+    try:
+        data = _json.loads(runs[0].read_text(encoding="utf-8"))
+        # Verify pdf_path existence so front-end can mark downloaded
+        pdf_base = results_dir / "pdfs"
+        for v in data.get("verdicts", []):
+            p = v.get("pdf_path", "")
+            if p and not (pdf_base / Path(p).name).exists():
+                v["pdf_path"] = ""  # stale path — file was deleted
+        return {
+            "verdicts": data.get("verdicts", [])[:limit],
+            "run_file": data.get("run_file", str(runs[0])),
+            "search_params": {
+                "court_id":  data.get("court_id", ""),
+                "judge":     data.get("judge", ""),
+                "date_from": data.get("date_from", ""),
+                "date_to":   data.get("date_to", ""),
+            },
+        }
+    except Exception:
+        return {"verdicts": [], "run_file": "", "search_params": {}}
+
+
+@app.post("/api/verdicts/download_selected")
+async def verdicts_download_selected(request: Request):
+    """Start a job to download specific verdicts by doc_param.
+    Body: {doc_params, court_id, judge_name, date_from, date_to, run_file, headless}"""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    doc_params = body.get("doc_params", [])
+    if not doc_params:
+        raise HTTPException(400, "אין מסמכים לבחירה")
+    payload = {
+        "court_id":  str(body.get("court_id", "")),
+        "judge_name": str(body.get("judge_name", "")),
+        "date_from": str(body.get("date_from", "")),
+        "date_to":   str(body.get("date_to", "")),
+        "doc_params": doc_params,
+        "run_file":   str(body.get("run_file", "")),
+        "headless":   bool(body.get("headless", False)),
+    }
+    return {"job_id": jobs.submit("verdict_download", payload)}
 
 
 @app.get("/api/verdicts/download/{filename}")
