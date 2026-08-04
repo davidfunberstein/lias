@@ -57,7 +57,7 @@ os.makedirs(TRANSCRIPTIONS_DIR, exist_ok=True)
 
 # ── client profiles ─────────────────────────────────────────────────────────
 PROFILES_PATH = os.path.join(HERE, "profiles.json")
-_active_profile: dict | None = None   # None = main user
+_profile_state: dict = {"active": None}  # mutable — no global needed in handlers
 
 def _load_profiles() -> list:
     try:
@@ -448,7 +448,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         elif path == "/api/profiles":
             profiles = _load_profiles()
-            self._json({"profiles": profiles, "active": _active_profile})
+            self._json({"profiles": profiles, "active": _profile_state["active"]})
         elif path == "/api/docs":
             self._json(docs_list(params, DB_PATH))
         elif path == "/api/search":
@@ -782,7 +782,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": str(exc)}, 500)
             return
         elif path == "/api/profiles/activate":
-            global _active_profile
             try:
                 pid = (payload.get("id") or "").strip()
                 profiles = _load_profiles()
@@ -804,20 +803,18 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
                 profile["_paused_jobs"] = paused
-                _active_profile = profile
-                # switch engine paths
+                _profile_state["active"] = profile
                 try:
                     engine_inproc.switch_profile(profile, HERE)
-                except Exception as _se:
-                    pass  # engine may not be started yet; paths will be set on first start
+                except Exception:
+                    pass
                 self._json({"ok": True, "profile": profile, "paused": paused})
             except Exception as exc:
                 self._json({"ok": False, "error": str(exc)}, 500)
             return
         elif path == "/api/profiles/deactivate":
-            global _active_profile
             try:
-                _active_profile = None
+                _profile_state["active"] = None
                 try:
                     engine_inproc.switch_profile(None, HERE)
                 except Exception:
@@ -832,9 +829,8 @@ class Handler(BaseHTTPRequestHandler):
                 profiles = _load_profiles()
                 profiles = [p for p in profiles if p["id"] != pid]
                 _save_profiles(profiles)
-                global _active_profile
-                if _active_profile and _active_profile.get("id") == pid:
-                    _active_profile = None
+                if _profile_state["active"] and _profile_state["active"].get("id") == pid:
+                    _profile_state["active"] = None
                     try:
                         engine_inproc.switch_profile(None, HERE)
                     except Exception:
