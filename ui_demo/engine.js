@@ -758,6 +758,7 @@ function _ecaPartiesLine(c){
        + ` &nbsp;•&nbsp; <span style="opacity:.7">${other}:</span> <b>${name||'—'}</b>`;
 }
 function showEcaCases(cases){
+  if(_syncPlatform !== 'ECA') return;  // don't overwrite another portal's picker
   // ask the server what is really downloaded, then repaint with the truth
   if(!showEcaCases._busy){ showEcaCases._busy=1;
     refreshDownloadedSet().then(()=>{ showEcaCases._busy=0; showEcaCases([]); }); }
@@ -849,8 +850,13 @@ async function toggleRealBrowser(){
     const ok = await startEngine();
     if(!ok){ toast('המנוע לא עלה', true); return; }
   }
-  const path = _realBrowserVisible ? 'browser/hide' : 'browser/show';
   try{
+    // Sync with actual server state before toggling to avoid double-open
+    const status = await fetch('/api/browser/status').then(r=>r.json()).catch(()=>({}));
+    // headless=true means browser is hidden; headless=false or window visible means shown
+    const currentlyVisible = status.available && !status.headless;
+    _realBrowserVisible = currentlyVisible;
+    const path = _realBrowserVisible ? 'browser/hide' : 'browser/show';
     const r = await fetch('/api/proxy/actions/'+path, {method:'POST'});
     if(!r.ok) throw 0;
     _realBrowserVisible = !_realBrowserVisible;
@@ -953,6 +959,15 @@ function syncCard(el){
       </div>
     </div>
 
+    <!-- Download all portals serially -->
+    <button onclick="downloadAll()"
+      style="margin-top:10px;width:100%;padding:8px 14px;border-radius:10px;
+      border:1px solid rgba(255,255,255,.22);background:transparent;color:inherit;
+      font-size:12.5px;font-weight:600;cursor:pointer;text-align:right">
+      ⬇ הורד כל הפורטלים (נט → בד"ר → הוצל"פ)
+    </button>
+    <div id="download-all-status" style="font-size:11.5px;margin-top:4px;color:var(--ink-soft)"></div>
+
     <div id="portal-lock-note" style="display:none;margin-top:10px;padding:8px 12px;
          border-radius:10px;background:rgba(230,168,0,.14);border:1px solid rgba(230,168,0,.5);
          font-size:12.5px;font-weight:600"></div>
@@ -1029,7 +1044,7 @@ async function _doImportSession(){
   }
 }
 
-async function _downloadStaleCases(){
+async function _downloadStaleCases(onlyPortal){
   const st = $('stale-status');
   if(st) st.textContent = 'מחפש תיקים לא-מעודכנים…';
   try{
@@ -1047,19 +1062,21 @@ async function _downloadStaleCases(){
     if(!stale.length){ if(st) st.textContent = '✓ אין תיקים פתוחים'; return; }
     const byPortal = {};
     stale.forEach(c=>{ (byPortal[c.portal]=byPortal[c.portal]||[]).push(c); });
-    if(st) st.textContent = `מריץ עדכון ל-${stale.length} תיקים לפי תאריך עדכון (${Object.keys(byPortal).join(', ')})…`;
-    if(byPortal.BDR){
+    // If called from a specific portal button, filter to that portal only
+    const portals = onlyPortal ? [onlyPortal] : Object.keys(byPortal);
+    if(st) st.textContent = `מריץ עדכון ל-${stale.length} תיקים לפי תאריך עדכון (${portals.join(', ')})…`;
+    if(byPortal.BDR && portals.includes('BDR')){
       const caseNums = [...new Set(byPortal.BDR.map(c=>(c.sub_number||'').split(' ')[0]).filter(Boolean))];
       runBdrBatch('', caseNums, []);
     }
-    if(byPortal.NET){
+    if(byPortal.NET && portals.includes('NET')){
       const ids = byPortal.NET.map(c=>c.sub_case_id);
       fetch('/api/proxy/actions/net_smart_download',{method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({scope:'selected', sub_case_ids:ids, open_filter:'all'})
       }).catch(()=>{});
     }
-    if(byPortal.ECA){
+    if(byPortal.ECA && portals.includes('ECA')){
       const caseNums = byPortal.ECA.map(c=>c.sub_number||c.case_number||'').filter(Boolean);
       fetch('/api/proxy/actions/eca_sync',{method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -1144,10 +1161,6 @@ function _renderScopeChooser(p, label, relNote){
   }[p];
   const subNote = p==='BDR'
     ? `<div style="font-size:11px;opacity:.65;margin-top:4px">בבד״ר: תיק עם תת-תיק פתוח ייכלל על כל ההליכים. לבחירה ידנית — לחץ "בחר מהרשימה".</div>` : '';
-  const stalBtn = `<button onclick="_downloadStaleCases()"
-    style="flex:1;padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.22);
-    background:transparent;color:inherit;font-size:12px;cursor:pointer;text-align:right">
-    📅 עדכן ישנים קודם</button>`;
   return `
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
       <button class="btn-accent sync-opt" id="scope-go" onclick="${runFn}" style="flex:2;min-width:160px"></button>
@@ -1155,8 +1168,11 @@ function _renderScopeChooser(p, label, relNote){
         style="flex:1;min-width:130px;padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.22);
         background:transparent;color:inherit;font-size:12px;cursor:pointer;text-align:right">
         📋 בחר מהרשימה</button>
-      ${stalBtn}
     </div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;opacity:.8;margin-bottom:6px">
+      <input type="checkbox" id="opt-stale-first" style="width:auto"
+        onchange="_syncOptChanged()"> 📅 עדכן ישנים קודם (לפי תאריך עדכון)
+    </label>
     <div id="scope-hint" style="font-size:11px;opacity:.65;margin-bottom:4px"></div>
     ${subNote}
     <div id="stale-status" style="font-size:11.5px;color:var(--ink-soft);margin-top:4px"></div>`;
@@ -1177,8 +1193,13 @@ function _syncOptChanged(){
     _syncAllMode = 'all';
   }
   _syncPickMode = openOnly ? 'open' : 'all';
+  window._syncOpenOverride = _syncAllMode;
   _saveSyncScope();
   _applyScopeChoice();
+  // Re-render the case picker with the new filter if data is already loaded
+  if(_syncPlatform === 'NET' && _allNetCases.length) _renderNetCasesPicker(_allNetCases);
+  if(_syncPlatform === 'BDR' && _bdrCases.length) showBdrCases([]);
+  if(_syncPlatform === 'ECA' && _ecaCases.length) showEcaCases([]);
 }
 
 function _applyScopeChoice(){
@@ -1258,6 +1279,7 @@ function _statusChip(status, closeDate, openDate){
     white-space:nowrap">● פתוח${d?' · מ-'+d:''}</span>`;
 }
 function showBdrCases(cases){
+  if(_syncPlatform !== 'BDR') return;  // don't overwrite another portal's picker
   if(!showBdrCases._busy){ showBdrCases._busy=1;
     refreshDownloadedSet().then(()=>{ showBdrCases._busy=0; showBdrCases([]); }); }
   _bdrCases = _mergeCasesList(_bdrCases, cases||[]);
@@ -1373,6 +1395,7 @@ function runBdrSelected(){
   const picker=$('sync-case-picker'); if(picker) picker.style.display='none';
 }
 async function runNet(){
+  if($('opt-stale-first')?.checked){ _downloadStaleCases('NET'); return; }
   if(!await ensureNoPortalRunning('NET')) return;
   const s = window._settings || {};
   const scope = _syncScopeChoice || s.net_scope || 'selected';
@@ -1391,12 +1414,14 @@ async function runNet(){
   }
 }
 function runBdr(){
+  if($('opt-stale-first')?.checked){ _downloadStaleCases('BDR'); return; }
   const s = window._settings || {};
   const scope = _syncScopeChoice || s.bdr_scope || 'all';
   if(scope==='all') runBdrBatch('');
   else bdrConnectAndList();
 }
 async function runEca(){
+  if($('opt-stale-first')?.checked){ _downloadStaleCases('ECA'); return; }
   if(!await ensureNoPortalRunning('ECA')) return;
   const s = window._settings || {};
   const scope = _syncScopeChoice || s.eca_scope || 'all';
@@ -1941,23 +1966,66 @@ function refreshFab(){
   el.innerHTML = html || '<div class="empty">אין פעילות עדיין</div>';
 }
 
-// ── Download all portals ────────────────────────────────────────────────────
+// ── Download all portals serially ───────────────────────────────────────────
+// Runs NET → BDR → ECA in order, waiting for each job to COMPLETE before next.
 async function downloadAll(){
   const el = $('download-all-status');
-  if(el) el.textContent = 'מפעיל הורדה בכל הפורטלים…';
-  const openOnly = !!$('download-all-open-only')?.checked;
-  try{
-    const r = await fetch('/api/actions/download_all', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({open_only: openOnly})
+  const filter = _syncAllMode || 'all';
+  const staleFirst = !!$('opt-stale-first')?.checked;
+  if(staleFirst){ _downloadStaleCases(); return; }
+
+  const portals = ['NET','BDR','ECA'];
+  if(el) el.textContent = `מפעיל הורדה סדרתית: ${portals.join(' → ')}…`;
+
+  for(const p of portals){
+    const busy = await portalBusy(p);
+    if(busy){ if(el) el.textContent=`⏩ מדלג ${p} — כבר פעיל`; continue; }
+    let jobId = null;
+    try{
+      if(p==='NET'){
+        const r = await fetch('/api/proxy/actions/net_download_all',{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({open_filter: filter})});
+        const d = await r.json(); jobId = d.job_id;
+      } else if(p==='BDR'){
+        const r = await fetch('/api/proxy/actions/bdr_batch',{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({open_filter: filter, cases:[], sub_cases:[]})});
+        const d = await r.json(); jobId = d.job_id;
+      } else if(p==='ECA'){
+        const r = await fetch('/api/proxy/actions/eca_sync',{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({open_filter: filter})});
+        const d = await r.json(); jobId = d.job_id;
+      }
+    } catch(e){ if(el) el.textContent=`שגיאה ב-${p}: ${e.message}`; continue; }
+
+    if(!jobId){ if(el) el.textContent=`⚠ ${p} — לא הוחזר job_id`; continue; }
+    if(el) el.textContent = `⏳ ${p} רץ (job ${jobId})…`;
+
+    // Wait for job to complete (poll every 3s, up to 90 min)
+    await new Promise(resolve=>{
+      let ticks=0;
+      const t = setInterval(async()=>{
+        ticks++;
+        if(ticks > 1800){ clearInterval(t); resolve(); return; }
+        try{
+          const jobs = await (await fetch('/api/jobs')).json();
+          const job = (jobs||[]).find(j=>j.job_id===jobId);
+          if(!job || ['COMPLETED','FAILED','CANCELLED'].includes(job.state)){
+            clearInterval(t);
+            if(el) el.textContent = job?.state==='COMPLETED'
+              ? `✓ ${p} הסתיים — ממשיך לפורטל הבא…`
+              : `⚠ ${p} ${job?.state||'לא נמצא'}`;
+            resolve();
+          } else if(el){
+            el.textContent = `⏳ ${p}: ${job.message||''} (${Math.round((job.progress||0)*100)}%)`;
+          }
+        }catch(){ clearInterval(t); resolve(); }
+      }, 3000);
     });
-    const d = await r.json();
-    if(el) el.textContent = d.count>0
-      ? `✓ הופעלו ${d.count} משימות הורדה`
-      : '⚠ אין פורטלים פעילים — בדוק הגדרות פורטלים';
-  } catch(e){
-    if(el) el.textContent = `שגיאה: ${e.message}`;
   }
+  if(el) el.textContent = '✓ הורדה מכל הפורטלים הסתיימה';
 }
 
 // ── Browser window quick toggle ─────────────────────────────────────────────
