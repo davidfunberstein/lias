@@ -1137,7 +1137,7 @@ function renderVerdicts(){
 
   _loadVerdictCourts();
   _verdictAC('v-judge','v-judge-drop',[], null);
-  _showCachedVerdictResults();
+  _resumeVerdictJobIfActive();
   _renderLibrary();
 }
 
@@ -1384,6 +1384,22 @@ function _pollVerdictSearch(jobId){
       }
     } catch(e){}
   }, 2000);
+}
+
+async function _resumeVerdictJobIfActive(){
+  try{
+    const d = await (await fetch('/api/jobs')).json();
+    const active = (d.jobs||[]).find(j =>
+      (j.type==='verdict_scrape' || j.type==='verdict_download') &&
+      (j.status==='running' || j.status==='pending'));
+    if(active){
+      const st = $('v-status');
+      if(st) st.textContent = `⏳ ממשיך משימה ${active.id}…`;
+      await _showCachedVerdictResults();
+      if(active.type==='verdict_scrape')  _pollVerdictSearch(active.id);
+      if(active.type==='verdict_download') _pollVerdictDownload(active.id);
+    }
+  } catch(e){}
 }
 
 async function _showCachedVerdictResults(){
