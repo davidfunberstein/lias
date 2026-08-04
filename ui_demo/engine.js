@@ -2291,7 +2291,7 @@ async function _inviteCookies(){
     if(!d.ok) throw new Error(d.error || r.status);
     // Show the command to send to Jeremy
     const inp = $('invite-url-val');
-    if(inp) inp.value = d.cmd;   // full command for Jeremy to run
+    if(inp) inp.value = d.url;
     if(row) row.style.display = 'block';
     if(st) st.textContent = '⏳ ממתין לעוגיות מג׳רמי…';
     // Poll for received cookies
