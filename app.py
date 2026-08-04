@@ -860,19 +860,22 @@ class Handler(BaseHTTPRequestHandler):
 
                 callback = f"http://localhost:{8500}/api/profiles/receive_cookies"
 
-                # Start ngrok http 7777 (exposes the login form to the internet)
-                ng_proc = subprocess.Popen(
-                    ["ngrok", "http", "7777"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-
-                # Start session_server.py in remote mode
+                # Start session_server.py in remote/credential-form mode.
+                # It serves a login form on port 7777; Jeremy fills in his ID+password+OTP
+                # from any device (phone/browser) — Playwright on THIS machine does the
+                # actual login on his behalf, then POSTs cookies to localhost:8500.
                 ss_proc = subprocess.Popen(
                     [sys.executable, os.path.join(HERE, "tools", "session_server.py"),
                      "net", "--callback", callback],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
-                _invite_state["procs"] = [ng_proc, ss_proc]
+
+                # Start ngrok http 7777 (exposes the login form to the internet)
+                ng_proc = subprocess.Popen(
+                    ["ngrok", "http", "7777"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                _invite_state["procs"] = [ss_proc, ng_proc]
 
                 # Poll ngrok local API for the public URL (up to 12 s)
                 public_url = None

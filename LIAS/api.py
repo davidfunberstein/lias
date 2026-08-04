@@ -697,6 +697,47 @@ def export_session(portal: str = "NET"):
     )
 
 
+@app.get("/api/tools/export_and_send")
+def export_and_send(portal: str = "NET", callback: str = ""):
+    """Export cookies and POST them to callback URL (used by invite-cookies flow).
+    Jeremy opens a link → his LIAS calls this → cookies sent to David automatically."""
+    import time as _t, json as _json, urllib.request as _ur
+    from .collector_bridge import get_browser_for_portal
+    bm = get_browser_for_portal(portal.upper())
+    if bm is None:
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse("""<html dir="rtl"><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d1117;color:#c9d1d9">
+<h2 style="color:#f85149">⚠ הדפדפן לא פעיל</h2>
+<p>פתח LIAS, כנס לסנכרון והתחבר לנט המשפט, ואז חזור ולחץ שוב.</p>
+</body></html>""", status_code=503)
+    try:
+        state = bm.run(lambda page: page.context.storage_state(), timeout=15)
+    except Exception as e:
+        raise HTTPException(500, f"could not export cookies: {e}")
+    payload = {
+        "portal": portal.upper(),
+        "exported_at": _t.time(),
+        "exported_iso": _t.strftime("%Y-%m-%dT%H:%M:%S"),
+        "storage_state": state,
+    }
+    if callback:
+        try:
+            body = _json.dumps(payload).encode()
+            req  = _ur.Request(callback, data=body,
+                               headers={"Content-Type": "application/json"}, method="POST")
+            _ur.urlopen(req, timeout=10)
+        except Exception as e:
+            from fastapi.responses import HTMLResponse
+            return HTMLResponse(f"""<html dir="rtl"><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d1117;color:#c9d1d9">
+<h2 style="color:#f85149">✗ שליחה נכשלה</h2><p>{e}</p>
+</body></html>""", status_code=500)
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse("""<html dir="rtl"><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d1117;color:#c9d1d9">
+<h1 style="color:#3fb950">✅ העוגיות נשלחו לעורך הדין!</h1>
+<p>אפשר לסגור את הדף.</p>
+</body></html>""")
+
+
 @app.post("/api/actions/import_session")
 async def act_import_session(request: Request):
     """Inject a client-exported session (cookies) into the portal browser context.
