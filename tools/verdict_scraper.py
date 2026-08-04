@@ -112,10 +112,24 @@ def scrape_verdicts(
                 pass
 
         try:
-            log(f"navigating to {COURT_URL}")
-            progress(0.02, "פותח את אתר בתי המשפט…")
-            page.goto(COURT_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+            HOME_URL = "https://www.court.gov.il/NGCS.Web.Site/HomePage.aspx"
+            log("נכנס לנט המשפט…")
+            progress(0.02, "פותח את נט המשפט…")
+            page.goto(HOME_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
             page.wait_for_timeout(1500)
+            _dismiss_popup()
+
+            log("מנווט לאיתור החלטות…")
+            progress(0.04, "מנווט לאיתור החלטות…")
+            try:
+                page.click('a:has-text("איתור החלטות"), '
+                           'a[href*="LocateDecision"], '
+                           'span:has-text("איתור החלטות")',
+                           timeout=8_000)
+                page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
+            except Exception:
+                page.goto(COURT_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+            page.wait_for_timeout(1000)
             _dismiss_popup()
 
             # ── Click "איתור החלטות" via doPostBack ──────────────────────────

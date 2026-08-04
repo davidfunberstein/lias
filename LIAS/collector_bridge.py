@@ -2012,27 +2012,45 @@ def _refresh_judges_handler(payload: dict, ctx: JobContext) -> str:
             )
             page = bctx.new_page()
             page.set_default_timeout(30_000)
-            ctx.progress(0.05, "מנווט לאיתור החלטות…")
-            page.goto(COURT_URL, wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_timeout(1500)
 
-            # Dismiss any terms/cookie popup ("אישור")
+            HOME_URL = "https://www.court.gov.il/NGCS.Web.Site/HomePage.aspx"
+            ctx.progress(0.03, "נכנס לנט המשפט…")
+            page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
+            page.wait_for_timeout(1500)
             _dismiss_court_popup(page)
 
-            # If redirected to homepage, navigate explicitly to the search page
-            if "LocateDecision" not in page.url:
-                print(f"[verdicts_refresh] redirected to {page.url} — navigating to search page")
+            ctx.progress(0.05, "מנווט לאיתור החלטות…")
+            # Click "איתור החלטות" in the menu
+            try:
+                page.click('a:has-text("איתור החלטות"), '
+                           'a[href*="LocateDecision"], '
+                           'span:has-text("איתור החלטות")',
+                           timeout=8_000)
+                page.wait_for_load_state("domcontentloaded", timeout=30_000)
+            except Exception:
+                # Fallback: navigate directly
                 page.goto(COURT_URL, wait_until="domcontentloaded", timeout=60_000)
-                page.wait_for_timeout(1500)
-                _dismiss_court_popup(page)
+            page.wait_for_timeout(2000)
+            _dismiss_court_popup(page)
+            page.wait_for_timeout(1000)
 
-            # Wait for court dropdown to appear
+            # Switch to "לפי פרמטרים" tab if needed
+            try:
+                page.click('a[href*="tabOrderDetails"], '
+                           'a:has-text("לפי פרמטרים"), '
+                           'li:has-text("לפי פרמטרים")',
+                           timeout=5_000)
+                page.wait_for_timeout(1500)
+            except Exception:
+                pass
+
+            # Wait for court dropdown
             try:
                 page.wait_for_selector(
                     "#LocateByParameters1_ddlCourt, #LocateByParameters1_ddlSelectCourt",
                     timeout=15_000)
             except Exception:
-                print("[verdicts_refresh] court dropdown not found — aborting")
+                print(f"[verdicts_refresh] dropdown not found on {page.url}")
                 return "court dropdown not found"
 
             for i, court in enumerate(courts):
@@ -2046,7 +2064,7 @@ def _refresh_judges_handler(payload: dict, ctx: JobContext) -> str:
                     except Exception:
                         page.select_option("#LocateByParameters1_ddlSelectCourt", cid, timeout=8_000)
                     page.wait_for_load_state("domcontentloaded", timeout=30_000)
-                    page.wait_for_timeout(1200)
+                    page.wait_for_timeout(2000)
                     judges = page.evaluate("""
                         (() => {
                             const sel = document.querySelector('#LocateByParameters1_ddlJudgeName');
