@@ -2061,10 +2061,14 @@ async function openProfileManager(){
 
   const box = document.createElement('div');
   box.id = 'profile-mgr';
+  const _isDark = document.documentElement.dataset.theme === 'dark'
+    || (!document.documentElement.dataset.theme && window.matchMedia('(prefers-color-scheme:dark)').matches);
   box.style.cssText = `position:fixed;top:60px;left:50%;transform:translateX(-50%);
-    z-index:200;background:var(--card);border:1.5px solid rgba(99,102,241,.4);
+    z-index:200;background:${_isDark?'#1e2130':'#ffffff'};
+    border:1.5px solid rgba(99,102,241,.4);
     border-radius:16px;padding:20px 24px;width:420px;max-width:96vw;
-    box-shadow:0 20px 60px rgba(0,0,0,.35);direction:rtl;font-size:13px`;
+    box-shadow:0 20px 60px rgba(0,0,0,.45);direction:rtl;font-size:13px;
+    color:${_isDark?'#e2e8f0':'#1a1a2e'}`;
 
   const _render = (profiles, active) => {
     const activeId = active?.id;

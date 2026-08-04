@@ -59,6 +59,13 @@ os.makedirs(TRANSCRIPTIONS_DIR, exist_ok=True)
 PROFILES_PATH = os.path.join(HERE, "profiles.json")
 _profile_state: dict = {"active": None}  # mutable — no global needed in handlers
 
+def _active_db_path() -> str:
+    """Return the DB path for the currently active profile, or the main DB."""
+    active = _profile_state.get("active")
+    if active:
+        return os.path.join(HERE, "profiles_db", active["slug"], "lias.db")
+    return DB_PATH
+
 def _load_profiles() -> list:
     try:
         if os.path.exists(PROFILES_PATH):
@@ -87,16 +94,16 @@ _heartbeat_holder: dict = {"value": 0.0}
 
 # ── convenience wrappers that bind globals to module functions ──────────────
 def _do_connect():
-    return _connect(DB_PATH)
+    return _connect(_active_db_path())
 
 def _do_full_ui_alive():
     return engine_inproc.alive()
 
 def _do_build_dashboard():
-    return build_dashboard(DB_PATH)
+    return build_dashboard(_active_db_path())
 
 def _raw_tables():
-    con = _connect(DB_PATH)
+    con = _connect(_active_db_path())
     if con is None:
         return {"clients": [], "cases": [], "documents": []}
     try:
@@ -313,9 +320,9 @@ class Handler(BaseHTTPRequestHandler):
         m_client = re.match(r"^/api/client/(\d+)$", path)
         m_doc = re.match(r"^/api/doc/(\d+)$", path)
         if m_case:
-            self._json(case_view(int(m_case.group(1)), params, DB_PATH))
+            self._json(case_view(int(m_case.group(1)), params, _active_db_path()))
         elif m_client:
-            self._json(client_view(int(m_client.group(1)), DB_PATH))
+            self._json(client_view(int(m_client.group(1)), _active_db_path()))
         elif m_doc:
             import mimetypes
             from urllib.parse import quote
@@ -450,9 +457,9 @@ class Handler(BaseHTTPRequestHandler):
             profiles = _load_profiles()
             self._json({"profiles": profiles, "active": _profile_state["active"]})
         elif path == "/api/docs":
-            self._json(docs_list(params, DB_PATH))
+            self._json(docs_list(params, _active_db_path()))
         elif path == "/api/search":
-            self._json(search_all(params.get("q", ""), DB_PATH))
+            self._json(search_all(params.get("q", ""), _active_db_path()))
         elif path in ("/", "/index.html"):
             try:
                 with open(UI_PATH, "rb") as fh:
