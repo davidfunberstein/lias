@@ -2007,9 +2007,14 @@ def _refresh_judges_handler(payload: dict, ctx: JobContext) -> str:
             print(f"[verdicts_refresh] Chromium fallback ({'headless' if headless else 'visible'})")
 
         try:
+            _ua = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/138.0.0.0 Safari/537.36")
             bctx = browser.new_context(
                 locale="he-IL",
-                extra_http_headers={"Accept-Language": "he-IL,he;q=0.9"},
+                extra_http_headers={"Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8"},
+                user_agent=_ua,
+                viewport={"width": 1280, "height": 900},
             )
             page = bctx.new_page()
             page.set_default_timeout(30_000)

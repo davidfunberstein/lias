@@ -90,10 +90,17 @@ def scrape_verdicts(
             # Chrome not installed — fall back to Chromium (may be blocked by WAF)
             browser = pw.chromium.launch(headless=headless, args=_args)
             log(f"משתמש ב-Chromium ({'headless' if headless else 'גלוי'}) — עלול להיחסם")
+        # When running headless, spoof a non-headless Chrome UA so court.gov.il
+        # WAF doesn't block the request (it detects "HeadlessChrome" in the UA).
+        _ua = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+               "AppleWebKit/537.36 (KHTML, like Gecko) "
+               "Chrome/138.0.0.0 Safari/537.36")
         context = browser.new_context(
             accept_downloads=True,
             locale="he-IL",
-            extra_http_headers={"Accept-Language": "he-IL,he;q=0.9"},
+            extra_http_headers={"Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8"},
+            user_agent=_ua,
+            viewport={"width": 1280, "height": 900},
         )
         page = context.new_page()
         page.set_default_timeout(TIMEOUT_MS)
@@ -359,11 +366,16 @@ def download_selected_verdicts(
         except Exception:
             browser = pw.chromium.launch(headless=headless, args=_args)
 
+        _ua2 = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/138.0.0.0 Safari/537.36")
         try:
             context = browser.new_context(
                 accept_downloads=True,
                 locale="he-IL",
-                extra_http_headers={"Accept-Language": "he-IL,he;q=0.9"},
+                extra_http_headers={"Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8"},
+                user_agent=_ua2,
+                viewport={"width": 1280, "height": 900},
             )
             page = context.new_page()
             page.set_default_timeout(TIMEOUT_MS)

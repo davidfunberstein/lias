@@ -1389,7 +1389,7 @@ function _renderVerdictResults(rows){
 
   // Apply judge filter
   const jf = window._verdictJudgeFilter;
-  const filtered = jf ? rows.filter(r=>(r.interest||'').split('\n')[0]===jf) : rows;
+  const filtered = jf ? rows.filter(r=>(r.proceeding||'').split('\n')[0]===jf) : rows;
 
   // Sort
   const sk  = window._verdictSortKey || 'date';
@@ -1443,7 +1443,7 @@ function _renderVerdictResults(rows){
         <th style="padding:5px 6px;width:28px"></th>
         ${thSort('תאריך','date','78px')}
         ${thSort('בית משפט','court')}
-        ${thSort('שופט','interest')}
+        ${thSort('שופט','proceeding')}
         ${thSort('תיק','case_num')}
         ${thSort('סוג','dec_type')}
         <th style="padding:5px 6px;width:36px;font-size:11px;font-weight:600">PDF</th>
@@ -1461,7 +1461,7 @@ function _renderVerdictResults(rows){
           </td>
           ${td(row.date||'')}
           ${td(row.court||'')}
-          ${td((row.interest||'').split('\\n')[0]||'')}
+          ${td((row.proceeding||'').split('\\n')[0]||'')}
           ${td(row.case_num||'')}
           ${td(row.dec_type||'')}
           <td style="padding:5px 6px;text-align:center">
@@ -1500,7 +1500,7 @@ function _renderJudgesPanel(rows){
   // Group by judge
   const map = {};
   rows.forEach(r=>{
-    const name = (r.interest||'').split('\n')[0]||'לא ידוע';
+    const name = (r.proceeding||'').split('\n')[0]||'לא ידוע';
     if(!map[name]) map[name]={name,total:0,dl:0,dates:[]};
     map[name].total++;
     if(r.pdf_path) map[name].dl++;
@@ -1511,7 +1511,7 @@ function _renderJudgesPanel(rows){
   el.innerHTML = `
   <div class="card" style="padding:10px 12px;margin-bottom:4px">
     <div style="font-size:13px;font-weight:600;margin-bottom:8px">👨‍⚖️ שופטים בתוצאות
-      <span style="font-weight:400;color:var(--ink-soft);font-size:11.5px">${judges.length} שופטים</span>
+      <span style="font-weight:400;color:var(--ink-soft);font-size:11.5px">${judges.length===1?'שופט אחד':judges.length+' שופטים'}</span>
     </div>
     <div style="max-height:60vh;overflow-y:auto">
       ${judges.map(j=>{
