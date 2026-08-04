@@ -46,10 +46,13 @@ if portal_key == "auto":
 elif portal_key not in PORTALS:
     print(f"פורטל לא מוכר: {portal_key}  —  בחר: auto / bdr / net / eca"); sys.exit(2)
 
-email_to = ""
+email_to   = ""
+callback_url = ""
 for i, a in enumerate(sys.argv):
     if a in ("--email", "-e") and i+1 < len(sys.argv):
         email_to = sys.argv[i+1]
+    if a in ("--callback", "-c") and i+1 < len(sys.argv):
+        callback_url = sys.argv[i+1]
 
 P       = PORTALS[portal_key]
 OUT     = Path(f"session_{portal_key}.json")
@@ -169,10 +172,8 @@ _PAGE_RESULT = """<!DOCTYPE html>
 <h1>✅ הסשן יוצא בהצלחה!</h1>
 <p class="sub">__LABEL__ — __COOKIES__ עוגיות</p>
 <div class="box">
-  <b>שלח את הקובץ לעורך הדין:</b><br>
-  <span class="info">__FILENAME__</span>
-  <br><br>
-  <a class="btn dl" href="/download">⬇ הורד קובץ</a>
+  __AUTO_SENT_MSG__
+  <a class="btn dl" href="/download">⬇ הורד קובץ (גיבוי)</a>
   <button class="mail" onclick="document.getElementById('mail-form').style.display='block'">📧 שלח למייל</button>
   <div id="mail-form">
     <input id="email-inp" type="email" placeholder="david@example.com" value="__EMAIL__">
@@ -220,11 +221,18 @@ class H(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             n = len((_state["payload"] or {}).get("storage_state",{}).get("cookies",[]))
+            if _state.get("sent_ok"):
+                auto_msg = '<b style="color:#3fb950">✅ העוגיות נשלחו אוטומטית לעורך הדין!</b><br>אין צורך לשלוח ידנית.'
+            elif callback_url:
+                auto_msg = '<b style="color:#f85149">⚠ השליחה האוטומטית נכשלה</b> — הורד את הקובץ ושלח ידנית.'
+            else:
+                auto_msg = '<b>שלח את הקובץ לעורך הדין:</b>'
             html = (_PAGE_RESULT
                     .replace("__LABEL__", P["label"])
                     .replace("__COOKIES__", str(n))
                     .replace("__FILENAME__", str(OUT))
-                    .replace("__EMAIL__", email_to))
+                    .replace("__EMAIL__", email_to)
+                    .replace("__AUTO_SENT_MSG__", auto_msg))
             self._send(200, html)
         elif self.path == "/download":
             if not OUT.exists():
@@ -252,7 +260,21 @@ class H(BaseHTTPRequestHandler):
                 self._send(200, json.dumps({"ok": False, "error": _state["error"]}), "application/json")
             else:
                 n = len((_state["payload"] or {}).get("storage_state",{}).get("cookies",[]))
-                self._send(200, json.dumps({"ok": True, "cookies": n}), "application/json")
+                # Auto-send to callback URL if provided
+                if callback_url and _state.get("payload"):
+                    try:
+                        body = json.dumps(_state["payload"]).encode()
+                        req  = urllib.request.Request(
+                            callback_url, data=body,
+                            headers={"Content-Type": "application/json"}, method="POST")
+                        urllib.request.urlopen(req, timeout=10)
+                        _state["sent_ok"] = True
+                        print(f"  ✓ עוגיות נשלחו אוטומטית ל-{callback_url}")
+                    except Exception as ce:
+                        _state["sent_ok"] = False
+                        print(f"  ✗ שגיאה בשליחה אוטומטית: {ce}")
+                self._send(200, json.dumps({"ok": True, "cookies": n,
+                                            "auto_sent": _state.get("sent_ok")}), "application/json")
 
         elif self.path == "/send_email":
             if not OUT.exists():

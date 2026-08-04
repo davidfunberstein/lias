@@ -458,6 +458,12 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/profiles":
             profiles = _load_profiles()
             self._json({"profiles": profiles, "active": _profile_state["active"]})
+        elif path == "/api/profiles/invite_status":
+            self._json({
+                "waiting": len(_invite_state.get("procs", [])) > 0,
+                "received": _invite_state.get("cookies") is not None,
+                "cookies": _invite_state.get("cookies"),
+            })
         elif path == "/api/docs":
             self._json(docs_list(params, _active_db_path()))
         elif path == "/api/search":
@@ -833,29 +839,26 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": str(exc)}, 500)
             return
         elif path == "/api/profiles/invite_cookies":
-            # Start session_server.py + ngrok, return the public URL
+            # Expose THIS app (port 8500) via ngrok so session_server.py
+            # running on the client's machine can POST cookies back automatically.
             try:
                 import subprocess, urllib.request, time as _time
-                # Kill any previous session_server / ngrok on our ports
+                # Kill any previous ngrok on our ports
                 for _proc in _invite_state.get("procs", []):
                     try: _proc.terminate()
                     except Exception: pass
                 _invite_state["procs"] = []
+                _invite_state["cookies"] = None
 
-                # Start session_server.py on port 7777
-                ss_proc = subprocess.Popen(
-                    [sys.executable, os.path.join(HERE, "tools", "session_server.py"), "net"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-                # Start ngrok http 7777
+                # Start ngrok http 8500  (exposes THIS app)
                 ng_proc = subprocess.Popen(
-                    ["ngrok", "http", "7777"],
+                    ["ngrok", "http", "8500"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
-                _invite_state["procs"] = [ss_proc, ng_proc]
+                _invite_state["procs"] = [ng_proc]
 
                 # Poll ngrok local API for the public URL (up to 10 s)
-                url = None
+                public_url = None
                 for _ in range(20):
                     _time.sleep(0.5)
                     try:
@@ -864,22 +867,42 @@ class Handler(BaseHTTPRequestHandler):
                         tunnels = data.get("tunnels", [])
                         https = [t["public_url"] for t in tunnels if t["public_url"].startswith("https")]
                         if https:
-                            url = https[0]
+                            public_url = https[0]
                             break
                     except Exception:
                         pass
 
-                if url:
-                    self._json({"ok": True, "url": url})
+                if public_url:
+                    callback = f"{public_url}/api/profiles/receive_cookies"
+                    cmd = f"python tools/session_server.py net --callback {callback}"
+                    self._json({"ok": True, "url": public_url, "callback": callback, "cmd": cmd})
                 else:
-                    # ngrok not installed or not authed — kill what we started
                     for _p in _invite_state["procs"]:
                         try: _p.terminate()
                         except Exception: pass
                     _invite_state["procs"] = []
-                    self._json({"ok": False, "error": "ngrok לא זמין — התקן עם: brew install ngrok"}, 503)
+                    self._json({"ok": False, "error": "ngrok לא זמין — הרץ: brew install ngrok && ngrok config add-authtoken TOKEN"}, 503)
             except Exception as exc:
                 self._json({"ok": False, "error": str(exc)}, 500)
+            return
+
+        elif path == "/api/profiles/receive_cookies":
+            # Called automatically by session_server.py --callback after client logs in
+            try:
+                _invite_state["cookies"] = payload
+                n = len((payload.get("storage_state") or {}).get("cookies", []))
+                print(f"[invite] received {n} cookies from client")
+                self._json({"ok": True, "cookies": n})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
+
+        elif path == "/api/profiles/invite_status":
+            self._json({
+                "waiting": len(_invite_state.get("procs", [])) > 0,
+                "received": _invite_state.get("cookies") is not None,
+                "cookies": _invite_state.get("cookies"),
+            })
             return
 
         elif path == "/api/profiles/invite_stop":

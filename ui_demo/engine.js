@@ -2165,18 +2165,19 @@ async function openProfileManager(){
       <div style="border-top:1px solid rgba(255,255,255,.1);padding-top:12px;margin-top:4px">
         <div style="font-weight:600;margin-bottom:6px;font-size:12px;opacity:.7">📨 הזמן עוגיות מלקוח</div>
         <div style="font-size:11px;opacity:.6;margin-bottom:8px;line-height:1.5">
-          יוצר קישור — הלקוח פותח, מתחבר, ושולח. אתה מייבא לפרופיל.
+          פותח ngrok — מייצר פקודה לשלוח לג׳רמי. הוא מריץ, מתחבר, לוחץ "סיימתי" — העוגיות מגיעות אוטומטית.
         </div>
         <button onclick="_inviteCookies()" id="invite-cookies-btn"
           style="width:100%;padding:7px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;
           background:rgba(245,158,11,.2);border:1px solid rgba(245,158,11,.4);color:inherit">
-          🔗 צור קישור לכניסה
+          🔗 צור פקודה לג׳רמי
         </button>
         <div id="invite-url-row" style="display:none;margin-top:8px">
+          <div style="font-size:11px;opacity:.6;margin-bottom:4px">שלח את הפקודה הזו לג׳רמי (וואצאפ/מייל):</div>
           <div style="display:flex;gap:6px;align-items:center">
             <input id="invite-url-val" readonly style="flex:1;padding:5px 8px;border-radius:8px;
-              border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);
-              color:inherit;font-size:11.5px;direction:ltr">
+              border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.2);
+              color:inherit;font-size:10.5px;direction:ltr;font-family:monospace">
             <button onclick="_copyInviteUrl()" style="padding:5px 10px;border-radius:8px;
               background:rgba(99,102,241,.3);border:1px solid rgba(99,102,241,.5);
               color:inherit;font-weight:700;cursor:pointer;white-space:nowrap;font-size:12px">העתק</button>
@@ -2278,19 +2279,36 @@ async function _expDownload(){
   }catch(err){ if(st) st.textContent='✗ '+err.message; }
 }
 
+let _invitePoller = null;
 async function _inviteCookies(){
   const st = $('invite-status'), btn = $('invite-cookies-btn'), row = $('invite-url-row');
-  if(st) st.textContent = 'מפעיל session_server ו-ngrok…';
+  if(st) st.textContent = 'פותח ngrok…';
   if(btn) btn.disabled = true;
   try{
     const r = await fetch('/api/profiles/invite_cookies',{method:'POST',
       headers:{'Content-Type':'application/json'}, body:'{}'});
     const d = await r.json();
     if(!d.ok) throw new Error(d.error || r.status);
+    // Show the command to send to Jeremy
     const inp = $('invite-url-val');
-    if(inp) inp.value = d.url;
+    if(inp) inp.value = d.cmd;   // full command for Jeremy to run
     if(row) row.style.display = 'block';
-    if(st) st.textContent = '✓ קישור פעיל — שלח ללקוח';
+    if(st) st.textContent = '⏳ ממתין לעוגיות מג׳רמי…';
+    // Poll for received cookies
+    clearInterval(_invitePoller);
+    _invitePoller = setInterval(async ()=>{
+      try{
+        const s = await fetch('/api/profiles/invite_status').then(r=>r.json());
+        if(s.received){
+          clearInterval(_invitePoller); _invitePoller = null;
+          if(st) st.textContent = `✅ עוגיות התקבלו! (${s.cookies?.storage_state?.cookies?.length||'?'} עוגיות) — כעת ייבא לפרופיל`;
+          // Store in global so import button can use them
+          _profileCookieData = s.cookies;
+          // Auto-stop ngrok
+          fetch('/api/profiles/invite_stop',{method:'POST'}).catch(()=>{});
+        }
+      }catch{}
+    }, 3000);
   }catch(err){
     if(st) st.textContent = '✗ '+err.message;
     if(btn) btn.disabled = false;
@@ -2304,12 +2322,13 @@ function _copyInviteUrl(){
 }
 
 async function _stopInvite(){
+  clearInterval(_invitePoller); _invitePoller = null;
   await fetch('/api/profiles/invite_stop',{method:'POST'}).catch(()=>{});
   const row = $('invite-url-row'), st = $('invite-status'), btn = $('invite-cookies-btn');
   if(row) row.style.display='none';
   if(st) st.textContent='';
   if(btn) btn.disabled=false;
-  toast('קישור ה-ngrok נסגר');
+  toast('ngrok נסגר');
 }
 
 async function _profileOpenNet(){
