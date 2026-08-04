@@ -49,6 +49,7 @@ def scrape_verdicts(
     max_pages: int = 5,
     progress_cb=None,
     logger=None,
+    headless: bool = False,
 ) -> list[dict]:
     """Scrape verdicts and download PDFs.
 
@@ -81,12 +82,12 @@ def scrape_verdicts(
             "--no-first-run",
             "--no-default-browser-check",
         ]
-        log("פותח חלון דפדפן גלוי לחיפוש החלטות…")
+        log(f"פותח דפדפן {'ברקע' if headless else 'גלוי'} לחיפוש החלטות…")
         try:
-            browser = pw.chromium.launch(channel="chrome", headless=False, args=_args)
+            browser = pw.chromium.launch(channel="chrome", headless=headless, args=_args)
             log("משתמש ב-Google Chrome")
         except Exception:
-            browser = pw.chromium.launch(headless=False, args=_args)
+            browser = pw.chromium.launch(headless=headless, args=_args)
             log("משתמש ב-Chromium")
         context = browser.new_context(
             accept_downloads=True,
@@ -361,6 +362,7 @@ def register_verdict_handler():
             date_from  = payload.get("date_from", "")
             date_to    = payload.get("date_to", "")
             max_pages  = int(payload.get("max_pages", 5))
+            headless   = bool(payload.get("headless", False))
 
             output_dir = config.COURT_DOCS_DIR / "verdicts"
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -383,6 +385,7 @@ def register_verdict_handler():
                 logger=type("L", (), {"info": lambda s,m: _logger(m),
                                       "warn": lambda s,m: _logger(f"⚠ {m}"),
                                       "error": lambda s,m: _logger(f"✗ {m}")})(),
+                headless=headless,
             )
 
             # Save run manifest

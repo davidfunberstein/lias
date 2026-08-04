@@ -63,6 +63,40 @@ function renderLawyer(){
       <div class="sub">מכל הלקוחות — העמודה "לקוח" מפרידה ביניהם</div></div></div>
       <table><thead><tr><th>מסמך</th><th>לקוח</th><th>תיק</th><th>תאריך</th><th>סטטוס</th></tr></thead>
       <tbody id="docs-body"></tbody></table></div>
+    <div class="card c12" id="dash-verdicts-card" style="display:none">
+      <div class="kpi-top" style="display:flex;justify-content:space-between;align-items:center">
+        <div><h2 style="margin:0">החלטות שהורדו</h2><div class="sub">ממאגר בתי המשפט הציבורי</div></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;cursor:pointer">
+            <input type="checkbox" id="dash-v-select-all" onchange="_dashVerdictToggleAll(this.checked)" style="cursor:pointer">
+            בחר הכל
+          </label>
+          <button onclick="dashVerdictDownloadSelected()" style="padding:5px 12px;border-radius:8px;
+            border:1px solid var(--accent);background:var(--accent-soft,#dce8ff);color:var(--accent);font-size:12px;cursor:pointer">
+            ⬇ הורד נבחרים</button>
+          <button onclick="dashVerdictDownloadAll()" style="padding:5px 12px;border-radius:8px;
+            border:none;background:var(--accent);color:#fff;font-size:12px;cursor:pointer">
+            ⬇ הורד הכל</button>
+          <button onclick="nav('verdicts')" style="padding:5px 12px;border-radius:8px;
+            border:1px solid var(--line);background:var(--surface);font-size:12px;cursor:pointer">
+            🔍 חפש עוד</button>
+        </div>
+      </div>
+      <div style="overflow-x:auto;margin-top:10px">
+        <table style="width:100%;border-collapse:collapse;direction:rtl" id="dash-verdicts-table">
+          <thead style="background:var(--surface2)"><tr>
+            <th style="padding:5px 8px;font-size:11px;width:30px"></th>
+            <th style="padding:5px 8px;font-size:11px;text-align:right">תאריך</th>
+            <th style="padding:5px 8px;font-size:11px;text-align:right">בית משפט</th>
+            <th style="padding:5px 8px;font-size:11px;text-align:right">שופט</th>
+            <th style="padding:5px 8px;font-size:11px;text-align:right">תיק</th>
+            <th style="padding:5px 8px;font-size:11px;text-align:right">סוג</th>
+            <th style="padding:5px 8px;font-size:11px;width:50px">PDF</th>
+          </tr></thead>
+          <tbody id="dash-verdicts-body"></tbody>
+        </table>
+      </div>
+    </div>
     <div class="card c4 ai"><h2>AI LIAS</h2>
       <div class="hello-ai"><div class="orb"></div>
         <p><b>שלום ${u.name.split(' ')[0]},</b><br>איך אפשר <span style="color:var(--accent-strong);font-weight:700">לעזור היום?</span></p></div>
@@ -123,6 +157,47 @@ function fillLawyer(){
   monthlyChart('ch-monthly', D.monthly);
   loadMap('ch-load', D.activity);
   fillBreakdown();
+  _fillDashVerdicts();
+}
+
+async function _fillDashVerdicts(){
+  try{
+    const r = await fetch('/api/verdicts/results');
+    const d = await r.json();
+    const rows = d.verdicts||[];
+    window._dashVerdictRows = rows;
+    const card = $('dash-verdicts-card');
+    if(!rows.length || !card) return;
+    card.style.display = '';
+    const tbody = $('dash-verdicts-body');
+    if(!tbody) return;
+    tbody.innerHTML = rows.map((row,i)=>`
+      <tr style="background:${i%2?'var(--surface)':'var(--surface2)'}">
+        <td style="padding:5px 8px;text-align:center"><input type="checkbox" class="dv-row-cb" data-pdf="${row.pdf_path||''}" style="cursor:pointer"></td>
+        <td style="padding:5px 8px;font-size:12px;direction:rtl">${row.date||''}</td>
+        <td style="padding:5px 8px;font-size:12px;direction:rtl">${row.court||''}</td>
+        <td style="padding:5px 8px;font-size:12px;direction:rtl">${(row.interest||'').split('\\n')[0]||''}</td>
+        <td style="padding:5px 8px;font-size:12px;direction:rtl">${row.case_num||''}</td>
+        <td style="padding:5px 8px;font-size:12px;direction:rtl">${row.dec_type||''}</td>
+        <td style="padding:5px 8px;text-align:center">${row.pdf_path?`<a href="/api/verdicts/download/${encodeURIComponent(row.pdf_path.split('/').pop())}" target="_blank" style="color:var(--accent)">⬇</a>`:''}</td>
+      </tr>`).join('');
+  } catch(e){}
+}
+
+function _dashVerdictToggleAll(checked){
+  document.querySelectorAll('.dv-row-cb').forEach(c=>c.checked=checked);
+}
+
+async function dashVerdictDownloadAll(){
+  const rows = (window._dashVerdictRows||[]).filter(r=>r.pdf_path);
+  await _verdictDownloadRows(rows);
+}
+
+async function dashVerdictDownloadSelected(){
+  const checks = document.querySelectorAll('.dv-row-cb:checked');
+  const paths  = Array.from(checks).map(c=>c.dataset.pdf).filter(Boolean);
+  const rows   = (window._dashVerdictRows||[]).filter(r=>paths.includes(r.pdf_path));
+  await _verdictDownloadRows(rows);
 }
 
 function fillBreakdown(){
@@ -979,11 +1054,11 @@ function renderVerdicts(){
           </select>
         </div>
         <div>
-          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">שם שופט</label>
-          <select id="v-judge" style="width:100%;padding:8px 10px;border-radius:8px;
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">שם שופט <span style="font-weight:400;color:var(--ink-soft)">(הקלד לסינון לפי תחילת מילה)</span></label>
+          <input id="v-judge" list="v-judge-list" autocomplete="off" placeholder="-- כל השופטים --"
+            style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;
             border:1px solid var(--line);background:var(--surface);font-size:13px">
-            <option value="">-- כל השופטים --</option>
-          </select>
+          <datalist id="v-judge-list"></datalist>
           <div id="v-judge-status" style="font-size:11px;color:var(--ink-soft);margin-top:3px;height:14px"></div>
         </div>
         <div>
@@ -1003,6 +1078,10 @@ function renderVerdicts(){
           border:none;background:var(--accent);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer">
           🔍 חפש
         </button>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;cursor:pointer;user-select:none">
+          <input type="checkbox" id="v-headless" style="cursor:pointer">
+          הסתר דפדפן
+        </label>
         <span id="v-status" style="font-size:12px;color:var(--ink-soft)"></span>
       </div>
     </div>
@@ -1036,19 +1115,20 @@ async function _loadVerdictCourts(){
 }
 
 async function _loadVerdictJudges(courtId){
-  const sel    = $('v-judge');
+  const dl     = $('v-judge-list');
   const status = $('v-judge-status');
-  if(!sel) return;
-  sel.innerHTML = '<option value="">-- כל השופטים --</option>';
+  if(!dl) return;
+  dl.innerHTML = '';
+  window._verdictJudges = [];
   if(!courtId){ if(status) status.textContent=''; return; }
   if(status) status.textContent = 'טוען…';
   try{
     const r = await fetch(`/api/verdicts/judges?court_id=${encodeURIComponent(courtId)}`);
     const d = await r.json();
     if(d.judges && d.judges.length){
-      sel.innerHTML = '<option value="">-- כל השופטים --</option>'
-        + d.judges.map(j=>`<option value="${j.name}">${j.name}</option>`).join('');
-      if(status) status.textContent = `${d.judges.length} שופטים (מהקש)`;
+      window._verdictJudges = d.judges.map(j=>j.name);
+      dl.innerHTML = d.judges.map(j=>`<option value="${j.name}">`).join('');
+      if(status) status.textContent = `${d.judges.length} שופטים בקש`;
     } else {
       if(status) status.textContent = 'אין שופטים בקש — לחץ רענן שופטים';
     }
@@ -1061,9 +1141,13 @@ async function verdictRefreshJudges(){
   const btn = $('v-refresh-btn');
   const st  = $('v-refresh-status');
   if(btn) btn.disabled = true;
-  if(st)  st.textContent = 'פותח דפדפן לאיסוף שופטים… (עשוי לקחת כמה דקות)';
+  const headless = $('v-headless')?.checked || false;
+  if(st)  st.textContent = headless ? 'אוסף שופטים ברקע… (עשוי לקחת כמה דקות)' : 'פותח דפדפן לאיסוף שופטים… (עשוי לקחת כמה דקות)';
   try{
-    const r = await fetch('/api/verdicts/refresh_judges', {method:'POST'});
+    const r = await fetch('/api/verdicts/refresh_judges', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({headless})
+    });
     const d = await r.json();
     if(d.job_id){
       if(st) st.textContent = `⏳ רץ ברקע (משימה ${d.job_id}) — דפדפן Chrome יפתח`;
@@ -1108,15 +1192,17 @@ async function searchVerdicts(){
   const judge    = $('v-judge')?.value  || '';
   const dateFrom = $('v-from')?.value   || '';
   const dateTo   = $('v-to')?.value     || '';
+  const headless = $('v-headless')?.checked || false;
   const status   = $('v-status');
   if(!courtId){ toast('יש לבחור בית משפט', true); return; }
-  if(status) status.textContent = 'פותח דפדפן וחיפוש…';
+  if(status) status.textContent = headless ? 'מחפש ברקע…' : 'פותח דפדפן וחיפוש…';
   try{
     const r = await fetch('/api/verdicts/search', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({court_id: courtId, judge_name: judge,
         date_from: dateFrom ? _isoToIL(dateFrom) : '',
-        date_to:   dateTo   ? _isoToIL(dateTo)   : ''})
+        date_to:   dateTo   ? _isoToIL(dateTo)   : '',
+        headless})
     });
     const d = await r.json();
     if(d.detail){ if(status) status.textContent=`שגיאה: ${d.detail}`; return; }
@@ -1176,7 +1262,10 @@ function _renderVerdictResults(rows){
   el.innerHTML = `
   <div class="card c12" style="overflow-x:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <span style="font-size:13px;font-weight:600">${rows.length} תוצאות</span>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;cursor:pointer">
+        <input type="checkbox" id="v-select-all" onchange="_verdictToggleAll(this.checked)" style="cursor:pointer">
+        ${rows.length} תוצאות
+      </label>
       <div style="display:flex;gap:8px">
         <button onclick="verdictDownloadSelected()" style="padding:6px 14px;border-radius:8px;
           border:1px solid var(--accent);background:var(--accent-soft,#dce8ff);
@@ -1191,7 +1280,7 @@ function _renderVerdictResults(rows){
       </tr></thead>
       <tbody>${rows.map((row,i)=>`
         <tr style="background:${i%2?'var(--surface)':'var(--surface2)'}">
-          ${td(`<input type="checkbox" data-pdf="${row.pdf_path||''}" style="cursor:pointer">`,'text-align:center')}
+          ${td(`<input type="checkbox" class="v-row-cb" data-pdf="${row.pdf_path||''}" style="cursor:pointer">`,'text-align:center')}
           ${td(row.date||'')}
           ${td(row.court||'')}
           ${td((row.interest||'').split('\\n')[0]||'')}
@@ -1211,8 +1300,12 @@ async function verdictDownloadAll(){
   await _verdictDownloadRows(rows);
 }
 
+function _verdictToggleAll(checked){
+  document.querySelectorAll('.v-row-cb').forEach(c=>c.checked=checked);
+}
+
 async function verdictDownloadSelected(){
-  const checks = document.querySelectorAll('#v-results input[type=checkbox]:checked');
+  const checks = document.querySelectorAll('.v-row-cb:checked');
   const paths  = Array.from(checks).map(c=>c.dataset.pdf).filter(Boolean);
   const rows   = (window._verdictRows||[]).filter(r=>paths.includes(r.pdf_path));
   await _verdictDownloadRows(rows);

@@ -1458,15 +1458,22 @@ def verdicts_judges(court_id: str = ""):
 
 
 @app.post("/api/verdicts/refresh_judges")
-def verdicts_refresh_judges():
-    """Start a job that opens a visible Chrome window and scrapes judges for all courts."""
-    return {"job_id": jobs.submit("verdicts_refresh_judges", {})}
+async def verdicts_refresh_judges(request: Request):
+    """Start a job that scrapes judges for all courts.
+    Body: {headless: bool}  — default False (visible browser)."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    headless = bool(body.get("headless", False))
+    return {"job_id": jobs.submit("verdicts_refresh_judges", {"headless": headless})}
 
 
 @app.post("/api/verdicts/search")
 async def verdicts_search(request: Request):
     """Start a verdict scrape job.
-    Body: {court_id, judge_name, date_from (DD/MM/YYYY), date_to, max_pages}"""
+    Body: {court_id, judge_name, date_from (DD/MM/YYYY), date_to, max_pages, headless}"""
     body = {}
     try:
         body = await request.json()
@@ -1477,11 +1484,12 @@ async def verdicts_search(request: Request):
     date_from  = str(body.get("date_from", ""))
     date_to    = str(body.get("date_to", ""))
     max_pages  = int(body.get("max_pages", 5))
+    headless   = bool(body.get("headless", False))
     if court_id == "-1":
         raise HTTPException(400, "יש לבחור בית משפט")
     payload = {"court_id": court_id, "judge_name": judge_name,
                "date_from": date_from, "date_to": date_to,
-               "max_pages": max_pages}
+               "max_pages": max_pages, "headless": headless}
     return {"job_id": jobs.submit("verdict_scrape", payload)}
 
 

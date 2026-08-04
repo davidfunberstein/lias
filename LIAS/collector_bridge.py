@@ -1992,18 +1992,19 @@ def _refresh_judges_handler(payload: dict, ctx: JobContext) -> str:
     COURT_URL = "https://www.court.gov.il/NGCS.Web.Site/LocateDecisions/LocateDecisionQuering.aspx"
     updated = 0
 
-    ctx.progress(0.02, "פותח דפדפן גלוי לאיסוף שופטים…")
+    headless = bool(payload.get("headless", False))
+    ctx.progress(0.02, f"פותח דפדפן {'ברקע' if headless else 'גלוי'} לאיסוף שופטים…")
     courts = [c for c in _VERDICT_COURTS if c["id"] not in ("-1", "")]
 
     with sync_playwright() as pw:
         args = ["--disable-blink-features=AutomationControlled",
                 "--no-first-run", "--no-default-browser-check"]
         try:
-            browser = pw.chromium.launch(channel="chrome", headless=False, args=args)
-            print("[verdicts_refresh] using Google Chrome (visible)")
+            browser = pw.chromium.launch(channel="chrome", headless=headless, args=args)
+            print(f"[verdicts_refresh] using Google Chrome ({'headless' if headless else 'visible'})")
         except Exception:
-            browser = pw.chromium.launch(headless=False, args=args)
-            print("[verdicts_refresh] using Chromium (visible)")
+            browser = pw.chromium.launch(headless=headless, args=args)
+            print(f"[verdicts_refresh] using Chromium ({'headless' if headless else 'visible'})")
 
         try:
             bctx = browser.new_context(
