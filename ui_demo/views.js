@@ -1117,7 +1117,7 @@ function renderVerdicts(){
 
   _loadVerdictCourts();
   _verdictAC('v-judge','v-judge-drop',[], null);
-  // Don't auto-show old results — wait for explicit search
+  _showCachedVerdictResults(); // show previous run silently (no scroll)
 }
 
 /* ── Verdict autocomplete helper ───────────────────────────────────────────

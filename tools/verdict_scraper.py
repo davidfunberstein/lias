@@ -83,16 +83,13 @@ def scrape_verdicts(
             "--no-default-browser-check",
         ]
         log(f"פותח דפדפן {'ברקע' if headless else 'גלוי'} לחיפוש החלטות…")
-        if headless:
-            browser = pw.chromium.launch(headless=True, args=_args)
-            log("משתמש ב-Chromium (ברקע)")
-        else:
-            try:
-                browser = pw.chromium.launch(channel="chrome", headless=False, args=_args)
-                log("משתמש ב-Google Chrome (גלוי)")
-            except Exception:
-                browser = pw.chromium.launch(headless=False, args=_args)
-                log("משתמש ב-Chromium (גלוי)")
+        try:
+            browser = pw.chromium.launch(channel="chrome", headless=headless, args=_args)
+            log(f"משתמש ב-Google Chrome ({'headless' if headless else 'גלוי'})")
+        except Exception:
+            # Chrome not installed — fall back to Chromium (may be blocked by WAF)
+            browser = pw.chromium.launch(headless=headless, args=_args)
+            log(f"משתמש ב-Chromium ({'headless' if headless else 'גלוי'}) — עלול להיחסם")
         context = browser.new_context(
             accept_downloads=True,
             locale="he-IL",
@@ -357,13 +354,10 @@ def download_selected_verdicts(
         _args = ["--disable-blink-features=AutomationControlled",
                  "--no-first-run", "--no-default-browser-check"]
         log(f"פותח דפדפן {'ברקע' if headless else 'גלוי'} להורדת {len(doc_params)} מסמכים…")
-        if headless:
-            browser = pw.chromium.launch(headless=True, args=_args)
-        else:
-            try:
-                browser = pw.chromium.launch(channel="chrome", headless=False, args=_args)
-            except Exception:
-                browser = pw.chromium.launch(headless=False, args=_args)
+        try:
+            browser = pw.chromium.launch(channel="chrome", headless=headless, args=_args)
+        except Exception:
+            browser = pw.chromium.launch(headless=headless, args=_args)
 
         try:
             context = browser.new_context(
