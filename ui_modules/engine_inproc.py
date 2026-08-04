@@ -227,6 +227,14 @@ def switch_profile(profile: dict | None, project_root: str) -> None:
         db_dir.mkdir(parents=True, exist_ok=True)
         config.DB_PATH = db_dir / "lias.db"
 
+    # Initialise the (possibly new, empty) DB so the schema exists
+    if _state["started"]:
+        try:
+            from LIAS import db as _db
+            _db.init_db()
+        except Exception:
+            pass
+
     # If browser managers are live, stop them so they relaunch with new profile dirs
     if _state["started"]:
         for key in ("browser", "bdr", "eca"):
