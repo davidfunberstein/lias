@@ -953,7 +953,7 @@ function renderVerdicts(){
     <h1>החלטות שפורסמו</h1>
     <div style="max-width:560px;margin-top:8px;font-size:13.5px;line-height:1.7;color:var(--ink-soft)">
       בתי המשפט בישראל מפרסמים חלק מהחלטותיהם לציבור הרחב דרך
-      <a href="https://www.court.gov.il" target="_blank" style="color:var(--accent)">court.gov.il</a>.
+      <a href="https://www.court.gov.il/NGCS.Web.Site/LocateDecisions/LocateDecisionQuering.aspx" target="_blank" style="color:var(--accent)">נט המשפט</a>.
       ניתן לחפש לפי בית משפט, שם שופט ותאריכים ולהוריד את קובצי ה-PDF.
       אין צורך בהתחברות לפורטל.
     </div>
