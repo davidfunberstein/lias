@@ -2180,6 +2180,25 @@ async function openProfileManager(){
 }
 
 let _profileCookieData = null;
+async function exportMySession(){
+  toast('מייצא עוגיות…');
+  try{
+    const r = await fetch('/api/tools/export_session?portal=NET');
+    if(!r.ok){
+      const d = await r.json().catch(()=>({}));
+      if(r.status===503) throw new Error('המנוע לא פעיל — הפעל סנכרון קודם והתחבר לנט המשפט');
+      throw new Error(d.detail || r.status);
+    }
+    const data = await r.json();
+    const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `session_${Date.now()}.json`;
+    a.click();
+    toast('✓ קובץ עוגיות הורד — שלח אותו לעמית');
+  }catch(err){ toast('✗ '+err.message, true); }
+}
+
 async function _profileOpenNet(){
   const st = $('profile-cookie-status');
   if(st) st.textContent = 'מפעיל מנוע…';
