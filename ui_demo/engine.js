@@ -2021,7 +2021,7 @@ async function downloadAll(){
           } else if(el){
             el.textContent = `⏳ ${p}: ${job.message||''} (${Math.round((job.progress||0)*100)}%)`;
           }
-        }catch(){ clearInterval(t); resolve(); }
+        }catch{ clearInterval(t); resolve(); }
       }, 3000);
     });
   }
