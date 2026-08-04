@@ -866,7 +866,7 @@ class Handler(BaseHTTPRequestHandler):
                 # actual login on his behalf, then POSTs cookies to localhost:8500.
                 ss_proc = subprocess.Popen(
                     [sys.executable, os.path.join(HERE, "tools", "session_server.py"),
-                     "net", "--callback", callback],
+                     "auto", "--callback", callback],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
 
