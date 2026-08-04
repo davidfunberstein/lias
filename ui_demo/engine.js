@@ -2165,19 +2165,19 @@ async function openProfileManager(){
       <div style="border-top:1px solid rgba(255,255,255,.1);padding-top:12px;margin-top:4px">
         <div style="font-weight:600;margin-bottom:6px;font-size:12px;opacity:.7">📨 הזמן עוגיות מלקוח</div>
         <div style="font-size:11px;opacity:.6;margin-bottom:8px;line-height:1.5">
-          פותח ngrok — מייצר פקודה לשלוח לג׳רמי. הוא מריץ, מתחבר, לוחץ "סיימתי" — העוגיות מגיעות אוטומטית.
+          מייצר קישור — שלח לג׳רמי. הוא פותח בדפדפן, מזין פרטים, העוגיות מגיעות אוטומטית.
         </div>
         <button onclick="_inviteCookies()" id="invite-cookies-btn"
           style="width:100%;padding:7px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;
           background:rgba(245,158,11,.2);border:1px solid rgba(245,158,11,.4);color:inherit">
-          🔗 צור פקודה לג׳רמי
+          🔗 צור קישור לכניסה
         </button>
         <div id="invite-url-row" style="display:none;margin-top:8px">
-          <div style="font-size:11px;opacity:.6;margin-bottom:4px">שלח את הפקודה הזו לג׳רמי (וואצאפ/מייל):</div>
+          <div style="font-size:11px;opacity:.6;margin-bottom:4px">שלח את הקישור לג׳רמי (וואצאפ/מייל):</div>
           <div style="display:flex;gap:6px;align-items:center">
             <input id="invite-url-val" readonly style="flex:1;padding:5px 8px;border-radius:8px;
               border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.2);
-              color:inherit;font-size:10.5px;direction:ltr;font-family:monospace">
+              color:inherit;font-size:11px;direction:ltr">
             <button onclick="_copyInviteUrl()" style="padding:5px 10px;border-radius:8px;
               background:rgba(99,102,241,.3);border:1px solid rgba(99,102,241,.5);
               color:inherit;font-weight:700;cursor:pointer;white-space:nowrap;font-size:12px">העתק</button>

@@ -850,16 +850,33 @@ class Handler(BaseHTTPRequestHandler):
                 _invite_state["procs"] = []
                 _invite_state["cookies"] = None
 
-                # Start ngrok http 8500  (exposes THIS app)
+                # callback URL: expose THIS app (8500) via ngrok so session_server
+                # can POST cookies back. Then start session_server on port 7777
+                # in remote mode, and expose 7777 via a SECOND tunnel so the
+                # client can open the login form from their phone.
+                # Free ngrok allows only 1 tunnel at a time, so we expose 7777
+                # (the login form the client needs) and session_server.py POSTs
+                # to localhost:8500 directly (same machine, no internet needed).
+
+                callback = f"http://localhost:{8500}/api/profiles/receive_cookies"
+
+                # Start ngrok http 7777 (exposes the login form to the internet)
                 ng_proc = subprocess.Popen(
-                    ["ngrok", "http", "8500"],
+                    ["ngrok", "http", "7777"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
-                _invite_state["procs"] = [ng_proc]
 
-                # Poll ngrok local API for the public URL (up to 10 s)
+                # Start session_server.py in remote mode
+                ss_proc = subprocess.Popen(
+                    [sys.executable, os.path.join(HERE, "tools", "session_server.py"),
+                     "net", "--callback", callback],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                _invite_state["procs"] = [ng_proc, ss_proc]
+
+                # Poll ngrok local API for the public URL (up to 12 s)
                 public_url = None
-                for _ in range(20):
+                for _ in range(24):
                     _time.sleep(0.5)
                     try:
                         data = json.loads(urllib.request.urlopen(
@@ -873,9 +890,7 @@ class Handler(BaseHTTPRequestHandler):
                         pass
 
                 if public_url:
-                    callback = f"{public_url}/api/profiles/receive_cookies"
-                    cmd = f"python tools/session_server.py net --callback {callback}"
-                    self._json({"ok": True, "url": public_url, "callback": callback, "cmd": cmd})
+                    self._json({"ok": True, "url": public_url})
                 else:
                     for _p in _invite_state["procs"]:
                         try: _p.terminate()
