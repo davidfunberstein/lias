@@ -99,15 +99,28 @@ def _rewrite_url_to_proxy(url: str) -> str:
     frag = ('#' + p.fragment) if p.fragment else ''
     return f'/proxy/{p.netloc}{path}{qs}{frag}'
 
+def _detect_encoding(body: bytes, content_type: str) -> str:
+    """Detect character encoding from Content-Type header or HTML meta tag."""
+    ct = content_type.lower()
+    if 'charset=' in ct:
+        enc = ct.split('charset=')[1].split(';')[0].strip().strip('"\'')
+        if enc: return enc
+    # Scan first 2 KB for meta charset
+    head = body[:2048].decode('latin-1', errors='replace')
+    m = re.search(r'charset=["\']?\s*([\w-]+)', head, re.I)
+    if m: return m.group(1)
+    return 'utf-8'
+
 def _rewrite_body(body: bytes, content_type: str) -> bytes:
     if not ('html' in content_type or 'javascript' in content_type
             or 'css' in content_type or 'json' in content_type):
         return body
+    enc = _detect_encoding(body, content_type)
     try:
+        text = body.decode(enc, errors='replace')
+    except (LookupError, Exception):
         text = body.decode('utf-8', errors='replace')
-    except Exception:
-        return body
-    # Replace absolute URLs inside attributes and JS strings
+
     def _sub(m):
         return m.group(1) + _rewrite_url_to_proxy(m.group(2)) + m.group(3)
     text = re.sub(r'(href="|src="|action="|url\("|window\.location\s*=\s*"|location\.href\s*=\s*")'
@@ -116,10 +129,12 @@ def _rewrite_body(body: bytes, content_type: str) -> bytes:
     text = re.sub(r"(href='|src='|action='|url\('|window\.location\s*=\s*'|location\.href\s*=\s*')"
                   r"(https?://[^'\">\s]+)"
                   r"(')", _sub, text)
-    # Also rewrite plain https://domain in JS
     for domain in _PROXY_DOMAINS:
         text = text.replace(f'https://{domain}', f'/proxy/{domain}')
         text = text.replace(f'http://{domain}',  f'/proxy/{domain}')
+
+    # Re-encode as UTF-8 and update meta charset so browser reads it correctly
+    text = re.sub(r'(charset=["\']?)\s*[\w-]+', r'\g<1>utf-8', text, flags=re.I)
     return text.encode('utf-8')
 
 def _check_login_success(cookies_dict: dict) -> bool:
@@ -294,17 +309,26 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         skip = {'transfer-encoding','content-encoding','content-length',
                 'content-security-policy','x-frame-options','strict-transport-security'}
+        sent_ct = False
         for k, v in rh.items():
             kl = k.lower()
             if kl in skip: continue
             if kl == 'set-cookie':
-                # Strip Secure/SameSite/Domain so cookie is accepted on our domain
                 v = re.sub(r';\s*[Ss]ecure', '', v)
                 v = re.sub(r';\s*[Ss]ame[Ss]ite=[^;]+', '', v)
                 v = re.sub(r';\s*[Dd]omain=[^;]+', '', v)
             elif kl == 'location':
                 v = location
+            elif kl == 'content-type':
+                # Ensure charset=utf-8 since we re-encoded the body
+                if 'charset=' in v.lower():
+                    v = re.sub(r'charset=[\w-]+', 'charset=utf-8', v, flags=re.I)
+                elif 'text/' in v or 'javascript' in v:
+                    v = v.rstrip('; ') + '; charset=utf-8'
+                sent_ct = True
             self.send_header(k, v)
+        if not sent_ct:
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(rbody)))
         self.send_header('ngrok-skip-browser-warning', '1')
         self.end_headers()
