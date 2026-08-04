@@ -1101,6 +1101,7 @@ function renderVerdicts(){
 
       <!-- Search results — empty until search runs -->
       <div id="v-search-summary" style="display:none"></div>
+      <div id="v-results-dl"></div>
 
     </div>
 
@@ -1393,6 +1394,7 @@ async function _showCachedVerdictResults(){
     const rows = d.verdicts || [];
     window._verdictRows = rows;
     _renderSearchSummary(rows);
+    _renderVerdictResults(rows);
   } catch(e){}
 }
 
@@ -1734,13 +1736,16 @@ function _renderLibDecisions(judgeName, rows){
           <span style="font-size:13px;font-weight:700">${judgeName}</span>
           <span style="font-weight:400;font-size:11.5px;color:var(--ink-soft);margin-right:6px">${withFile.length} החלטות</span>
         </div>
-        <div style="display:flex;gap:5px">
+        <div style="display:flex;gap:5px;flex-wrap:wrap">
+          <button onclick="_libSelAll(true)"
+            style="padding:4px 10px;border-radius:6px;border:1px solid var(--line);
+            background:var(--surface);font-size:11.5px;cursor:pointer">☑ בחר הכל</button>
+          <button onclick="_libSelAll(false)"
+            style="padding:4px 10px;border-radius:6px;border:1px solid var(--line);
+            background:var(--surface);font-size:11.5px;cursor:pointer">☐ בטל סימון</button>
           <button onclick="_libDelSelected()" id="v-lib-del-sel"
             style="padding:4px 10px;border-radius:6px;border:1px solid var(--line);
             background:var(--surface);font-size:11.5px;cursor:pointer;display:none">🗑 מחק נבחרים</button>
-          <button onclick="_libDelAll(${JSON.stringify(withFile.map(r=>(r.pdf_path||'').split('/').pop()).filter(Boolean))})"
-            style="padding:4px 10px;border-radius:6px;border:1px solid var(--line);
-            background:var(--surface);font-size:11.5px;cursor:pointer">🗑 מחק הכל</button>
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:4px">
@@ -1775,6 +1780,11 @@ function _libCbChange(){
   const n = document.querySelectorAll('.v-lib-cb:checked').length;
   const btn = $('v-lib-del-sel');
   if(btn){ btn.style.display = n ? 'inline-block' : 'none'; btn.textContent = `🗑 מחק נבחרים (${n})`; }
+}
+
+function _libSelAll(checked){
+  document.querySelectorAll('.v-lib-cb').forEach(cb => { cb.checked = checked; });
+  _libCbChange();
 }
 
 async function _libDelSelected(){
