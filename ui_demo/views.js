@@ -1454,7 +1454,7 @@ function _renderVerdictResults(rows){
         <th style="padding:5px 6px;width:28px"></th>
         ${thSort('תאריך','date','78px')}
         ${thSort('בית משפט','court')}
-        ${thSort('שופט','proceeding')}
+        ${thSort('עניין','interest')}
         ${thSort('תיק','case_num')}
         ${thSort('סוג','dec_type')}
         <th style="padding:5px 6px;width:36px;font-size:11px;font-weight:600">PDF</th>
@@ -1472,7 +1472,7 @@ function _renderVerdictResults(rows){
           </td>
           ${td(row.date||'')}
           ${td(row.court||'')}
-          ${td((row.proceeding||'').split('\\n')[0]||'')}
+          ${td((row.interest||'').split('\\n')[0]||'')}
           ${td(row.case_num||'')}
           ${td(row.dec_type||'')}
           <td style="padding:5px 6px;text-align:center">
@@ -1504,6 +1504,9 @@ function _verdictSelectAll(){ document.querySelectorAll('.v-row-cb').forEach(cb=
 function _verdictDeselectAll(){ document.querySelectorAll('.v-row-cb').forEach(cb=>cb.checked=false); _verdictUpdateCount(); }
 
 // ── Left panel: library of downloaded decisions ───────────────────────────
+// window._libGroupBy: 'judge' | 'subject'
+// window._libSelected: currently selected group name
+
 async function _renderLibrary(){
   const jEl = $('v-lib-judges');
   const dEl = $('v-lib-decisions');
@@ -1521,91 +1524,96 @@ async function _renderLibrary(){
     return;
   }
 
+  window._libRows = rows;
+
   if(!rows.length){
     jEl.innerHTML = '<div style="font-size:12.5px;color:var(--ink-soft);padding:8px 0">טרם הורדו החלטות.</div>';
     return;
   }
 
-  // Group by judge (proceeding field)
+  // Determine default grouping: by judge if any row has judge_name, else by subject
+  const hasJudge = rows.some(r => r.judge_name);
+  if(window._libGroupBy === undefined){
+    window._libGroupBy = hasJudge ? 'judge' : 'subject';
+  }
+
+  _renderLibGroups(rows);
+}
+
+function _libGroupRows(rows, by){
   const map = {};
   rows.forEach(r=>{
-    const name = (r.proceeding||'').split('\n')[0] || 'לא ידוע';
-    if(!map[name]) map[name] = {name, rows:[]};
-    map[name].rows.push(r);
+    const key = by === 'judge'
+      ? (r.judge_name || 'ללא שופט מוגדר')
+      : (r.interest  || 'ללא סיווג');
+    if(!map[key]) map[key] = {name: key, rows: []};
+    map[key].rows.push(r);
   });
-  const judges = Object.values(map).sort((a,b)=>b.rows.length - a.rows.length);
-  window._libRows = rows;
-  window._libJudge = window._libJudge || null;
+  return Object.values(map).sort((a,b) => b.rows.length - a.rows.length);
+}
+
+function _renderLibGroups(rows){
+  const jEl = $('v-lib-judges');
+  if(!jEl) return;
+  const by     = window._libGroupBy || 'subject';
+  const sel    = window._libSelected || null;
+  const groups = _libGroupRows(rows, by);
+  const hasJudge = rows.some(r => r.judge_name);
 
   jEl.innerHTML = `
-    <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px">
-      ${rows.length} החלטות · ${judges.length===1?'שופט אחד':judges.length+' שופטים'}
+    <div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:11.5px;color:var(--ink-soft)">${rows.length} החלטות ·</span>
+      ${hasJudge ? `
+      <button onclick="_libSetGroupBy('judge')"
+        style="padding:3px 10px;border-radius:5px;font-size:11.5px;cursor:pointer;
+        border:1px solid ${by==='judge'?'var(--accent)':'var(--line)'};
+        background:${by==='judge'?'var(--accent)':'var(--surface)'};
+        color:${by==='judge'?'#fff':'inherit'}">לפי שופט</button>` : ''}
+      <button onclick="_libSetGroupBy('subject')"
+        style="padding:3px 10px;border-radius:5px;font-size:11.5px;cursor:pointer;
+        border:1px solid ${by==='subject'?'var(--accent)':'var(--line)'};
+        background:${by==='subject'?'var(--accent)':'var(--surface)'};
+        color:${by==='subject'?'#fff':'inherit'}">לפי נושא</button>
     </div>
     <div style="display:flex;flex-direction:column;gap:4px">
-      ${judges.map(j=>{
-        const active = window._libJudge === j.name;
-        return `<div onclick="_libSelectJudge('${j.name.replace(/'/g,"\\'")}')"
-          style="padding:9px 11px;border-radius:8px;cursor:pointer;
+      ${groups.map(g=>{
+        const active = sel === g.name;
+        return `<div onclick="_libSelectGroup('${g.name.replace(/'/g,"\\'")}')"
+          style="padding:8px 11px;border-radius:8px;cursor:pointer;
           border:1px solid ${active?'var(--accent)':'var(--line)'};
           background:${active?'rgba(59,130,246,.08)':'var(--surface)'};
           transition:all .12s">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:13px;font-weight:600;direction:rtl">${j.name}</span>
-            <span style="font-size:11.5px;color:var(--ink-soft);white-space:nowrap;margin-right:6px">${j.rows.length} החלטות ▸</span>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+            <span style="font-size:12.5px;font-weight:600;direction:rtl;
+              white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${g.name}</span>
+            <span style="font-size:11px;color:var(--ink-soft);white-space:nowrap;flex-shrink:0">${g.rows.length} ▸</span>
           </div>
         </div>`;
       }).join('')}
     </div>`;
 
-  // If a judge was previously selected, re-render their decisions
-  if(window._libJudge && map[window._libJudge]){
-    _renderLibDecisions(window._libJudge, map[window._libJudge].rows);
+  // Re-render decisions if a group is selected
+  const dEl = $('v-lib-decisions');
+  if(sel){
+    const found = groups.find(g => g.name === sel);
+    if(found) _renderLibDecisions(found.name, found.rows);
+    else if(dEl) dEl.innerHTML = '';
   } else {
     if(dEl) dEl.innerHTML = '';
   }
 }
 
-function _libSelectJudge(name){
-  window._libJudge = window._libJudge === name ? null : name;
-  // Re-render judge list to toggle active state, then show/hide decisions
-  const rows = window._libRows || [];
-  const map = {};
-  rows.forEach(r=>{
-    const n = (r.proceeding||'').split('\n')[0]||'לא ידוע';
-    if(!map[n]) map[n]={name:n, rows:[]};
-    map[n].rows.push(r);
-  });
-  const judges = Object.values(map).sort((a,b)=>b.rows.length-a.rows.length);
-  const jEl = $('v-lib-judges');
-  if(jEl){
-    jEl.innerHTML = `
-    <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px">
-      ${rows.length} החלטות · ${judges.length===1?'שופט אחד':judges.length+' שופטים'}
-    </div>
-    <div style="display:flex;flex-direction:column;gap:4px">
-      ${judges.map(j=>{
-        const active = window._libJudge === j.name;
-        return `<div onclick="_libSelectJudge('${j.name.replace(/'/g,"\\'")}')"
-          style="padding:9px 11px;border-radius:8px;cursor:pointer;
-          border:1px solid ${active?'var(--accent)':'var(--line)'};
-          background:${active?'rgba(59,130,246,.08)':'var(--surface)'};
-          transition:all .12s">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:13px;font-weight:600;direction:rtl">${j.name}</span>
-            <span style="font-size:11.5px;color:var(--ink-soft);white-space:nowrap;margin-right:6px">${j.rows.length} החלטות ▸</span>
-          </div>
-        </div>`;
-      }).join('')}
-    </div>`;
-  }
+function _libSetGroupBy(by){
+  window._libGroupBy = by;
+  window._libSelected = null;
   const dEl = $('v-lib-decisions');
-  if(!window._libJudge){
-    if(dEl) dEl.innerHTML = '';
-    return;
-  }
-  if(map[window._libJudge]){
-    _renderLibDecisions(window._libJudge, map[window._libJudge].rows);
-  }
+  if(dEl) dEl.innerHTML = '';
+  _renderLibGroups(window._libRows || []);
+}
+
+function _libSelectGroup(name){
+  window._libSelected = window._libSelected === name ? null : name;
+  _renderLibGroups(window._libRows || []);
 }
 
 function _renderLibDecisions(judgeName, rows){
@@ -1647,7 +1655,7 @@ function _renderLibDecisions(judgeName, rows){
 
 // Refresh library after a download completes
 function _refreshLibAfterDownload(){
-  window._libJudge = null; // reset selection so fresh load shows all
+  window._libSelected = null;
   _renderLibrary();
 }
 

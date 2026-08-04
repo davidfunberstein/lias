@@ -270,6 +270,7 @@ def scrape_verdicts(
                         continue
                     verdict = dict(row)
                     verdict["pdf_path"] = ""
+                    verdict["judge_name"] = judge_name  # preserve search context
                     # Check if already downloaded from a previous session
                     pdf_name = _safe_name(
                         f"{row['date']}_{row['court']}_{row['case_num']}_{row['dec_type']}"
