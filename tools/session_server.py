@@ -119,24 +119,35 @@ _NET_OTP_SEL   = 'input[name*="otp"], input[name*="code"], input[placeholder*="�
 def _browser_remote():
     _state["step"] = "waiting_creds"
     try:
+        # Use a persistent profile so the portal doesn't flag the browser as bot
+        profile_dir = str(Path(os.path.expanduser("~")) / ".lias_invite_profile")
         with sync_playwright() as pw:
-            brow = pw.chromium.launch(headless=True,
-                args=["--disable-blink-features=AutomationControlled"])
-            ctx  = brow.new_context()
-            page = ctx.new_page()
+            ctx = pw.chromium.launch_persistent_context(
+                profile_dir,
+                headless=False,
+                args=["--disable-blink-features=AutomationControlled",
+                      "--start-maximized", "--no-first-run"],
+                ignore_https_errors=True,
+            )
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+
+            # Navigate to portal immediately so it loads naturally
+            try:
+                page.goto(P["url"], wait_until="domcontentloaded", timeout=60_000)
+            except Exception:
+                page.goto(P["url"], wait_until="commit", timeout=30_000)
             _pw_ready.set()
 
-            # Wait for user to submit credentials via web form
+            # Wait for credentials from the web form
             _creds_evt.wait(timeout=300)
             creds = _state.get("creds", {})
-            id_num = creds.get("id","").strip()
+            id_num   = creds.get("id","").strip()
             password = creds.get("password","").strip()
             if not id_num or not password:
                 raise ValueError("פרטים חסרים")
 
             _state["step"] = "logging_in"
-            page.goto(P["url"], wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(1000)
 
             # Fill credentials
             try:
@@ -166,7 +177,8 @@ def _browser_remote():
             _export_cookies(ctx)
             _state["step"] = "done"
             _state["ready"] = True
-            brow.close()
+            try: ctx.close()
+            except Exception: pass
     except Exception as e:
         _state["error"] = str(e)
         _state["step"]  = "failed"
