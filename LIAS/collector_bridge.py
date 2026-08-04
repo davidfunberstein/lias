@@ -1999,12 +1999,16 @@ def _refresh_judges_handler(payload: dict, ctx: JobContext) -> str:
     with sync_playwright() as pw:
         args = ["--disable-blink-features=AutomationControlled",
                 "--no-first-run", "--no-default-browser-check"]
-        try:
-            browser = pw.chromium.launch(channel="chrome", headless=headless, args=args)
-            print(f"[verdicts_refresh] using Google Chrome ({'headless' if headless else 'visible'})")
-        except Exception:
-            browser = pw.chromium.launch(headless=headless, args=args)
-            print(f"[verdicts_refresh] using Chromium ({'headless' if headless else 'visible'})")
+        if headless:
+            browser = pw.chromium.launch(headless=True, args=args)
+            print("[verdicts_refresh] using Chromium (headless)")
+        else:
+            try:
+                browser = pw.chromium.launch(channel="chrome", headless=False, args=args)
+                print("[verdicts_refresh] using Google Chrome (visible)")
+            except Exception:
+                browser = pw.chromium.launch(headless=False, args=args)
+                print("[verdicts_refresh] using Chromium (visible)")
 
         try:
             bctx = browser.new_context(

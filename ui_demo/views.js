@@ -1048,17 +1048,32 @@ function renderVerdicts(){
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
         <div>
           <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">בית משפט</label>
-          <select id="v-court" style="width:100%;padding:8px 10px;border-radius:8px;
-            border:1px solid var(--line);background:var(--surface);font-size:13px">
-            <option value="">-- טוען… --</option>
-          </select>
+          <div style="position:relative">
+            <input id="v-court-input" autocomplete="off" placeholder="הקלד לסינון…"
+              style="width:100%;box-sizing:border-box;padding:8px 32px 8px 10px;border-radius:8px;
+              border:1px solid var(--line);background:var(--surface);font-size:13px;direction:rtl">
+            <span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);
+              color:var(--ink-soft);pointer-events:none;font-size:11px">▾</span>
+            <div id="v-court-drop" style="display:none;position:absolute;top:100%;right:0;left:0;
+              background:var(--surface);border:1px solid var(--line);border-radius:8px;
+              box-shadow:0 4px 16px rgba(0,0,0,.15);max-height:200px;overflow-y:auto;
+              z-index:999;direction:rtl"></div>
+          </div>
+          <input id="v-court" type="hidden" value="">
         </div>
         <div>
-          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">שם שופט <span style="font-weight:400;color:var(--ink-soft)">(הקלד לסינון לפי תחילת מילה)</span></label>
-          <input id="v-judge" list="v-judge-list" autocomplete="off" placeholder="-- כל השופטים --"
-            style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;
-            border:1px solid var(--line);background:var(--surface);font-size:13px">
-          <datalist id="v-judge-list"></datalist>
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">שם שופט</label>
+          <div style="position:relative">
+            <input id="v-judge" autocomplete="off" placeholder="הקלד לסינון…"
+              style="width:100%;box-sizing:border-box;padding:8px 32px 8px 10px;border-radius:8px;
+              border:1px solid var(--line);background:var(--surface);font-size:13px;direction:rtl">
+            <span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);
+              color:var(--ink-soft);pointer-events:none;font-size:11px">▾</span>
+            <div id="v-judge-drop" style="display:none;position:absolute;top:100%;right:0;left:0;
+              background:var(--surface);border:1px solid var(--line);border-radius:8px;
+              box-shadow:0 4px 16px rgba(0,0,0,.15);max-height:200px;overflow-y:auto;
+              z-index:999;direction:rtl"></div>
+          </div>
           <div id="v-judge-status" style="font-size:11px;color:var(--ink-soft);margin-top:3px;height:14px"></div>
         </div>
         <div>
@@ -1096,29 +1111,116 @@ function renderVerdicts(){
   if($('v-from')) $('v-from').value = fmt(sixBack);
 
   _loadVerdictCourts();
+  _verdictAC('v-judge','v-judge-drop',[], null); // init listeners before court selected
   _showCachedVerdictResults();
 }
 
+/* ── Verdict autocomplete helper ───────────────────────────────────────────
+   _verdictAC(inputId, dropId, items, onSelect, hiddenId?)
+   items: [{label, value}] or [string]
+   Filters by substring (case-insensitive). Idempotent — safe to call
+   multiple times to update items (e.g. when judges reload for a new court). */
+function _verdictAC(inputId, dropId, items, onSelect, hiddenId){
+  const inp  = $(inputId);
+  const drop = $(dropId);
+  if(!inp || !drop) return;
+
+  const norm = items.map(it => typeof it==='string' ? {label:it, value:it} : it);
+  // Store current items on element so event handlers always see latest
+  inp._acItems   = norm;
+  inp._acOnSelect = onSelect;
+  inp._acHidden  = hiddenId;
+  inp._acDrop    = drop;
+
+  function renderDrop(filtered){
+    if(!filtered.length){ drop.style.display='none'; return; }
+    drop.innerHTML = filtered.slice(0,60).map(it=>
+      `<div tabindex="0" style="padding:7px 12px;cursor:pointer;font-size:13px;outline:none;
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+        data-val="${it.value}" data-lbl="${it.label.replace(/"/g,'&quot;')}"
+        onmouseenter="this.style.background='var(--accent-soft,#e8eeff)'"
+        onmouseleave="this.style.background=''">${it.label}</div>`
+    ).join('');
+    drop.style.display='block';
+  }
+
+  function filterItems(q){
+    const src = inp._acItems||[];
+    if(!q) return src;
+    const lq = q.toLowerCase();
+    return src.filter(it => it.label.toLowerCase().includes(lq));
+  }
+
+  // Attach listeners only once
+  if(inp._acBound) return;
+  inp._acBound = true;
+
+  inp.addEventListener('focus', () => renderDrop(filterItems(inp.value)));
+  inp.addEventListener('input', () => {
+    const hid = inp._acHidden;
+    if(hid && $(hid)) $(hid).value='';
+    renderDrop(filterItems(inp.value));
+  });
+  inp.addEventListener('keydown', e => {
+    if(e.key==='Escape'){ inp._acDrop.style.display='none'; }
+    if(e.key==='ArrowDown'){
+      const first = inp._acDrop.querySelector('[tabindex]');
+      if(first){ e.preventDefault(); first.focus(); }
+    }
+  });
+
+  drop.addEventListener('keydown', e=>{
+    const d = inp._acDrop;
+    if(e.key==='Escape'){ d.style.display='none'; inp.focus(); }
+    if(e.key==='ArrowDown' && document.activeElement?.nextElementSibling)
+      document.activeElement.nextElementSibling.focus();
+    if(e.key==='ArrowUp'){
+      const prev = document.activeElement?.previousElementSibling;
+      if(prev) prev.focus(); else inp.focus();
+    }
+    if(e.key==='Enter'){
+      const el = document.activeElement;
+      if(el?.dataset?.val) _acPick(el, inp);
+    }
+  });
+  drop.addEventListener('mousedown', e=>{
+    const el = e.target.closest('[data-val]');
+    if(!el) return;
+    e.preventDefault();
+    _acPick(el, inp);
+  });
+  document.addEventListener('click', e=>{
+    if(!inp.contains(e.target) && !drop.contains(e.target))
+      drop.style.display='none';
+  }, true);
+}
+
+function _acPick(el, inp){
+  inp.value = el.dataset.lbl;
+  const hid = inp._acHidden;
+  if(hid && $(hid)) $(hid).value = el.dataset.val;
+  inp._acDrop.style.display='none';
+  inp.focus();
+  if(inp._acOnSelect) inp._acOnSelect(el.dataset.val, el.dataset.lbl);
+}
+
 async function _loadVerdictCourts(){
-  const sel = $('v-court');
-  if(!sel) return;
   try{
     const r = await fetch('/api/verdicts/courts');
     const d = await r.json();
-    window._verdictCourts = d.courts || d;
-    sel.innerHTML = '<option value="">-- כל בתי המשפט --</option>'
-      + (d.courts||d).map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-    sel.onchange = () => _loadVerdictJudges(sel.value);
+    window._verdictCourts = (d.courts||d).map(c=>({label:c.name, value:String(c.id)}));
+    _verdictAC('v-court-input','v-court-drop', window._verdictCourts,
+      courtId => { _loadVerdictJudges(courtId); }, 'v-court');
   } catch(e){
-    sel.innerHTML = '<option value="">-- כל בתי המשפט --</option>';
+    window._verdictCourts = [];
+    _verdictAC('v-court-input','v-court-drop',[], null, 'v-court');
   }
 }
 
 async function _loadVerdictJudges(courtId){
-  const dl     = $('v-judge-list');
   const status = $('v-judge-status');
-  if(!dl) return;
-  dl.innerHTML = '';
+  const inp = $('v-judge');
+  if(inp){ inp.value=''; }
   window._verdictJudges = [];
   if(!courtId){ if(status) status.textContent=''; return; }
   if(status) status.textContent = 'טוען…';
@@ -1127,9 +1229,11 @@ async function _loadVerdictJudges(courtId){
     const d = await r.json();
     if(d.judges && d.judges.length){
       window._verdictJudges = d.judges.map(j=>j.name);
-      dl.innerHTML = d.judges.map(j=>`<option value="${j.name}">`).join('');
+      // Update items (idempotent — re-bind only updates items, not listeners)
+      _verdictAC('v-judge','v-judge-drop', window._verdictJudges, null);
       if(status) status.textContent = `${d.judges.length} שופטים בקש`;
     } else {
+      _verdictAC('v-judge','v-judge-drop',[], null);
       if(status) status.textContent = 'אין שופטים בקש — לחץ רענן שופטים';
     }
   } catch(e){

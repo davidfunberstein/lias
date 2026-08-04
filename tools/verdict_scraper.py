@@ -83,12 +83,16 @@ def scrape_verdicts(
             "--no-default-browser-check",
         ]
         log(f"פותח דפדפן {'ברקע' if headless else 'גלוי'} לחיפוש החלטות…")
-        try:
-            browser = pw.chromium.launch(channel="chrome", headless=headless, args=_args)
-            log("משתמש ב-Google Chrome")
-        except Exception:
-            browser = pw.chromium.launch(headless=headless, args=_args)
-            log("משתמש ב-Chromium")
+        if headless:
+            browser = pw.chromium.launch(headless=True, args=_args)
+            log("משתמש ב-Chromium (ברקע)")
+        else:
+            try:
+                browser = pw.chromium.launch(channel="chrome", headless=False, args=_args)
+                log("משתמש ב-Google Chrome (גלוי)")
+            except Exception:
+                browser = pw.chromium.launch(headless=False, args=_args)
+                log("משתמש ב-Chromium (גלוי)")
         context = browser.new_context(
             accept_downloads=True,
             locale="he-IL",
