@@ -1967,6 +1967,23 @@ except Exception as _ve:
 # ---------------------------------------------------------------------------
 # Judges cache refresh — visible Chrome, no portal login needed
 # ---------------------------------------------------------------------------
+def _dismiss_court_popup(page) -> None:
+    """Click 'אישור' on any terms/cookie popup on court.gov.il."""
+    try:
+        btn = page.locator(
+            'button:has-text("אישור"), '
+            'input[type="button"][value="אישור"], '
+            'input[type="submit"][value="אישור"], '
+            'a:has-text("אישור")'
+        )
+        if btn.count() > 0 and btn.first.is_visible(timeout=2000):
+            btn.first.click()
+            page.wait_for_timeout(500)
+            print("[verdicts_refresh] dismissed popup")
+    except Exception:
+        pass
+
+
 @handler("verdicts_refresh_judges")
 def _refresh_judges_handler(payload: dict, ctx: JobContext) -> str:
     from .api import _VERDICT_COURTS, _JUDGES_CACHE, _save_judges_cache_to_disk  # noqa: PLC0415
@@ -1997,17 +2014,37 @@ def _refresh_judges_handler(payload: dict, ctx: JobContext) -> str:
             page.set_default_timeout(30_000)
             ctx.progress(0.05, "מנווט לאיתור החלטות…")
             page.goto(COURT_URL, wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(1500)
+
+            # Dismiss any terms/cookie popup ("אישור")
+            _dismiss_court_popup(page)
+
+            # If redirected to homepage, navigate explicitly to the search page
+            if "LocateDecision" not in page.url:
+                print(f"[verdicts_refresh] redirected to {page.url} — navigating to search page")
+                page.goto(COURT_URL, wait_until="domcontentloaded", timeout=60_000)
+                page.wait_for_timeout(1500)
+                _dismiss_court_popup(page)
+
+            # Wait for court dropdown to appear
+            try:
+                page.wait_for_selector(
+                    "#LocateByParameters1_ddlCourt, #LocateByParameters1_ddlSelectCourt",
+                    timeout=15_000)
+            except Exception:
+                print("[verdicts_refresh] court dropdown not found — aborting")
+                return "court dropdown not found"
 
             for i, court in enumerate(courts):
                 cid = court["id"]
                 ctx.progress(0.05 + 0.9 * i / len(courts),
                              f"טוען שופטים: {court['name']}…")
                 try:
+                    _dismiss_court_popup(page)
                     try:
-                        page.select_option("#LocateByParameters1_ddlCourt", cid)
+                        page.select_option("#LocateByParameters1_ddlCourt", cid, timeout=8_000)
                     except Exception:
-                        page.select_option("#LocateByParameters1_ddlSelectCourt", cid)
+                        page.select_option("#LocateByParameters1_ddlSelectCourt", cid, timeout=8_000)
                     page.wait_for_load_state("domcontentloaded", timeout=30_000)
                     page.wait_for_timeout(1200)
                     judges = page.evaluate("""

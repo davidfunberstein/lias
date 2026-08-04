@@ -96,10 +96,27 @@ def scrape_verdicts(
         page = context.new_page()
         page.set_default_timeout(TIMEOUT_MS)
 
+        def _dismiss_popup():
+            try:
+                btn = page.locator(
+                    'button:has-text("אישור"), '
+                    'input[type="button"][value="אישור"], '
+                    'input[type="submit"][value="אישור"], '
+                    'a:has-text("אישור")'
+                )
+                if btn.count() > 0 and btn.first.is_visible(timeout=2000):
+                    btn.first.click()
+                    page.wait_for_timeout(500)
+                    log("dismissed popup")
+            except Exception:
+                pass
+
         try:
             log(f"navigating to {COURT_URL}")
             progress(0.02, "פותח את אתר בתי המשפט…")
             page.goto(COURT_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+            page.wait_for_timeout(1500)
+            _dismiss_popup()
 
             # ── Click "איתור החלטות" via doPostBack ──────────────────────────
             log("clicking איתור החלטות")
