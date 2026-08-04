@@ -2098,24 +2098,33 @@ async function openProfileManager(){
         ${p.id===activeId ? `
         <div style="margin-top:8px;padding:10px 12px;border-radius:10px;
           background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2)">
-          <div style="font-size:12px;font-weight:700;margin-bottom:8px">🍪 עוגיות פרופיל</div>
+          <div style="font-size:12px;font-weight:700;margin-bottom:10px">🍪 עוגיות פרופיל</div>
 
-          <div style="font-size:11.5px;font-weight:600;margin-bottom:4px;opacity:.8">ייצוא — שלח ללקוח</div>
-          <div style="font-size:11px;opacity:.6;margin-bottom:6px">
-            מייצא את ה-cookies הפעילות כ-JSON — שלח ללקוח שישתמש בהן דרך session_server.py
+          <!-- Step 1: connect to NET -->
+          <div style="font-size:11px;opacity:.7;margin-bottom:6px;line-height:1.5">
+            <b>שלב 1</b> — כנס לנט המשפט עם פרטי הלקוח (עוגיות אחידות לכל הפורטלים)
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-            ${['NET','BDR','ECA'].map(portal=>`
-              <button onclick="_exportProfileCookies('${portal}')"
-                style="padding:4px 12px;border-radius:8px;font-size:12px;cursor:pointer;
-                background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.35);color:inherit">
-                ⬆ ${portal}</button>`).join('')}
-          </div>
+          <button onclick="_profileOpenNet()"
+            style="width:100%;padding:7px;border-radius:8px;font-size:12.5px;font-weight:700;
+            cursor:pointer;background:rgba(59,130,246,.2);border:1px solid rgba(59,130,246,.4);
+            color:inherit;margin-bottom:10px">
+            🌐 פתח נט המשפט לכניסה
+          </button>
 
-          <div style="border-top:1px solid rgba(255,255,255,.1);padding-top:8px;margin-bottom:4px">
-            <div style="font-size:11.5px;font-weight:600;margin-bottom:4px;opacity:.8">ייבוא — קבל מלקוח</div>
-            <div style="font-size:11px;opacity:.6;margin-bottom:6px">
-              הלקוח מריץ <code style="font-size:10.5px">python tools/session_server.py bdr</code> → שולח JSON
+          <!-- Step 2: export -->
+          <div style="font-size:11px;opacity:.7;margin-bottom:6px;line-height:1.5">
+            <b>שלב 2</b> — לאחר כניסה מוצלחת, ייצא את העוגיות כ-JSON ושלח ללקוח
+          </div>
+          <button onclick="_exportProfileCookies('NET')"
+            style="width:100%;padding:7px;border-radius:8px;font-size:12.5px;font-weight:700;
+            cursor:pointer;background:rgba(99,102,241,.2);border:1px solid rgba(99,102,241,.4);
+            color:inherit;margin-bottom:12px">
+            ⬆ ייצא עוגיות → JSON להורדה
+          </button>
+
+          <div style="border-top:1px solid rgba(255,255,255,.1);padding-top:10px">
+            <div style="font-size:11px;opacity:.7;margin-bottom:6px">
+              <b>ייבוא</b> — קיבלת JSON מהלקוח (דרך session_server.py)?
             </div>
             <div style="display:flex;gap:8px;align-items:center">
               <input type="file" id="profile-cookie-file" accept=".json"
@@ -2123,11 +2132,11 @@ async function openProfileManager(){
                 style="font-size:11.5px;flex:1;min-width:0;cursor:pointer">
               <button onclick="_importProfileCookies()"
                 style="padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;
-                white-space:nowrap;background:rgba(99,102,241,.3);border:1px solid rgba(99,102,241,.5);
+                white-space:nowrap;background:rgba(34,197,94,.2);border:1px solid rgba(34,197,94,.4);
                 color:inherit">ייבא ⬇</button>
             </div>
           </div>
-          <div id="profile-cookie-status" style="font-size:11px;margin-top:5px;
+          <div id="profile-cookie-status" style="font-size:11px;margin-top:6px;
             color:var(--ink-soft);min-height:14px"></div>
         </div>` : ''}
         `).join('')
@@ -2171,6 +2180,37 @@ async function openProfileManager(){
 }
 
 let _profileCookieData = null;
+async function _profileOpenNet(){
+  const st = $('profile-cookie-status');
+  // Make sure the engine is running first
+  if(st) st.textContent = 'מפעיל מנוע…';
+  try{
+    const eng = await fetch('/api/engine/start',{method:'POST'}).then(r=>r.json()).catch(()=>({}));
+    if(eng.error) throw new Error(eng.error);
+  }catch(err){
+    if(st) st.textContent = '✗ לא ניתן להפעיל מנוע: '+err.message;
+    return;
+  }
+  // Show the NET browser window
+  if(st) st.textContent = 'פותח נט המשפט…';
+  try{
+    const r = await fetch('/api/proxy/actions/browser/show',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({portal:'NET'})
+    });
+    if(!r.ok){
+      // Fallback: open via engine action
+      await fetch('/api/actions/show_browser',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({portal:'NET'})
+      }).catch(()=>{});
+    }
+    if(st) st.textContent = '✓ דפדפן נט המשפט נפתח — התחבר, ואז לחץ "ייצא עוגיות"';
+  }catch(err){
+    if(st) st.textContent = '✗ '+err.message;
+  }
+}
+
 function _onProfileCookieChosen(input){
   _profileCookieData = null;
   const st = $('profile-cookie-status');
@@ -2192,8 +2232,15 @@ async function _exportProfileCookies(portal){
   const st = $('profile-cookie-status');
   if(st) st.textContent = `מייצא ${portal}…`;
   try{
+    // Ensure engine is up before exporting
+    await fetch('/api/engine/start',{method:'POST'}).catch(()=>{});
     const r = await fetch(`/api/tools/export_session?portal=${portal}`);
-    if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status);
+    if(!r.ok){
+      const err = (await r.json().catch(()=>({}))).detail || r.status;
+      if(r.status === 503)
+        throw new Error('דפדפן לא פתוח — לחץ "פתח נט המשפט", התחבר, ואז נסה שוב');
+      throw new Error(err);
+    }
     const data = await r.json();
     const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
     const a = document.createElement('a');
