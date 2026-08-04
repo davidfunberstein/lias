@@ -2182,30 +2182,26 @@ async function openProfileManager(){
 let _profileCookieData = null;
 async function _profileOpenNet(){
   const st = $('profile-cookie-status');
-  // Make sure the engine is running first
   if(st) st.textContent = 'מפעיל מנוע…';
-  try{
-    const eng = await fetch('/api/engine/start',{method:'POST'}).then(r=>r.json()).catch(()=>({}));
-    if(eng.error) throw new Error(eng.error);
-  }catch(err){
-    if(st) st.textContent = '✗ לא ניתן להפעיל מנוע: '+err.message;
-    return;
+  // Start engine if not running (same as startEngine() but inline)
+  try{ await fetch('/api/system/start',{method:'POST'}); }catch{}
+  // Wait up to 20s for engine to be alive
+  let alive = false;
+  for(let i=0;i<10;i++){
+    await new Promise(r=>setTimeout(r,1500));
+    try{ const h=await(await fetch('/api/health')).json(); if(h.full_ui_alive){alive=true;break;} }catch{}
   }
-  // Show the NET browser window
+  if(!alive){ if(st) st.textContent='✗ המנוע לא עלה — נסה להפעיל ידנית'; return; }
+  // Show the NET browser window via the proxy
   if(st) st.textContent = 'פותח נט המשפט…';
   try{
     const r = await fetch('/api/proxy/actions/browser/show',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({portal:'NET'})
     });
-    if(!r.ok){
-      // Fallback: open via engine action
-      await fetch('/api/actions/show_browser',{method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({portal:'NET'})
-      }).catch(()=>{});
-    }
-    if(st) st.textContent = '✓ דפדפן נט המשפט נפתח — התחבר, ואז לחץ "ייצא עוגיות"';
+    if(r.ok || r.status < 500)
+      if(st) st.textContent = '✓ דפדפן נט המשפט נפתח — התחבר עם פרטי הלקוח, ואז לחץ "ייצא עוגיות"';
+    else throw new Error(r.status);
   }catch(err){
     if(st) st.textContent = '✗ '+err.message;
   }
@@ -2233,7 +2229,7 @@ async function _exportProfileCookies(portal){
   if(st) st.textContent = `מייצא ${portal}…`;
   try{
     // Ensure engine is up before exporting
-    await fetch('/api/engine/start',{method:'POST'}).catch(()=>{});
+    await fetch('/api/system/start',{method:'POST'}).catch(()=>{});
     const r = await fetch(`/api/tools/export_session?portal=${portal}`);
     if(!r.ok){
       const err = (await r.json().catch(()=>({}))).detail || r.status;
