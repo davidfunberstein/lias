@@ -1109,7 +1109,7 @@ function renderVerdicts(){
 
       <div style="display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
         <span style="font-size:14px;font-weight:700">📚 ספריית החלטות שהורדו</span>
-        <button onclick="window._libSelected=null;_renderLibrary()" title="רענן"
+        <button onclick="window._libSelLevel1=null;window._libSelLevel2=null;_renderLibrary()" title="רענן"
           style="padding:4px 10px;border-radius:7px;border:1px solid var(--line);
           background:var(--surface);font-size:12px;cursor:pointer">↺ רענן</button>
       </div>
@@ -1117,7 +1117,10 @@ function renderVerdicts(){
       <!-- Group list (judge/subject toggle + items) -->
       <div id="v-lib-groups" style="flex-shrink:0"></div>
 
-      <!-- Decisions for selected group — empty until a group is clicked -->
+      <!-- Level-2: judges within selected subject (subject mode only) -->
+      <div id="v-lib-level2" style="flex-shrink:0"></div>
+
+      <!-- Decisions for selected judge/group -->
       <div id="v-lib-decisions"></div>
 
     </div>
@@ -1550,8 +1553,9 @@ function _verdictSelectAll(){ document.querySelectorAll('.v-row-cb').forEach(cb=
 function _verdictDeselectAll(){ document.querySelectorAll('.v-row-cb').forEach(cb=>cb.checked=false); _verdictUpdateCount(); }
 
 // ── Left panel: library of downloaded decisions ───────────────────────────
-// window._libGroupBy: 'judge' | 'subject'
-// window._libSelected: currently selected group name
+// window._libGroupBy:    'judge' | 'subject'
+// window._libSelLevel1:  selected group name (judge name OR subject name)
+// window._libSelLevel2:  selected judge name within a subject (subject mode only)
 
 async function _renderLibrary(){
   const gEl = $('v-lib-groups');
@@ -1575,9 +1579,8 @@ async function _renderLibrary(){
     return;
   }
 
-  const hasJudge = rows.some(r => r.judge_name);
   if(window._libGroupBy === undefined){
-    window._libGroupBy = hasJudge ? 'judge' : 'subject';
+    window._libGroupBy = rows.some(r => r.judge_name) ? 'judge' : 'subject';
   }
 
   _renderLibGroups(rows);
@@ -1595,66 +1598,114 @@ function _libGroupRows(rows, by){
   return Object.values(map).sort((a,b) => b.rows.length - a.rows.length);
 }
 
+function _libGroupItem(g, active, onclick){
+  return `<div onclick="${onclick}"
+    style="padding:8px 11px;border-radius:8px;cursor:pointer;
+    border:1px solid ${active?'var(--accent)':'var(--line)'};
+    background:${active?'rgba(59,130,246,.08)':'var(--surface)'};
+    transition:all .12s">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+      <span style="font-size:12.5px;font-weight:600;direction:rtl;
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${g.name}</span>
+      <span style="font-size:11px;color:var(--ink-soft);white-space:nowrap;flex-shrink:0">${g.rows.length} ▸</span>
+    </div>
+  </div>`;
+}
+
+function _libEsc(s){ return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+
 function _renderLibGroups(rows){
-  const gEl = $('v-lib-groups');   // right panel
+  const gEl = $('v-lib-groups');
   if(!gEl) return;
-  const by     = window._libGroupBy || 'subject';
-  const sel    = window._libSelected || null;
+  const by  = window._libGroupBy || 'judge';
+  const sel = window._libSelLevel1 || null;
   const groups = _libGroupRows(rows, by);
-  const hasJudge = rows.some(r => r.judge_name);
+
+  const btn = (label, mode) => {
+    const active = by === mode;
+    return `<button onclick="_libSetGroupBy('${mode}')"
+      style="padding:3px 10px;border-radius:5px;font-size:11.5px;cursor:pointer;
+      border:1px solid ${active?'var(--accent)':'var(--line)'};
+      background:${active?'var(--accent)':'var(--surface)'};
+      color:${active?'#fff':'inherit'}">${label}</button>`;
+  };
 
   gEl.innerHTML = `
     <div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
       <span style="font-size:11.5px;color:var(--ink-soft)">${rows.length} החלטות ·</span>
-      ${hasJudge ? `
-      <button onclick="_libSetGroupBy('judge')"
-        style="padding:3px 10px;border-radius:5px;font-size:11.5px;cursor:pointer;
-        border:1px solid ${by==='judge'?'var(--accent)':'var(--line)'};
-        background:${by==='judge'?'var(--accent)':'var(--surface)'};
-        color:${by==='judge'?'#fff':'inherit'}">לפי שופט</button>` : ''}
-      <button onclick="_libSetGroupBy('subject')"
-        style="padding:3px 10px;border-radius:5px;font-size:11.5px;cursor:pointer;
-        border:1px solid ${by==='subject'?'var(--accent)':'var(--line)'};
-        background:${by==='subject'?'var(--accent)':'var(--surface)'};
-        color:${by==='subject'?'#fff':'inherit'}">לפי נושא</button>
+      ${btn('לפי שופט','judge')}
+      ${btn('לפי נושא','subject')}
     </div>
     <div style="display:flex;flex-direction:column;gap:4px">
-      ${groups.map(g=>{
-        const active = sel === g.name;
-        return `<div onclick="_libSelectGroup('${g.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')"
-          style="padding:8px 11px;border-radius:8px;cursor:pointer;
-          border:1px solid ${active?'var(--accent)':'var(--line)'};
-          background:${active?'rgba(59,130,246,.08)':'var(--surface)'};
-          transition:all .12s">
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
-            <span style="font-size:12.5px;font-weight:600;direction:rtl;
-              white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${g.name}</span>
-            <span style="font-size:11px;color:var(--ink-soft);white-space:nowrap;flex-shrink:0">${g.rows.length} ▸</span>
-          </div>
-        </div>`;
-      }).join('')}
+      ${groups.map(g => _libGroupItem(g, sel===g.name,
+        `_libSelectLevel1('${_libEsc(g.name)}')`)).join('')}
     </div>`;
 
-  // If a group is selected, populate the LEFT panel
-  const dEl = $('v-lib-decisions');
-  if(sel && dEl){
+  // In judge mode: clicking level-1 shows decisions directly
+  // In subject mode: clicking level-1 shows judges (level-2), decisions need another click
+  if(by === 'judge' && sel){
     const found = groups.find(g => g.name === sel);
+    if(found){
+      $('v-lib-level2') && ($('v-lib-level2').innerHTML = '');
+      _renderLibDecisions(found.name, found.rows);
+    }
+  } else if(by === 'subject' && sel){
+    const found = groups.find(g => g.name === sel);
+    if(found) _renderLibLevel2(found.rows);
+    else {
+      $('v-lib-level2') && ($('v-lib-level2').innerHTML = '');
+      $('v-lib-decisions') && ($('v-lib-decisions').innerHTML = '');
+    }
+  } else {
+    $('v-lib-level2') && ($('v-lib-level2').innerHTML = '');
+    $('v-lib-decisions') && ($('v-lib-decisions').innerHTML = '');
+  }
+}
+
+function _renderLibLevel2(subjectRows){
+  const el = $('v-lib-level2');
+  if(!el) return;
+  const sel2 = window._libSelLevel2 || null;
+  // Group by judge within this subject
+  const judgeGroups = _libGroupRows(subjectRows, 'judge');
+  if(!judgeGroups.length){ el.innerHTML=''; _renderLibDecisions('', subjectRows); return; }
+
+  el.innerHTML = `
+    <div style="margin-bottom:6px;font-size:11.5px;color:var(--ink-soft);padding-right:2px">שופטים בנושא זה:</div>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      ${judgeGroups.map(g => _libGroupItem(g, sel2===g.name,
+        `_libSelectLevel2('${_libEsc(g.name)}')`)).join('')}
+    </div>`;
+
+  if(sel2){
+    const found = judgeGroups.find(g => g.name === sel2);
     if(found) _renderLibDecisions(found.name, found.rows);
-    else dEl.innerHTML = '<div style="color:var(--ink-soft);font-size:12.5px;padding:16px 0;text-align:center">בחר שופט או נושא מהצד הימני</div>';
-  } else if(dEl && !sel){
-    dEl.innerHTML = '<div style="color:var(--ink-soft);font-size:12.5px;padding:16px 0;text-align:center">בחר שופט או נושא מהצד הימני</div>';
+    else $('v-lib-decisions') && ($('v-lib-decisions').innerHTML = '');
+  } else {
+    $('v-lib-decisions') && ($('v-lib-decisions').innerHTML = '');
   }
 }
 
 function _libSetGroupBy(by){
   window._libGroupBy = by;
-  window._libSelected = null;
+  window._libSelLevel1 = null;
+  window._libSelLevel2 = null;
   _renderLibGroups(window._libRows || []);
 }
 
-function _libSelectGroup(name){
-  window._libSelected = window._libSelected === name ? null : name;
+function _libSelectLevel1(name){
+  window._libSelLevel1 = window._libSelLevel1 === name ? null : name;
+  window._libSelLevel2 = null;
   _renderLibGroups(window._libRows || []);
+}
+
+function _libSelectLevel2(name){
+  window._libSelLevel2 = window._libSelLevel2 === name ? null : name;
+  const rows = window._libRows || [];
+  const by = window._libGroupBy || 'judge';
+  const sel1 = window._libSelLevel1;
+  const subjectRows = _libGroupRows(rows, by).find(g => g.name === sel1)?.rows || [];
+  _renderLibLevel2(subjectRows);
 }
 
 function _renderLibDecisions(judgeName, rows){
@@ -1701,32 +1752,7 @@ function _refreshLibAfterDownload(){
 
 function _openVerdictPdf(filename, title){
   const url = '/api/verdicts/download/' + encodeURIComponent(filename);
-  let modal = document.getElementById('v-pdf-overlay');
-  if(!modal){
-    modal = document.createElement('div');
-    modal.id = 'v-pdf-overlay';
-    modal.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);' +
-      'display:flex;align-items:center;justify-content:center';
-    modal.addEventListener('click', e => { if(e.target===modal) modal.style.display='none'; });
-    document.body.appendChild(modal);
-  }
-  modal.style.display = 'flex';
-  modal.innerHTML = `
-    <div style="background:var(--surface);border-radius:12px;width:88vw;height:90vh;
-      display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3)">
-      <div style="padding:10px 16px;border-bottom:1px solid var(--line);flex-shrink:0;
-        display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:13px;font-weight:600;direction:rtl">${title||''}</span>
-        <div style="display:flex;gap:8px;align-items:center">
-          <a href="${url}" download style="padding:4px 10px;border-radius:6px;border:1px solid var(--line);
-            background:var(--surface);font-size:12px;cursor:pointer;text-decoration:none;color:inherit">⬇ הורד</a>
-          <button onclick="document.getElementById('v-pdf-overlay').style.display='none'"
-            style="padding:4px 10px;border-radius:6px;border:1px solid var(--line);
-            background:var(--surface);cursor:pointer;font-size:13px">✕</button>
-        </div>
-      </div>
-      <iframe src="${url}" style="flex:1;border:none"></iframe>
-    </div>`;
+  openDocUrl(url, title || filename);
 }
 
 function _serveDownloadedPdfs(pdfPaths){

@@ -38,9 +38,43 @@ function _syncOverlays(){
     $('fv-bg').classList.remove('on');
   }
 }
+/* Pin button dispatcher — works for both regular docs (numeric ID) and URL-based docs (verdicts). */
+function _fvPinOrSave(){
+  const url  = $('fv-frame').dataset.url || '';
+  const name = $('fv-title').textContent || '';
+  // Regular doc: /api/doc/{numeric-id}
+  const m = url.match(/\/api\/doc\/(\d+)$/);
+  if(m){ pinDoc(+m[1], name, K?.sub_number||''); return; }
+  // Verdict PDF or other URL — show a simple note prompt
+  const note = prompt('הערה לתייק (אופציונלי):', name);
+  if(note === null) return; // cancelled
+  toast('📌 תויק: ' + (note || name));
+}
+
 function openDoc(id, name){
   viewerCtx = null;
   _showViewer(id, name);
+}
+
+/* Open any URL directly in the floating viewer (used by verdicts PDFs). */
+function openDocUrl(url, title){
+  viewerCtx = null;
+  if($('fvl').classList.contains('on')){ $('fvl').classList.remove('on'); }
+  $('fv-title').textContent = title || 'מסמך';
+  $('fv-frame').dataset.url = url;
+  $('fv-prev').disabled = true;
+  $('fv-next').disabled = true;
+  $('fv').classList.add('on');
+  _syncOverlays();
+  let frame = $('fv-frame');
+  const docEl = $('fv-doc'), fb = $('fv-fallback');
+  try { frame.contentWindow.onbeforeunload = null; } catch(_) {}
+  frame.removeAttribute('src');
+  const nf = frame.cloneNode();
+  frame.parentNode.replaceChild(nf, frame);
+  nf.style.display = 'none'; docEl.style.display = 'none'; fb.style.display = 'none';
+  nf.src = url;
+  nf.style.display = 'block';
 }
 function openDocAt(src, idx){
   const list = viewerSources[src]||[];

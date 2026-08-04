@@ -424,7 +424,7 @@
     <div class="fv-title" id="fv-title"></div>
     <button class="fv-btn" id="fv-prev" onclick="viewerStep(1)" title="המסמך הקודם">→</button>
     <button class="fv-btn" id="fv-next" onclick="viewerStep(-1)" title="המסמך הבא">←</button>
-    <button class="fv-btn" onclick="pinDoc(+($('fv-frame').dataset.url.split('/').pop()), $('fv-title').textContent, K?.sub_number||'')" title="תייק עם הערה — נשמרת בסימנייה עם מצביע למקור, בלי לשכפל את הקובץ">📌 תייק</button>
+    <button class="fv-btn" onclick="_fvPinOrSave()" title="תייק עם הערה — נשמרת בסימנייה עם מצביע למקור, בלי לשכפל את הקובץ">📌 תייק</button>
     <button class="fv-btn" id="fv-dock" onclick="toggleDockViewer()" title="הצמד לצד — מאפשר לגלול את הרשימה והמסמך יחד">⇤ לצד</button>
     <button class="fv-btn" id="fv-open" onclick="const u=$('fv-frame').dataset.url; if(u) window.open(u,'_blank'); else toast('אין קובץ לפתיחה', true);" title="פתח בטאב נפרד">⤢</button>
   </div>
