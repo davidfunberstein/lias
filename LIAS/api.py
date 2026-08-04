@@ -1552,13 +1552,40 @@ async def verdicts_download_selected(request: Request):
 @app.get("/api/verdicts/download/{filename}")
 def verdicts_download(filename: str):
     """Serve a downloaded verdict PDF."""
-    # Prevent path traversal
     safe = Path(filename).name
     path = config.COURT_DOCS_DIR / "verdicts" / "pdfs" / safe
     if not path.exists():
         raise HTTPException(404, "file not found")
     return FileResponse(str(path), media_type="application/pdf",
                         headers={"Content-Disposition": "inline"})
+
+
+@app.get("/api/verdicts/library")
+def verdicts_library():
+    """Return all downloaded verdicts across all run files, deduplicated by case_num."""
+    import json as _json
+    results_dir = config.COURT_DOCS_DIR / "verdicts"
+    if not results_dir.exists():
+        return {"verdicts": []}
+    pdf_base = results_dir / "pdfs"
+    seen: dict[str, dict] = {}  # case_num → verdict row
+    for run_file in sorted(results_dir.glob("run_*.json")):
+        try:
+            data = _json.loads(run_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for v in data.get("verdicts", []):
+            p = v.get("pdf_path", "")
+            if not p:
+                continue
+            # Validate PDF still on disk
+            if not (pdf_base / Path(p).name).exists():
+                continue
+            key = v.get("case_num") or p
+            if key not in seen or v.get("date", "") > seen[key].get("date", ""):
+                seen[key] = v
+    rows = sorted(seen.values(), key=lambda r: r.get("date", ""), reverse=True)
+    return {"verdicts": rows}
 
 
 # --- SSE ---------------------------------------------------------------------

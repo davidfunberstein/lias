@@ -1023,89 +1023,101 @@ async function viewTranscription(name){
 function renderVerdicts(){
   $('crumbs').innerHTML = '';
   $('view').innerHTML = `
-  <div class="hello">
-    <div class="small">פורטל בתי המשפט הממשלתי · ציבורי · ללא הזדהות</div>
-    <h1>החלטות שפורסמו</h1>
-    <div style="max-width:560px;margin-top:8px;font-size:13.5px;line-height:1.7;color:var(--ink-soft)">
-      בתי המשפט בישראל מפרסמים חלק מהחלטותיהם לציבור הרחב דרך
-      <a href="https://www.court.gov.il/NGCS.Web.Site/LocateDecisions/LocateDecisionQuering.aspx"
-         target="_blank" style="color:var(--accent)">נט המשפט</a>.
-      ניתן לחפש לפי בית משפט, שם שופט ותאריכים ולהוריד PDF.
-    </div>
+  <!-- Full-width title strip -->
+  <div style="padding:14px 20px 10px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px">
+    <h1 style="margin:0;font-size:16px;font-weight:700">החלטות שפורסמו</h1>
+    <span style="font-size:12px;color:var(--ink-soft)">פורטל בתי המשפט · ציבורי · ללא הזדהות</span>
   </div>
-  <div class="grid">
-    <div class="card c8">
-      <div class="kpi-top" style="display:flex;justify-content:space-between;align-items:center">
-        <h2 style="margin:0">חיפוש החלטות</h2>
-        <button onclick="verdictRefreshJudges()" id="v-refresh-btn"
-          style="padding:7px 14px;border-radius:8px;border:1px solid var(--line);
-          background:var(--surface);font-size:12.5px;cursor:pointer">
-          🔄 רענן שופטים
-        </button>
-      </div>
-      <div id="v-refresh-status" style="font-size:11.5px;color:var(--ink-soft);margin-top:4px;min-height:16px"></div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
-        <div>
-          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">בית משפט</label>
-          <div style="position:relative">
-            <input id="v-court-input" autocomplete="off" placeholder="הקלד לסינון…"
-              style="width:100%;box-sizing:border-box;padding:8px 32px 8px 10px;border-radius:8px;
-              border:1px solid var(--line);background:var(--surface);font-size:13px;direction:rtl">
-            <span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);
-              color:var(--ink-soft);pointer-events:none;font-size:11px">▾</span>
-            <div id="v-court-drop" style="display:none;position:absolute;top:100%;right:0;left:0;
-              background:var(--surface);border:1px solid var(--line);border-radius:8px;
-              box-shadow:0 4px 16px rgba(0,0,0,.15);max-height:200px;overflow-y:auto;
-              z-index:999;direction:rtl"></div>
-          </div>
-          <input id="v-court" type="hidden" value="">
-        </div>
-        <div>
-          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">שם שופט</label>
-          <div style="position:relative">
-            <input id="v-judge" autocomplete="off" placeholder="הקלד לסינון…"
-              style="width:100%;box-sizing:border-box;padding:8px 32px 8px 10px;border-radius:8px;
-              border:1px solid var(--line);background:var(--surface);font-size:13px;direction:rtl">
-            <span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);
-              color:var(--ink-soft);pointer-events:none;font-size:11px">▾</span>
-            <div id="v-judge-drop" style="display:none;position:absolute;top:100%;right:0;left:0;
-              background:var(--surface);border:1px solid var(--line);border-radius:8px;
-              box-shadow:0 4px 16px rgba(0,0,0,.15);max-height:200px;overflow-y:auto;
-              z-index:999;direction:rtl"></div>
-          </div>
-          <div id="v-judge-status" style="font-size:11px;color:var(--ink-soft);margin-top:3px;height:14px"></div>
-        </div>
-        <div>
-          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">מתאריך</label>
-          <input id="v-from" type="date" style="width:100%;box-sizing:border-box;padding:8px 10px;
-            border-radius:8px;border:1px solid var(--line);background:var(--surface);font-size:13px">
-        </div>
-        <div>
-          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">עד תאריך</label>
-          <input id="v-to" type="date" style="width:100%;box-sizing:border-box;padding:8px 10px;
-            border-radius:8px;border:1px solid var(--line);background:var(--surface);font-size:13px">
-        </div>
-      </div>
+  <!-- Split layout: left = library, right = download -->
+  <div style="display:flex;height:calc(100vh - 110px);min-height:0">
 
-      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center">
-        <button onclick="searchVerdicts()" style="padding:9px 20px;border-radius:10px;
-          border:none;background:var(--accent);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer">
-          🔍 חפש
-        </button>
-        <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;cursor:pointer;user-select:none">
-          <input type="checkbox" id="v-headless" checked style="cursor:pointer">
-          הסתר דפדפן
-        </label>
-        <span id="v-status" style="font-size:12px;color:var(--ink-soft)"></span>
+    <!-- LEFT: library of downloaded decisions -->
+    <div style="flex:0 0 46%;min-width:0;border-left:1px solid var(--line);
+                overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+        <span style="font-size:14px;font-weight:700">📚 ספריית החלטות שהורדו</span>
+        <button onclick="_renderLibrary()" title="רענן"
+          style="padding:4px 10px;border-radius:7px;border:1px solid var(--line);
+          background:var(--surface);font-size:12px;cursor:pointer">↺</button>
       </div>
+      <div id="v-lib-judges" style="flex-shrink:0"></div>
+      <div id="v-lib-decisions"></div>
     </div>
 
-    <!-- split layout in a c12 flex container -->
-    <div class="c12" style="display:flex;gap:16px;align-items:flex-start;min-width:0">
-      <div id="v-results-dl"     style="flex:1 1 60%;min-width:0;overflow:hidden"></div>
-      <div id="v-results-judges" style="flex:0 0 280px;min-width:240px"></div>
+    <!-- RIGHT: search + download -->
+    <div style="flex:1;min-width:0;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px">
+
+      <!-- Search form -->
+      <div class="card" style="padding:14px 16px;flex-shrink:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h2 style="margin:0;font-size:14px">🔍 הורדה מנט המשפט</h2>
+          <button onclick="verdictRefreshJudges()" id="v-refresh-btn"
+            style="padding:5px 12px;border-radius:7px;border:1px solid var(--line);
+            background:var(--surface);font-size:12px;cursor:pointer">🔄 רענן שופטים</button>
+        </div>
+        <div id="v-refresh-status" style="font-size:11px;color:var(--ink-soft);min-height:14px;margin-bottom:8px"></div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <label style="font-size:11.5px;font-weight:600;display:block;margin-bottom:3px">בית משפט</label>
+            <div style="position:relative">
+              <input id="v-court-input" autocomplete="off" placeholder="הקלד לסינון…"
+                style="width:100%;box-sizing:border-box;padding:7px 28px 7px 8px;border-radius:7px;
+                border:1px solid var(--line);background:var(--surface);font-size:12.5px;direction:rtl">
+              <span style="position:absolute;left:7px;top:50%;transform:translateY(-50%);
+                color:var(--ink-soft);pointer-events:none;font-size:10px">▾</span>
+              <div id="v-court-drop" style="display:none;position:absolute;top:100%;right:0;left:0;
+                background:var(--surface);border:1px solid var(--line);border-radius:7px;
+                box-shadow:0 4px 16px rgba(0,0,0,.15);max-height:200px;overflow-y:auto;
+                z-index:999;direction:rtl"></div>
+            </div>
+            <input id="v-court" type="hidden" value="">
+          </div>
+          <div>
+            <label style="font-size:11.5px;font-weight:600;display:block;margin-bottom:3px">שם שופט</label>
+            <div style="position:relative">
+              <input id="v-judge" autocomplete="off" placeholder="הקלד לסינון…"
+                style="width:100%;box-sizing:border-box;padding:7px 28px 7px 8px;border-radius:7px;
+                border:1px solid var(--line);background:var(--surface);font-size:12.5px;direction:rtl">
+              <span style="position:absolute;left:7px;top:50%;transform:translateY(-50%);
+                color:var(--ink-soft);pointer-events:none;font-size:10px">▾</span>
+              <div id="v-judge-drop" style="display:none;position:absolute;top:100%;right:0;left:0;
+                background:var(--surface);border:1px solid var(--line);border-radius:7px;
+                box-shadow:0 4px 16px rgba(0,0,0,.15);max-height:200px;overflow-y:auto;
+                z-index:999;direction:rtl"></div>
+            </div>
+            <div id="v-judge-status" style="font-size:10.5px;color:var(--ink-soft);margin-top:2px;height:13px"></div>
+          </div>
+          <div>
+            <label style="font-size:11.5px;font-weight:600;display:block;margin-bottom:3px">מתאריך</label>
+            <input id="v-from" type="date" style="width:100%;box-sizing:border-box;padding:7px 8px;
+              border-radius:7px;border:1px solid var(--line);background:var(--surface);font-size:12.5px">
+          </div>
+          <div>
+            <label style="font-size:11.5px;font-weight:600;display:block;margin-bottom:3px">עד תאריך</label>
+            <input id="v-to" type="date" style="width:100%;box-sizing:border-box;padding:7px 8px;
+              border-radius:7px;border:1px solid var(--line);background:var(--surface);font-size:12.5px">
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center">
+          <button onclick="searchVerdicts()" style="padding:8px 18px;border-radius:8px;
+            border:none;background:var(--accent);color:#fff;font-weight:700;font-size:13px;cursor:pointer">
+            🔍 חפש
+          </button>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;user-select:none">
+            <input type="checkbox" id="v-headless" checked style="cursor:pointer">
+            הסתר דפדפן
+          </label>
+          <span id="v-status" style="font-size:11.5px;color:var(--ink-soft)"></span>
+        </div>
+      </div>
+
+      <!-- Download results -->
+      <div id="v-results-dl" style="flex:1"></div>
     </div>
+
   </div>
   `;
 
@@ -1117,7 +1129,8 @@ function renderVerdicts(){
 
   _loadVerdictCourts();
   _verdictAC('v-judge','v-judge-drop',[], null);
-  _showCachedVerdictResults(); // show previous run silently (no scroll)
+  _showCachedVerdictResults();
+  _renderLibrary();
 }
 
 /* ── Verdict autocomplete helper ───────────────────────────────────────────
@@ -1362,10 +1375,8 @@ async function _showCachedVerdictResults(){
     window._verdictSearchParams = d.search_params || {};
     window._verdictSortKey = window._verdictSortKey || 'date';
     window._verdictSortAsc = window._verdictSortAsc ?? false;
-    window._verdictJudgeFilter = null; // reset judge filter on fresh load
     const rows = d.verdicts||[];
     _renderVerdictResults(rows);
-    _renderJudgesPanel(rows);
   } catch(e){}
 }
 
@@ -1492,57 +1503,152 @@ function _verdictSelectNew(){
 function _verdictSelectAll(){ document.querySelectorAll('.v-row-cb').forEach(cb=>cb.checked=true); _verdictUpdateCount(); }
 function _verdictDeselectAll(){ document.querySelectorAll('.v-row-cb').forEach(cb=>cb.checked=false); _verdictUpdateCount(); }
 
-// ── Judges summary panel ──────────────────────────────────────────────────
-function _renderJudgesPanel(rows){
-  const el = $('v-results-judges');
-  if(!el || !rows.length){ if(el) el.innerHTML=''; return; }
+// ── Left panel: library of downloaded decisions ───────────────────────────
+async function _renderLibrary(){
+  const jEl = $('v-lib-judges');
+  const dEl = $('v-lib-decisions');
+  if(!jEl) return;
+  jEl.innerHTML = '<span style="font-size:12px;color:var(--ink-soft)">טוען…</span>';
+  if(dEl) dEl.innerHTML = '';
 
-  // Group by judge
+  let rows = [];
+  try{
+    const r = await fetch('/api/verdicts/library');
+    const d = await r.json();
+    rows = d.verdicts || [];
+  } catch(e){
+    jEl.innerHTML = '<span style="font-size:12px;color:var(--err,#e44)">שגיאה בטעינה</span>';
+    return;
+  }
+
+  if(!rows.length){
+    jEl.innerHTML = '<div style="font-size:12.5px;color:var(--ink-soft);padding:8px 0">טרם הורדו החלטות.</div>';
+    return;
+  }
+
+  // Group by judge (proceeding field)
   const map = {};
   rows.forEach(r=>{
-    const name = (r.proceeding||'').split('\n')[0]||'לא ידוע';
-    if(!map[name]) map[name]={name,total:0,dl:0,dates:[]};
-    map[name].total++;
-    if(r.pdf_path) map[name].dl++;
-    if(r.date) map[name].dates.push(r.date);
+    const name = (r.proceeding||'').split('\n')[0] || 'לא ידוע';
+    if(!map[name]) map[name] = {name, rows:[]};
+    map[name].rows.push(r);
   });
-  const judges = Object.values(map).sort((a,b)=>b.total-a.total);
+  const judges = Object.values(map).sort((a,b)=>b.rows.length - a.rows.length);
+  window._libRows = rows;
+  window._libJudge = window._libJudge || null;
 
-  el.innerHTML = `
-  <div class="card" style="padding:10px 12px;margin-bottom:4px">
-    <div style="font-size:13px;font-weight:600;margin-bottom:8px">👨‍⚖️ שופטים בתוצאות
-      <span style="font-weight:400;color:var(--ink-soft);font-size:11.5px">${judges.length===1?'שופט אחד':judges.length+' שופטים'}</span>
+  jEl.innerHTML = `
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px">
+      ${rows.length} החלטות · ${judges.length===1?'שופט אחד':judges.length+' שופטים'}
     </div>
-    <div style="max-height:60vh;overflow-y:auto">
+    <div style="display:flex;flex-direction:column;gap:4px">
       ${judges.map(j=>{
-        const pct = Math.round(j.dl/j.total*100);
-        const active = window._verdictJudgeFilter===j.name;
-        return `<div onclick="_verdictFilterByJudge('${j.name.replace(/'/g,"\\'")}')"
-          style="padding:8px 10px;border-radius:8px;margin-bottom:4px;cursor:pointer;
+        const active = window._libJudge === j.name;
+        return `<div onclick="_libSelectJudge('${j.name.replace(/'/g,"\\'")}')"
+          style="padding:9px 11px;border-radius:8px;cursor:pointer;
           border:1px solid ${active?'var(--accent)':'var(--line)'};
-          background:${active?'var(--accent-soft,#dce8ff)':'var(--surface)'};
-          transition:background .15s">
+          background:${active?'rgba(59,130,246,.08)':'var(--surface)'};
+          transition:all .12s">
           <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:12.5px;font-weight:600">${j.name}</span>
-            <span style="font-size:11.5px;color:var(--ink-soft)">${j.total} פסיקות</span>
-          </div>
-          <div style="margin-top:4px;display:flex;align-items:center;gap:8px">
-            <div style="flex:1;height:4px;border-radius:2px;background:var(--surface2);overflow:hidden">
-              <div style="height:100%;width:${pct}%;background:var(--accent);border-radius:2px"></div>
-            </div>
-            <span style="font-size:11px;white-space:nowrap;color:${j.dl?'var(--accent)':'var(--ink-soft)'}">
-              ${j.dl ? `✓ ${j.dl} הורדו` : 'טרם הורד'}</span>
+            <span style="font-size:13px;font-weight:600;direction:rtl">${j.name}</span>
+            <span style="font-size:11.5px;color:var(--ink-soft);white-space:nowrap;margin-right:6px">${j.rows.length} החלטות ▸</span>
           </div>
         </div>`;
       }).join('')}
-    </div>
-  </div>`;
+    </div>`;
+
+  // If a judge was previously selected, re-render their decisions
+  if(window._libJudge && map[window._libJudge]){
+    _renderLibDecisions(window._libJudge, map[window._libJudge].rows);
+  } else {
+    if(dEl) dEl.innerHTML = '';
+  }
 }
 
-function _verdictFilterByJudge(name){
-  window._verdictJudgeFilter = window._verdictJudgeFilter===name ? null : name;
-  _renderVerdictResults(window._verdictRows||[]);
-  _renderJudgesPanel(window._verdictRows||[]); // re-render to update active state
+function _libSelectJudge(name){
+  window._libJudge = window._libJudge === name ? null : name;
+  // Re-render judge list to toggle active state, then show/hide decisions
+  const rows = window._libRows || [];
+  const map = {};
+  rows.forEach(r=>{
+    const n = (r.proceeding||'').split('\n')[0]||'לא ידוע';
+    if(!map[n]) map[n]={name:n, rows:[]};
+    map[n].rows.push(r);
+  });
+  const judges = Object.values(map).sort((a,b)=>b.rows.length-a.rows.length);
+  const jEl = $('v-lib-judges');
+  if(jEl){
+    jEl.innerHTML = `
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:6px">
+      ${rows.length} החלטות · ${judges.length===1?'שופט אחד':judges.length+' שופטים'}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      ${judges.map(j=>{
+        const active = window._libJudge === j.name;
+        return `<div onclick="_libSelectJudge('${j.name.replace(/'/g,"\\'")}')"
+          style="padding:9px 11px;border-radius:8px;cursor:pointer;
+          border:1px solid ${active?'var(--accent)':'var(--line)'};
+          background:${active?'rgba(59,130,246,.08)':'var(--surface)'};
+          transition:all .12s">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:13px;font-weight:600;direction:rtl">${j.name}</span>
+            <span style="font-size:11.5px;color:var(--ink-soft);white-space:nowrap;margin-right:6px">${j.rows.length} החלטות ▸</span>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+  const dEl = $('v-lib-decisions');
+  if(!window._libJudge){
+    if(dEl) dEl.innerHTML = '';
+    return;
+  }
+  if(map[window._libJudge]){
+    _renderLibDecisions(window._libJudge, map[window._libJudge].rows);
+  }
+}
+
+function _renderLibDecisions(judgeName, rows){
+  const el = $('v-lib-decisions');
+  if(!el) return;
+  const sorted = [...rows].sort((a,b)=>{
+    const da = a.date||'', db = b.date||'';
+    const sa = da.split('/').reverse().join(''), sb = db.split('/').reverse().join('');
+    return sb.localeCompare(sa);
+  });
+  el.innerHTML = `
+    <div class="card" style="padding:10px 12px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px;direction:rtl">
+        ${judgeName}
+        <span style="font-weight:400;font-size:11.5px;color:var(--ink-soft);margin-right:6px">${sorted.length} החלטות שהורדו</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        ${sorted.map(row=>{
+          const fn = (row.pdf_path||'').split('/').pop();
+          const href = fn ? `/api/verdicts/download/${encodeURIComponent(fn)}` : '';
+          return `<div style="padding:8px 10px;border-radius:7px;background:var(--surface2);direction:rtl;
+            display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <div style="min-width:0">
+              <div style="font-size:11.5px;font-weight:600">${row.dec_type||''} · ${row.date||''}</div>
+              <div style="font-size:11px;color:var(--ink-soft);margin-top:2px;
+                white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${row.case_num||''} ${row.court?'· '+row.court:''}</div>
+            </div>
+            ${href
+              ? `<a href="${href}" target="_blank"
+                  style="flex-shrink:0;padding:5px 12px;border-radius:6px;
+                  border:none;background:var(--accent);color:#fff;font-size:12px;
+                  font-weight:600;text-decoration:none;white-space:nowrap">📄 קרא</a>`
+              : ''}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+// Refresh library after a download completes
+function _refreshLibAfterDownload(){
+  window._libJudge = null; // reset selection so fresh load shows all
+  _renderLibrary();
 }
 
 function _serveDownloadedPdfs(pdfPaths){
@@ -1596,7 +1702,8 @@ function _pollVerdictDownload(jobId){
       if(job.status==='done'){
         clearInterval(t);
         if(st) st.textContent='✓ ההורדה הסתיימה';
-        _showCachedVerdictResults(); // refresh table with new pdf_paths
+        _showCachedVerdictResults(); // refresh download table
+        _renderLibrary();            // refresh library with new PDFs
       } else if(job.status==='error'){
         clearInterval(t);
         if(st) st.textContent=`✗ שגיאה: ${job.error||''}`;
