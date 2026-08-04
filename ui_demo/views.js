@@ -1137,6 +1137,7 @@ function renderVerdicts(){
 
   _loadVerdictCourts();
   _verdictAC('v-judge','v-judge-drop',[], null);
+  _showCachedVerdictResults();
   _renderLibrary();
 }
 
