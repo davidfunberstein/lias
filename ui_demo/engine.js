@@ -110,19 +110,25 @@ async function startEngine(){
    code. The engine enforces this with a lock; this is the friendly front door
    so the user is told *before* a job is queued and fails. */
 const PORTAL_JOB_KINDS = ['net_smart_download','net_download_all','net_sync_selected',
-  'bdr_batch','bdr_sync_current','bdr_list','eca_sync','eca_list','net_list'];
+  'bdr_batch','bdr_sync_current','bdr_list','eca_sync','eca_list','net_list',
+  'verdict_scrape','verdict_download','refresh_judges'];
 const PORTAL_JOB_LABEL = {net:'נט המשפט', bdr:'בית הדין הרבני', eca:'הוצאה לפועל'};
+// verdict jobs and judge refresh use NET browser
+function _kindToPortal(kind){
+  if(['verdict_scrape','verdict_download','refresh_judges'].includes(kind)) return 'NET';
+  return (kind||'').split('_')[0].toUpperCase();
+}
 async function portalBusy(forPortal){
   try{
     const jobs = await (await fetch('/api/jobs?limit=25')).json();
     const running = (jobs||[]).filter(j=>['RUNNING','PENDING'].includes(j.state)
                                        && PORTAL_JOB_KINDS.includes(j.kind));
     if(forPortal){
-      const mine = running.find(j=>(j.kind||'').split('_')[0].toUpperCase()===forPortal);
-      return mine ? (PORTAL_JOB_LABEL[(mine.kind||'').split('_')[0]]||mine.kind) : '';
+      const mine = running.find(j=>_kindToPortal(j.kind)===forPortal);
+      return mine ? (PORTAL_JOB_LABEL[_kindToPortal(mine.kind).toLowerCase()]||mine.kind) : '';
     }
     const first = running[0];
-    return first ? (PORTAL_JOB_LABEL[(first.kind||'').split('_')[0]]||first.kind) : '';
+    return first ? (PORTAL_JOB_LABEL[_kindToPortal(first.kind).toLowerCase()]||first.kind) : '';
   }catch(_){ return ''; }
 }
 async function ensureNoPortalRunning(portal){
@@ -144,7 +150,7 @@ function _applyPortalLock(jobs){
   const bar=$('sync-platforms'); if(!bar) return;
   let runningPortals=new Set();
   (jobs||[]).filter(x=>['RUNNING','PENDING'].includes(x.state) && PORTAL_JOB_KINDS.includes(x.kind))
-            .forEach(j=>runningPortals.add((j.kind||'').split('_')[0].toUpperCase()));
+            .forEach(j=>runningPortals.add(_kindToPortal(j.kind)));
   _portalLockBusy = [...runningPortals].join(',');
   const note=$('portal-lock-note');
   const anyBusy = runningPortals.size > 0;
@@ -159,12 +165,13 @@ function _applyPortalLock(jobs){
     b.style.cursor        = anyBusy && !running ? 'not-allowed' : '';
     b.title = blocked ? `פעולה רצה כעת — המתן לסיום` : '';
   });
+  _renderSyncQueue(jobs);
   if(note){
     if(anyBusy){
       const labels = [...runningPortals].map(p=>PORTAL_LABELS[p]||p).join(' + ');
       note.style.display='block';
-      note.innerHTML = `🔒 מתבצעת כעת פעולה ב<b>${labels}</b>. יש להמתין לסיום לפני הורדה מפורטל אחר.`
-        + `&ensp;<button id="browser-toggle" onclick="toggleRealBrowser()" `
+      note.innerHTML = `🔒 <b>${labels}</b> פועל כעת.`
+        + `&ensp;<button onclick="toggleRealBrowser()" `
         + `style="font-size:12px;padding:3px 10px;border-radius:8px;cursor:pointer;`
         + `background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.35);color:inherit">`
         + (_realBrowserVisible?'🙈 הסתר דפדפן':'🖥 הצג דפדפן')+'</button>';
@@ -173,6 +180,35 @@ function _applyPortalLock(jobs){
 }
 // Kept for legacy call-sites; now a no-op since the unified poller drives the lock
 function startPortalLockWatch(){ _pollState(); }
+
+/* ── sync queue panel ─────────────────────────────────────────────────────── */
+function _renderSyncQueue(jobs){
+  const el = $('sync-queue-panel'); if(!el) return;
+  const active = (jobs||[]).filter(j=>['RUNNING','PENDING'].includes(j.state)
+                                    && PORTAL_JOB_KINDS.includes(j.kind));
+  if(!active.length){ el.innerHTML=''; return; }
+  el.innerHTML = active.map(j=>{
+    const pct = Math.round((j.progress||0)*100);
+    const portal = _kindToPortal(j.kind);
+    const label = JOB_ICONS[j.kind]||'⚙' + ' ' + (JOB_LABELS[j.kind]||j.kind);
+    const canStop = ['net_smart_download','net_download_all','bdr_batch','eca_sync',
+                     'verdict_scrape','verdict_download'].includes(j.kind);
+    return `<div style="background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);
+      border-radius:10px;padding:8px 12px;margin-bottom:6px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="font-size:12px;font-weight:700;flex:1">${PORTAL_LABELS[portal]||portal} — ${JOB_LABELS[j.kind]||j.kind}</span>
+        <span style="font-size:11px;opacity:.7">${j.state==='PENDING'?'ממתין':pct+'%'}</span>
+        ${canStop?`<button onclick="stopJob(${j.job_id})"
+          style="padding:2px 8px;border-radius:5px;border:1px solid rgba(255,80,80,.5);
+          background:transparent;color:#ff5050;font-size:11px;cursor:pointer">⏹ עצור</button>`:''}
+      </div>
+      <div style="height:5px;background:rgba(255,255,255,.15);border-radius:3px">
+        <div style="height:100%;width:${pct}%;background:var(--accent);border-radius:3px;transition:width .4s"></div>
+      </div>
+      ${j.message?`<div style="font-size:11px;opacity:.7;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${j.message}</div>`:''}
+    </div>`;
+  }).join('');
+}
 
 /* ─── unified state poller ─────────────────────────────────────────────────
    Replaces three separate setIntervals (log/3s, tasks/2.5s, portal-lock/3s)
@@ -243,7 +279,7 @@ function _renderTasksUI(jobs){
   const recent = (jobs||[]).filter(j=>!['RUNNING','PENDING'].includes(j.state)).slice(0,5);
   window._activeJobs = active;
   const activePortals = Object.keys(_dlByPortal);
-  const CANCELLABLE = ['net_smart_download','net_download_all','bdr_batch','eca_sync'];
+  const CANCELLABLE = ['net_smart_download','net_download_all','bdr_batch','eca_sync','verdict_scrape','verdict_download'];
   const row = j=>`<div style="padding:8px 0;border-bottom:1px solid var(--line)">
     <div style="display:flex;align-items:center;gap:6px">
       <b style="flex:1">${JOB_ICONS[j.kind]||'⚙'} ${JOB_LABELS[j.kind]||j.kind}</b>
@@ -888,50 +924,55 @@ let _currentScope = 'all';
 let _syncPlatform = null;
 try{ _syncPlatform = localStorage.getItem('lias_last_portal') || null; }catch(_){}
 function syncCard(el){
-  el.innerHTML = `<h2>סנכרון — הורדת תיקים
-      <span class="qtip" data-tip="בוחרים פורטל, לוחצים הורדה — והמערכת מתחברת ומורידה לבד. ההיקף (הכל / נבחרים) נקבע בהגדרות ⚙.">?</span></h2>
-    <div class="meta">בחר פורטל להורדה. ☁ אם Drive מוגדר, הקבצים עולים אוטומטית במקביל.</div>
-    <div id="dl-stats-panel" style="display:none"></div>
-    <div id="portal-lock-note" style="display:none;margin-top:12px;padding:9px 12px;
+  const isLawyer = (curUser()?.role||'') === 'LAWYER';
+  el.innerHTML = `
+    <!-- Task queue balloon -->
+    <div id="sync-queue-panel" style="margin-bottom:14px"></div>
+
+    <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
+      <!-- Portal tabs -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap" id="sync-platforms">
+        <button class="sync-plat" id="plat-NET" onclick="pickPlatform('NET')">🏛<div>נט המשפט</div></button>
+        <button class="sync-plat" id="plat-BDR" onclick="pickPlatform('BDR')">🕍<div>בית הדין הרבני</div></button>
+        <button class="sync-plat" id="plat-ECA" onclick="pickPlatform('ECA')">⚖️<div>הוצאה לפועל</div></button>
+      </div>
+      <!-- Global options -->
+      <div style="display:flex;flex-direction:column;gap:7px;font-size:12.5px;padding-top:4px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="opt-open-only" style="width:auto"
+            onchange="_syncOptChanged()"> רק תיקים פתוחים
+        </label>
+        ${isLawyer ? `<label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="opt-open-client" style="width:auto"
+            onchange="_syncOptChanged()"> לקוחות עם תיק פתוח
+        </label>` : ''}
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;opacity:.8">
+          <input type="checkbox" id="sync-browser-visible" style="width:auto"
+            onchange="_saveBrowserVisible(this.checked)"> הצג דפדפן
+        </label>
+      </div>
+    </div>
+
+    <div id="portal-lock-note" style="display:none;margin-top:10px;padding:8px 12px;
          border-radius:10px;background:rgba(230,168,0,.14);border:1px solid rgba(230,168,0,.5);
          font-size:12.5px;font-weight:600"></div>
-    <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap" id="sync-platforms">
-      <button class="sync-plat" id="plat-NET" onclick="pickPlatform('NET')">🏛<div>נט המשפט</div></button>
-      <button class="sync-plat" id="plat-BDR" onclick="pickPlatform('BDR')">🕍<div>בית הדין הרבני</div></button>
-      <button class="sync-plat" id="plat-ECA" onclick="pickPlatform('ECA')">⚖️<div>הוצאה לפועל</div></button>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
-      <button onclick="downloadAll()" style="flex:1;padding:9px 14px;border-radius:10px;
-        border:2px solid var(--accent);background:var(--accent-soft,#dce8ff);
-        color:var(--accent-strong,#1a4b9e);font-weight:700;font-size:13.5px;cursor:pointer">
-        ⬇ הורד הכל (כל הפורטלים)
-      </button>
-      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;white-space:nowrap">
-        <input type="checkbox" id="download-all-open-only" style="width:auto">
-        רק פתוחים
-      </label>
-      <button id="browser-toggle-btn" onclick="_toggleBrowserWindow()"
-        style="padding:9px 14px;border-radius:10px;border:1px solid var(--line);
-        background:var(--surface2);cursor:pointer;font-size:13px;white-space:nowrap">
-        👁 הצג/הסתר דפדפן
-      </button>
-    </div>
-    <div id="download-all-status" style="font-size:12px;margin-top:5px;color:var(--ink-soft)"></div>
-    <label id="browser-visible-row" style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;opacity:.85;cursor:pointer">
-      <input type="checkbox" id="sync-browser-visible" style="width:auto"
-        onchange="_saveBrowserVisible(this.checked)">
-      הצג דפדפן בזמן הורדה
-    </label>
-    <div id="sync-options" style="margin-top:14px"></div>
+
+    <div id="dl-stats-panel" style="display:none;margin-top:8px"></div>
+    <div id="sync-options" style="margin-top:12px"></div>
     <div id="sync-case-picker" style="display:none;margin-top:12px"></div>
+    <div id="download-all-status" style="font-size:12px;margin-top:5px;color:var(--ink-soft)"></div>
 `;
   fetch('/api/settings').then(r=>r.json()).then(st=>{
     window._settings = st;
     _currentScope = st.case_scope || 'all';
-    // Sync the browser-visible checkbox with stored setting (default: true)
     const bvCb = $('sync-browser-visible');
     if(bvCb) bvCb.checked = st.browser_visible !== false;
-    if(_syncPlatform) pickPlatform(_syncPlatform);   // re-render with fresh settings
+    // Init checkboxes from saved state
+    const openOnlyCb = $('opt-open-only');
+    if(openOnlyCb) openOnlyCb.checked = (_syncAllMode==='open' || _syncAllMode==='open_client');
+    const openClientCb = $('opt-open-client');
+    if(openClientCb) openClientCb.checked = _syncAllMode==='open_client';
+    if(_syncPlatform) pickPlatform(_syncPlatform);
   }).catch(()=>{});
   if(_syncPlatform) pickPlatform(_syncPlatform);
   if(Object.keys(_dlByPortal).length) _renderDlStats();
@@ -990,22 +1031,23 @@ async function _doImportSession(){
 
 async function _downloadStaleCases(){
   const st = $('stale-status');
-  const days = parseInt($('stale-days')?.value || '7', 10) || 7;
   if(st) st.textContent = 'מחפש תיקים לא-מעודכנים…';
   try{
     const r = await fetch('/api/cases/all');
     const cards = await r.json().catch(()=>[]);
     const _sm = caseStatusMap ? caseStatusMap() : {};
-    const cutoff = Date.now() - days*864e5;
-    const stale = cards.filter(c=>{
-      if(_sm[c.sub_case_id]==='closed') return false;
-      if(!c.last_synced) return true;
-      return new Date(c.last_synced.replace(' ','T')).getTime() < cutoff;
-    });
-    if(!stale.length){ if(st) st.textContent = `✓ כל התיקים הפתוחים עודכנו בפחות מ-${days} ימים`; return; }
+    // Sort: no last_synced first, then oldest first (highest priority)
+    const stale = cards
+      .filter(c=> _sm[c.sub_case_id]!=='closed')
+      .sort((a,b)=>{
+        const ta = a.last_synced ? new Date(a.last_synced.replace(' ','T')).getTime() : 0;
+        const tb = b.last_synced ? new Date(b.last_synced.replace(' ','T')).getTime() : 0;
+        return ta - tb; // oldest first
+      });
+    if(!stale.length){ if(st) st.textContent = '✓ אין תיקים פתוחים'; return; }
     const byPortal = {};
     stale.forEach(c=>{ (byPortal[c.portal]=byPortal[c.portal]||[]).push(c); });
-    if(st) st.textContent = `מריץ הורדה ל-${stale.length} תיקים (${Object.keys(byPortal).join(', ')})…`;
+    if(st) st.textContent = `מריץ עדכון ל-${stale.length} תיקים לפי תאריך עדכון (${Object.keys(byPortal).join(', ')})…`;
     if(byPortal.BDR){
       const caseNums = [...new Set(byPortal.BDR.map(c=>(c.sub_number||'').split(' ')[0]).filter(Boolean))];
       runBdrBatch('', caseNums, []);
@@ -1095,95 +1137,68 @@ function _saveSyncScope(){
 
 function _renderScopeChooser(p, label, relNote){
   const runFn = {NET:'runNet()', BDR:'runBdr()', ECA:'runEca()'}[p];
-  const seg = (val, cur, fn, title, sub) => `
-    <button onclick="${fn}('${val}')" class="scope-seg${cur===val?' on':''}"
-      style="flex:1;text-align:right;padding:9px 11px;border-radius:10px;cursor:pointer;
-             border:1px solid ${cur===val?'var(--accent)':'rgba(255,255,255,.18)'};
-             background:${cur===val?'rgba(47,125,246,.18)':'transparent'};color:inherit">
-      <div style="font-weight:700;font-size:13px">${cur===val?'◉':'○'} ${title}</div>
-      <div style="font-size:11.5px;opacity:.7;margin-top:2px">${sub}</div>
-    </button>`;
-
-  const subCaseNote = p==='BDR'
-    ? `<div class="note" style="margin-top:6px">בבד״ר: תיק שיש בו תת-תיק פתוח ייכלל
-       על כל ההליכים שתחתיו. לבחירת תת-תיק בודד — בחר "תיקים מסוימים".</div>` : '';
-
+  const listFn = {
+    NET:`setSyncScope('selected');startNetDownload()`,
+    BDR:`setSyncScope('selected');bdrConnectAndList()`,
+    ECA:`setSyncScope('selected');ecaConnectAndList()`
+  }[p];
+  const subNote = p==='BDR'
+    ? `<div style="font-size:11px;opacity:.65;margin-top:4px">בבד״ר: תיק עם תת-תיק פתוח ייכלל על כל ההליכים. לבחירה ידנית — לחץ "בחר מהרשימה".</div>` : '';
+  const stalBtn = `<button onclick="_downloadStaleCases()"
+    style="flex:1;padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.22);
+    background:transparent;color:inherit;font-size:12px;cursor:pointer;text-align:right">
+    📅 עדכן ישנים קודם</button>`;
   return `
-    <div style="font-weight:800;font-size:13.5px;margin-bottom:6px">1 · מה להוריד מ${label}?</div>
-    <div id="scope-step1" style="display:flex;gap:8px"></div>
-
-    <div id="scope-step2" style="margin-top:12px"></div>
-    ${subCaseNote}
-
-    <div class="sync-opt-row" style="margin-top:12px">
-      <button class="btn-accent sync-opt" id="scope-go" onclick="${runFn}"></button>
-      <div class="sync-opt-hint" id="scope-hint"></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <button class="btn-accent sync-opt" id="scope-go" onclick="${runFn}" style="flex:2;min-width:160px"></button>
+      <button onclick="setSyncScope('selected');${listFn.split(';')[1]}"
+        style="flex:1;min-width:130px;padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.22);
+        background:transparent;color:inherit;font-size:12px;cursor:pointer;text-align:right">
+        📋 בחר מהרשימה</button>
+      ${stalBtn}
     </div>
-    <div class="note" style="margin-top:6px">ברירת המחדל נשמרת ב<a onclick="openSettings()"
-      style="text-decoration:underline;cursor:pointer">הגדרות ⚙</a>${relNote}.</div>`;
+    <div id="scope-hint" style="font-size:11px;opacity:.65;margin-bottom:4px"></div>
+    ${subNote}
+    <div id="stale-status" style="font-size:11.5px;color:var(--ink-soft);margin-top:4px"></div>`;
 }
 
 function setSyncScope(v){ _syncScopeChoice=v; _saveSyncScope(); _applyScopeChoice(); }
 function setSyncAllMode(v){ _syncAllMode=v; _saveSyncScope(); _applyScopeChoice(); }
 function setSyncPickMode(v){ _syncPickMode=v; _saveSyncScope(); _applyScopeChoice(); }
 
+function _syncOptChanged(){
+  const openOnly   = $('opt-open-only')?.checked   || false;
+  const openClient = $('opt-open-client')?.checked || false;
+  if(openClient && openOnly){
+    _syncAllMode = 'open_client';
+  } else if(openOnly){
+    _syncAllMode = 'open';
+  } else {
+    _syncAllMode = 'all';
+  }
+  _syncPickMode = openOnly ? 'open' : 'all';
+  _saveSyncScope();
+  _applyScopeChoice();
+}
+
 function _applyScopeChoice(){
-  // keep the segment highlighting in sync
   if(_syncPlatform){
     const s=window._settings||{};
     const label={NET:'נט המשפט',BDR:'בית הדין הרבני',ECA:'הוצאה לפועל'}[_syncPlatform];
-    const relNote=_syncPlatform==='NET'&&s.net_related?' · כולל תיקים קשורים':'';
     const box=$('sync-options');
-    if(box && !box.querySelector('#scope-step1')) box.innerHTML=_renderScopeChooser(_syncPlatform,label,relNote);
+    if(box && !box.querySelector('#scope-go')) box.innerHTML=_renderScopeChooser(_syncPlatform,label,'');
   }
-  const step1=$('scope-step1'), step2=$('scope-step2'), go=$('scope-go'), hint=$('scope-hint');
-  if(!step2||!go) return;
-  const seg = (val, cur, fn, title, sub) => `
-    <button onclick="${fn}('${val}')"
-      style="flex:1;text-align:right;padding:9px 11px;border-radius:10px;cursor:pointer;
-             border:1px solid ${cur===val?'var(--accent)':'rgba(255,255,255,.18)'};
-             background:${cur===val?'rgba(47,125,246,.18)':'transparent'};color:inherit">
-      <div style="font-weight:700;font-size:12.5px">${cur===val?'◉':'○'} ${title}</div>
-      <div style="font-size:11px;opacity:.7;margin-top:2px">${sub}</div>
-    </button>`;
-
-  // Step 1 must be repainted too. It used to be rendered once inside the parent
-  // template, so picking "כל התיקים" updated the logic and step 2 but left the
-  // step-1 radio still showing "תיקים מסוימים" as the selected one.
-  if(step1){
-    step1.innerHTML =
-      seg('all', _syncScopeChoice, 'setSyncScope', 'כל התיקים',
-          'המערכת מורידה לבד, בלי בחירה')
-    + seg('selected', _syncScopeChoice, 'setSyncScope', 'תיקים מסוימים',
-          'הצג רשימה ואבחר ידנית');
-  }
-
-  if(_syncScopeChoice==='all'){
-    step2.innerHTML =
-      `<div style="font-weight:800;font-size:13.5px;margin-bottom:6px">2 · באיזה היקף?</div>
-       <div style="display:flex;gap:8px;flex-wrap:wrap">
-         ${seg('open_client',_syncAllMode,'setSyncAllMode','לקוחות עם תיק פתוח ⭐',
-               'כל התיקים של אותו לקוח — כולל הסגורים')}
-         ${seg('open',_syncAllMode,'setSyncAllMode','רק תיקים פתוחים',
-               'מדלג על כל מה שנסגר')}
-         ${seg('all',_syncAllMode,'setSyncAllMode','הכל','כולל תיקים סגורים של כולם')}
-       </div>`;
-    const t={open_client:'לקוחות עם תיק פתוח', open:'תיקים פתוחים', all:'הכל'}[_syncAllMode];
-    go.textContent = `⬇ הורד הכל — ${t}`;
-    if(hint) hint.textContent = _syncAllMode==='open_client'
-      ? 'מומלץ לריצה ראשונה: מביא את כל התיקים של כל לקוח שיש לו לפחות תיק פתוח אחד.'
-      : 'ההורדה מתחילה מיד אחרי ההתחברות, בלי בחירה ידנית.';
-  } else {
-    step2.innerHTML =
-      `<div style="font-weight:800;font-size:13.5px;margin-bottom:6px">2 · מה להציג ברשימה?</div>
-       <div style="display:flex;gap:8px">
-         ${seg('open',_syncPickMode,'setSyncPickMode','רק תיקים פתוחים','רשימה קצרה וממוקדת')}
-         ${seg('all',_syncPickMode,'setSyncPickMode','הכל','כולל תיקים סגורים')}
-       </div>`;
-    go.textContent = '📋 הצג רשימה ובחר תיקים';
-    if(hint) hint.textContent = 'תוצג רשימה עם חיפוש וצ׳קבוקסים — אפשר לבחור תיק שלם או תת-תיק.';
-  }
-  window._syncOpenOverride = _syncScopeChoice==='all' ? _syncAllMode : _syncPickMode;
+  const go=$('scope-go'), hint=$('scope-hint');
+  if(!go) return;
+  // derive label from checkboxes state
+  const openFilter = _syncAllMode==='open_client' ? 'לקוחות עם תיק פתוח'
+                   : _syncAllMode==='open'        ? 'תיקים פתוחים'
+                   :                                'הכל';
+  go.textContent = `⬇ הורד — ${openFilter}`;
+  if(hint) hint.textContent = _syncAllMode==='open_client'
+    ? 'כל התיקים של לקוח שיש לו לפחות תיק פתוח אחד'
+    : _syncAllMode==='open' ? 'מדלג על תיקים סגורים' : 'כולל תיקים סגורים';
+  window._syncOpenOverride = _syncAllMode;
 }
 
 /* ── BDR case picker — same contract/behaviour as the ECA one ── */
@@ -1946,20 +1961,7 @@ async function downloadAll(){
 }
 
 // ── Browser window quick toggle ─────────────────────────────────────────────
-async function _toggleBrowserWindow(){
-  try{
-    const status = await (await fetch('/api/browser/status')).json();
-    // headless = hidden; try to toggle
-    const visible = status.headless;  // headless=true means hidden → we want to show
-    const portal = window._syncPlatform || 'NET';
-    await fetch('/api/actions/toggle_browser_visible', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({portal, visible})
-    });
-    const btn = $('browser-toggle-btn');
-    if(btn) btn.textContent = visible ? '👁 הסתר דפדפן' : '👁 הצג דפדפן';
-  } catch(e){ toast('לא ניתן לשנות מצב דפדפן: '+e.message, true); }
-}
+async function _toggleBrowserWindow(){ toggleRealBrowser(); }
 
 // Start the unified state poller once the page is ready
 document.addEventListener('DOMContentLoaded', _startStatePoller);

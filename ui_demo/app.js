@@ -190,10 +190,12 @@ const JOB_LABELS = {net_sync_current:'סנכרון תיק NET', net_auto_update:
   convert_md:'המרת מסמך לטקסט', purge_stale:'ניקוי רשומות', net_date_search:'חיפוש תאריכים',
   net_list_cases:'חיפוש תיקים בנט', net_smart_download:'הורדת תיקים מנט', net_download_all:'הורדת כל התיקים',
   eca_sync:'סנכרון הוצאה לפועל', eca_list:'חיבור והצגת תיקי הוצל"פ',
-  bdr_list:'חיבור והצגת תיקי בד"ר', bdr_sync_current:'סנכרון תיק בד"ר'};
+  bdr_list:'חיבור והצגת תיקי בד"ר', bdr_sync_current:'סנכרון תיק בד"ר',
+  verdict_scrape:'חיפוש החלטות נט המשפט', verdict_download:'הורדת החלטות נט המשפט',
+  refresh_judges:'רענון שופטים'};
 const JOB_ICONS = {net_sync_current:'🔄', net_auto_update:'🔄', bdr_batch:'📥', eca_sync:'⚖️',
   open_portal:'🌐', reimport_csv:'🗂', convert_md:'📝', purge_stale:'🧹', net_date_search:'🔎',
-  eca_list:'⚖️', bdr_list:'📋'};
+  eca_list:'⚖️', bdr_list:'📋', verdict_scrape:'⚖️', verdict_download:'📄', refresh_judges:'👨‍⚖️'};
 const GROUP_COLORS = {'בקשה':'#2F7DF6','תגובה':'#7EB1FA','החלטה':'#0E1B29',
   'פסק דין':'#F5A623','פרוטוקול':'#3B82F6','אישור':'#C9D6CE','אחר':'#6B7570'};
 
