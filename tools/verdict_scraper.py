@@ -76,18 +76,18 @@ def scrape_verdicts(
     verdicts: list[dict] = []
 
     with sync_playwright() as pw:
-        # court.gov.il WAF blocks Playwright's bundled Chromium (ERR_CONNECTION_RESET)
-        # but passes real Google Chrome. Use channel="chrome" + --headless=new.
         _args = [
             "--disable-blink-features=AutomationControlled",
             "--no-first-run",
             "--no-default-browser-check",
-            "--headless=new",
         ]
+        log("פותח חלון דפדפן גלוי לחיפוש החלטות…")
         try:
             browser = pw.chromium.launch(channel="chrome", headless=False, args=_args)
+            log("משתמש ב-Google Chrome")
         except Exception:
-            browser = pw.chromium.launch(headless=True, args=_args)
+            browser = pw.chromium.launch(headless=False, args=_args)
+            log("משתמש ב-Chromium")
         context = browser.new_context(
             accept_downloads=True,
             locale="he-IL",
@@ -334,6 +334,13 @@ def register_verdict_handler():
             output_dir = config.COURT_DOCS_DIR / "verdicts"
             output_dir.mkdir(parents=True, exist_ok=True)
 
+            from LIAS import jobs as _jobs
+            def _logger(msg: str):
+                print(f"[verdict_scrape] {msg}")
+                _jobs.broadcast({"type": "log", "msg": f"[החלטות] {msg}"})
+
+            _logger(f"מתחיל חיפוש — בית משפט:{court_id} שופט:{judge_name or 'כולם'} "
+                    f"תאריכים:{date_from}–{date_to}")
             verdicts = scrape_verdicts(
                 court_id=court_id,
                 judge_name=judge_name,
@@ -342,6 +349,9 @@ def register_verdict_handler():
                 output_dir=output_dir,
                 max_pages=max_pages,
                 progress_cb=ctx.progress,
+                logger=type("L", (), {"info": lambda s,m: _logger(m),
+                                      "warn": lambda s,m: _logger(f"⚠ {m}"),
+                                      "error": lambda s,m: _logger(f"✗ {m}")})(),
             )
 
             # Save run manifest

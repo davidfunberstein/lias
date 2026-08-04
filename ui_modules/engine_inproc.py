@@ -71,8 +71,7 @@ def start() -> dict:
             _headless = True
             browser = BrowserManager(headless=_headless, restore=_restore)
             bdr_browser = BrowserManager(
-                headless=False,   # visible — debug BDR login
-                restore=_restore,
+                headless=_headless, restore=_restore,
                 profile_dir=config.BROWSER_PROFILE_BDR_DIR,
                 log=lambda m: print(f"[BDR] {m}"),
             )
