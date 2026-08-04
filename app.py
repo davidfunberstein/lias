@@ -55,6 +55,29 @@ NOTES_PATH = os.path.join(HERE, "annotations.json")
 TRANSCRIPTIONS_DIR = os.path.join(HERE, "transcriptions")
 os.makedirs(TRANSCRIPTIONS_DIR, exist_ok=True)
 
+# ── client profiles ─────────────────────────────────────────────────────────
+PROFILES_PATH = os.path.join(HERE, "profiles.json")
+_active_profile: dict | None = None   # None = main user
+
+def _load_profiles() -> list:
+    try:
+        if os.path.exists(PROFILES_PATH):
+            return json.loads(open(PROFILES_PATH, encoding="utf-8").read())
+    except Exception:
+        pass
+    return []
+
+def _save_profiles(profiles: list) -> None:
+    with open(PROFILES_PATH, "w", encoding="utf-8") as fh:
+        json.dump(profiles, fh, ensure_ascii=False, indent=2)
+
+def _slugify(name: str) -> str:
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", name)
+    ascii_name = re.sub(r"[^\w\s-]", "", nfkd, flags=re.ASCII).strip().lower()
+    slug = re.sub(r"[\s-]+", "_", ascii_name)
+    return slug or f"profile_{uuid.uuid4().hex[:8]}"
+
 # ── shared mutable state (passed to modules as holder dicts) ────────────────
 _engine_proc_holder: dict = {"proc": None}
 _server_ref: dict = {"server": None}
@@ -423,6 +446,9 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 jobs_mod.unsubscribe(q)
             return
+        elif path == "/api/profiles":
+            profiles = _load_profiles()
+            self._json({"profiles": profiles, "active": _active_profile})
         elif path == "/api/docs":
             self._json(docs_list(params, DB_PATH))
         elif path == "/api/search":
@@ -723,6 +749,97 @@ class Handler(BaseHTTPRequestHandler):
                                        TRANSCRIPTIONS_DIR),
                                  daemon=True).start()
                 self._json({"ok": True, "id": job_id})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
+        elif path == "/api/profiles/create":
+            try:
+                name = (payload.get("name") or "").strip()
+                if not name:
+                    self._json({"ok": False, "error": "שם חסר"}, 400); return
+                profiles = _load_profiles()
+                slug = _slugify(name)
+                # ensure slug uniqueness
+                existing_slugs = {p["slug"] for p in profiles}
+                base_slug = slug
+                i = 2
+                while slug in existing_slugs:
+                    slug = f"{base_slug}_{i}"; i += 1
+                profile = {
+                    "id": uuid.uuid4().hex[:12],
+                    "slug": slug,
+                    "name": name,
+                    "created_at": datetime.now().isoformat(timespec="seconds"),
+                }
+                # pre-create dirs so the UI can show them
+                Path(HERE, "browser_profiles", slug).mkdir(parents=True, exist_ok=True)
+                Path(HERE, "court_documents", "profiles", slug).mkdir(parents=True, exist_ok=True)
+                Path(HERE, "profiles_db", slug).mkdir(parents=True, exist_ok=True)
+                profiles.append(profile)
+                _save_profiles(profiles)
+                self._json({"ok": True, "profile": profile})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
+        elif path == "/api/profiles/activate":
+            global _active_profile
+            try:
+                pid = (payload.get("id") or "").strip()
+                profiles = _load_profiles()
+                profile = next((p for p in profiles if p["id"] == pid), None)
+                if not profile:
+                    self._json({"ok": False, "error": "פרופיל לא נמצא"}, 404); return
+                # pause running portal jobs
+                paused = []
+                try:
+                    _jc, _jb, _ = engine_inproc.request("GET", "/api/jobs?limit=25")
+                    jobs = json.loads(_jb) if _jc == 200 else []
+                    for j in jobs:
+                        if j.get("state") in ("RUNNING", "PENDING") and j.get("kind") in (
+                            "net_smart_download","net_download_all","net_sync_selected",
+                            "bdr_batch","bdr_sync_current","bdr_list","eca_sync","eca_list",
+                            "net_list","verdict_scrape","verdict_download"):
+                            engine_inproc.request("POST", f"/api/jobs/{j['job_id']}/stop", b"")
+                            paused.append(j["job_id"])
+                except Exception:
+                    pass
+                profile["_paused_jobs"] = paused
+                _active_profile = profile
+                # switch engine paths
+                try:
+                    engine_inproc.switch_profile(profile, HERE)
+                except Exception as _se:
+                    pass  # engine may not be started yet; paths will be set on first start
+                self._json({"ok": True, "profile": profile, "paused": paused})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
+        elif path == "/api/profiles/deactivate":
+            global _active_profile
+            try:
+                _active_profile = None
+                try:
+                    engine_inproc.switch_profile(None, HERE)
+                except Exception:
+                    pass
+                self._json({"ok": True})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
+        elif path == "/api/profiles/delete":
+            try:
+                pid = (payload.get("id") or "").strip()
+                profiles = _load_profiles()
+                profiles = [p for p in profiles if p["id"] != pid]
+                _save_profiles(profiles)
+                global _active_profile
+                if _active_profile and _active_profile.get("id") == pid:
+                    _active_profile = None
+                    try:
+                        engine_inproc.switch_profile(None, HERE)
+                    except Exception:
+                        pass
+                self._json({"ok": True})
             except Exception as exc:
                 self._json({"ok": False, "error": str(exc)}, 500)
             return

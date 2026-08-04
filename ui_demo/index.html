@@ -63,6 +63,10 @@
     <button data-nav="docs" onclick="go('docs')" data-i18n="nav_docs">מסמכים</button>
     <button data-nav="verdicts" onclick="go('verdicts')">⚖️ החלטות שפורסמו</button>
     <button title="בשלב הבא">עוזר AI <span class="soon">בקרוב</span></button>
+    <button id="profile-tab-btn" onclick="openProfileManager()"
+      style="background:rgba(99,102,241,.18);border:1px solid rgba(99,102,241,.4);
+             border-radius:8px;padding:4px 10px;font-weight:700;color:var(--accent)"
+      title="פרופילי לקוחות">+ פרופיל</button>
   </nav>
   <div class="search" style="position:relative">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -84,6 +88,18 @@
     <div class="who"><b id="av-name">—</b><span id="av-role">—</span>
       <span class="out" onclick="logout()">התנתק</span></div>
   </div>
+</div>
+
+<div id="profile-banner" style="display:none;background:linear-gradient(90deg,rgba(99,102,241,.18),rgba(99,102,241,.08));
+  border-bottom:1.5px solid rgba(99,102,241,.35);padding:6px 28px;font-size:13px;
+  font-weight:600;display:none;align-items:center;gap:12px;direction:rtl">
+  <span>👤 מצב לקוח: <span id="profile-banner-name" style="color:var(--accent)">—</span></span>
+  <span style="opacity:.6;font-size:11px" id="profile-banner-dir"></span>
+  <button onclick="deactivateProfile()"
+    style="margin-right:auto;padding:2px 12px;border-radius:8px;font-size:12px;cursor:pointer;
+           background:rgba(99,102,241,.22);border:1px solid rgba(99,102,241,.5);color:inherit">
+    ⏸ חזור למשתמש הראשי
+  </button>
 </div>
 
 <div class="wrap">

@@ -194,3 +194,46 @@ def events_queue():
         start()
     from LIAS import jobs
     return jobs
+
+
+def switch_profile(profile: dict | None, project_root: str) -> None:
+    """Switch all engine paths to the given client profile (or None = main user).
+    Changes config paths in-memory; the browser managers will use the new
+    dirs on next launch (after the current browser is stopped/restarted).
+    """
+    from pathlib import Path
+    from LIAS import config
+
+    root = Path(project_root)
+    if profile is None:
+        config.BROWSER_PROFILE_DIR     = root / "browser_profile"
+        config.BROWSER_PROFILE_BDR_DIR = root / "browser_profile_bdr"
+        config.BROWSER_PROFILE_ECA_DIR = root / "browser_profile_eca"
+        config.DB_PATH                 = root / "lias.db"
+        config.COURT_DOCS_DIR          = root / "court_documents"
+    else:
+        slug = profile["slug"]
+        bp = root / "browser_profiles" / slug
+        bp.mkdir(parents=True, exist_ok=True)
+        (bp / "net").mkdir(exist_ok=True)
+        (bp / "bdr").mkdir(exist_ok=True)
+        (bp / "eca").mkdir(exist_ok=True)
+        config.BROWSER_PROFILE_DIR     = bp / "net"
+        config.BROWSER_PROFILE_BDR_DIR = bp / "bdr"
+        config.BROWSER_PROFILE_ECA_DIR = bp / "eca"
+        config.COURT_DOCS_DIR          = root / "court_documents" / "profiles" / slug
+        config.COURT_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+        db_dir = root / "profiles_db" / slug
+        db_dir.mkdir(parents=True, exist_ok=True)
+        config.DB_PATH = db_dir / "lias.db"
+
+    # If browser managers are live, stop them so they relaunch with new profile dirs
+    if _state["started"]:
+        for key in ("browser", "bdr", "eca"):
+            mgr = _state.get(key)
+            if mgr is not None:
+                try:
+                    mgr.shutdown()
+                except Exception:
+                    pass
+                _state[key] = None

@@ -2028,6 +2028,183 @@ async function downloadAll(){
   if(el) el.textContent = '✓ הורדה מכל הפורטלים הסתיימה';
 }
 
+// ── Client profile manager ──────────────────────────────────────────────────
+let _activeProfile = null;  // mirrors server-side _active_profile
+
+function _updateProfileBanner(profile){
+  _activeProfile = profile || null;
+  const banner = $('profile-banner');
+  if(!banner) return;
+  if(profile){
+    banner.style.display = 'flex';
+    const nameEl = $('profile-banner-name');
+    const dirEl  = $('profile-banner-dir');
+    if(nameEl) nameEl.textContent = profile.name;
+    if(dirEl)  dirEl.textContent  = `הורדות: court_documents/profiles/${profile.slug}/`;
+  } else {
+    banner.style.display = 'none';
+  }
+  // tint the profile-tab-btn to indicate active state
+  const btn = $('profile-tab-btn');
+  if(btn) btn.style.background = profile
+    ? 'rgba(99,102,241,.55)' : 'rgba(99,102,241,.18)';
+}
+
+async function openProfileManager(){
+  if($('profile-mgr')) { $('profile-mgr').remove(); return; }
+
+  // Load current profiles
+  let data = {profiles:[], active:null};
+  try{ data = await fetch('/api/profiles').then(r=>r.json()); }catch{}
+
+  _updateProfileBanner(data.active);
+
+  const box = document.createElement('div');
+  box.id = 'profile-mgr';
+  box.style.cssText = `position:fixed;top:60px;left:50%;transform:translateX(-50%);
+    z-index:200;background:var(--card);border:1.5px solid rgba(99,102,241,.4);
+    border-radius:16px;padding:20px 24px;width:420px;max-width:96vw;
+    box-shadow:0 20px 60px rgba(0,0,0,.35);direction:rtl;font-size:13px`;
+
+  const _render = (profiles, active) => {
+    const activeId = active?.id;
+    const rows = profiles.length
+      ? profiles.map(p => `
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;
+          border-radius:10px;background:${p.id===activeId?'rgba(99,102,241,.18)':'rgba(255,255,255,.04)'};
+          border:1px solid ${p.id===activeId?'rgba(99,102,241,.5)':'rgba(255,255,255,.1)'}">
+          <span style="font-size:20px">👤</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700">${p.name}</div>
+            <div style="font-size:11px;opacity:.6">${p.slug}</div>
+          </div>
+          ${p.id===activeId
+            ? `<span style="font-size:11px;color:rgba(99,102,241,1);font-weight:700">● פעיל</span>
+               <button onclick="_deactivateAndRefreshMgr()" style="font-size:12px;padding:3px 10px;
+                 border-radius:8px;cursor:pointer;background:rgba(99,102,241,.22);
+                 border:1px solid rgba(99,102,241,.5);color:inherit">חזור</button>`
+            : `<button onclick="_activateProfile('${p.id}')"
+                 style="font-size:12px;padding:3px 10px;border-radius:8px;cursor:pointer;
+                 background:rgba(99,102,241,.14);border:1px solid rgba(99,102,241,.35);color:inherit">
+                 הפעל ▶</button>
+               <button onclick="_deleteProfile('${p.id}','${p.name}')"
+                 style="font-size:12px;padding:3px 8px;border-radius:8px;cursor:pointer;
+                 background:rgba(220,38,38,.12);border:1px solid rgba(220,38,38,.3);color:inherit">✕</button>`}
+        </div>`).join('')
+      : `<div style="text-align:center;opacity:.5;padding:12px">אין פרופילי לקוחות עדיין</div>`;
+
+    box.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <b style="font-size:15px">👤 פרופילי לקוחות</b>
+        <button onclick="$('profile-mgr').remove()" style="background:none;border:none;
+          font-size:18px;cursor:pointer;color:var(--ink-soft)">✕</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">${rows}</div>
+      <div style="border-top:1px solid rgba(255,255,255,.1);padding-top:12px">
+        <div style="font-weight:600;margin-bottom:8px;font-size:12px;opacity:.7">+ צור פרופיל חדש</div>
+        <div style="display:flex;gap:8px">
+          <input id="profile-new-name" placeholder="שם הלקוח / התיק" style="flex:1;
+            padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.2);
+            background:rgba(255,255,255,.07);color:inherit;font-size:13px;direction:rtl">
+          <button onclick="_createProfile()" style="padding:7px 14px;border-radius:8px;
+            background:rgba(99,102,241,.3);border:1px solid rgba(99,102,241,.5);
+            color:inherit;font-weight:700;cursor:pointer;white-space:nowrap">צור</button>
+        </div>
+        <div id="profile-create-status" style="font-size:11.5px;margin-top:6px;
+          color:var(--ink-soft);min-height:16px"></div>
+      </div>
+      <div style="margin-top:10px;font-size:11px;opacity:.5;border-top:1px solid rgba(255,255,255,.1);padding-top:8px">
+        כל פרופיל: תיקיית הורדות נפרדת · פרופיל דפדפן נפרד (cookies) · DB נפרד<br>
+        בזמן פרופיל פעיל — הורדות המשתמש הראשי מעוצרות
+      </div>`;
+  };
+
+  _render(data.profiles, data.active);
+  document.body.appendChild(box);
+
+  // close on outside click
+  setTimeout(()=>{
+    const _close = e => { if(!box.contains(e.target) && e.target.id!=='profile-tab-btn'){
+      box.remove(); document.removeEventListener('mousedown',_close); }};
+    document.addEventListener('mousedown', _close);
+  }, 100);
+}
+
+async function _createProfile(){
+  const nameEl = $('profile-new-name');
+  const st = $('profile-create-status');
+  const name = nameEl?.value?.trim();
+  if(!name){ if(st) st.textContent='נדרש שם'; return; }
+  if(st) st.textContent = 'יוצר…';
+  try{
+    const r = await fetch('/api/profiles/create',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name})
+    }).then(d=>d.json());
+    if(r.ok){
+      if(st) st.textContent = `✓ נוצר: ${r.profile.name}`;
+      if(nameEl) nameEl.value = '';
+      setTimeout(()=>{ $('profile-mgr')?.remove(); openProfileManager(); }, 500);
+    } else {
+      if(st) st.textContent = '✗ ' + (r.error||'שגיאה');
+    }
+  }catch(e){ if(st) st.textContent = '✗ שגיאת רשת'; }
+}
+
+async function _activateProfile(id){
+  const st = $('profile-create-status');
+  if(st) st.textContent = 'מפעיל פרופיל (עוצר הורדות פעילות)…';
+  try{
+    const r = await fetch('/api/profiles/activate',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id})
+    }).then(d=>d.json());
+    if(r.ok){
+      _updateProfileBanner(r.profile);
+      if(r.paused?.length) toast(`עצרתי ${r.paused.length} הורדות — ניתן לחדש לאחר מכן`, false);
+      $('profile-mgr')?.remove();
+      openProfileManager();
+    } else {
+      toast('שגיאה: ' + (r.error||''), true);
+    }
+  }catch(e){ toast('שגיאת רשת', true); }
+}
+
+async function _deactivateAndRefreshMgr(){
+  await deactivateProfile();
+  $('profile-mgr')?.remove();
+  openProfileManager();
+}
+
+async function deactivateProfile(){
+  try{
+    await fetch('/api/profiles/deactivate',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}'});
+  }catch{}
+  _updateProfileBanner(null);
+  toast('חזרת למשתמש הראשי', false);
+}
+
+async function _deleteProfile(id, name){
+  if(!confirm(`למחוק את הפרופיל "${name}"?\n(הקבצים שהורדו ישארו בתיקייה)`)) return;
+  try{
+    const r = await fetch('/api/profiles/delete',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id})
+    }).then(d=>d.json());
+    if(r.ok){ $('profile-mgr')?.remove(); openProfileManager(); }
+    else toast('שגיאה: '+(r.error||''), true);
+  }catch{ toast('שגיאת רשת', true); }
+}
+
+// Restore active profile banner on page load
+(async ()=>{
+  try{
+    const d = await fetch('/api/profiles').then(r=>r.json());
+    if(d.active) _updateProfileBanner(d.active);
+  }catch{}
+})();
+
 // ── Browser window quick toggle ─────────────────────────────────────────────
 async function _toggleBrowserWindow(){ toggleRealBrowser(); }
 
