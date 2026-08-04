@@ -1405,13 +1405,14 @@ function _renderSearchSummary(rows){
   const sp = window._verdictSearchParams || {};
   const label = sp.judge ? ` · שופט: ${sp.judge}` : (sp.court_name ? ` · ${sp.court_name}` : '');
   el.style.display = 'block';
+  setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'nearest'}), 50);
   el.innerHTML = `
     <div class="card" style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;
       flex-wrap:wrap;gap:8px;border-right:3px solid var(--accent)">
       <span style="font-size:12.5px;direction:rtl">
         <b>${rows.length}</b> החלטות${label}
         ${newCount ? ` · <b style="color:var(--accent)">${newCount} חדשות</b>` : ' · הכל הורד ✓'}
-        ${dl ? ` · ${dl} בספרייה` : ''}
+        ${dl ? ` · <span style="color:var(--ink-soft)">${dl} בספרייה</span>` : ''}
       </span>
       <div style="display:flex;gap:6px">
         ${newCount ? `<button onclick="verdictDownloadNew()"
@@ -1723,42 +1724,86 @@ function _renderLibDecisions(judgeName, rows){
   if(!el) return;
   const sorted = [...rows].sort((a,b)=>{
     const da = a.date||'', db = b.date||'';
-    const sa = da.split('/').reverse().join(''), sb = db.split('/').reverse().join('');
-    return sb.localeCompare(sa);
+    return db.split('/').reverse().join('').localeCompare(da.split('/').reverse().join(''));
   });
+  const withFile = sorted.filter(r => r.pdf_path);
   el.innerHTML = `
     <div class="card" style="padding:10px 12px">
-      <div style="font-size:13px;font-weight:700;margin-bottom:10px;direction:rtl">
-        ${judgeName}
-        <span style="font-weight:400;font-size:11.5px;color:var(--ink-soft);margin-right:6px">${sorted.length} החלטות שהורדו</span>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;direction:rtl;flex-wrap:wrap;gap:6px">
+        <div>
+          <span style="font-size:13px;font-weight:700">${judgeName}</span>
+          <span style="font-weight:400;font-size:11.5px;color:var(--ink-soft);margin-right:6px">${withFile.length} החלטות</span>
+        </div>
+        <div style="display:flex;gap:5px">
+          <button onclick="_libDelSelected()" id="v-lib-del-sel"
+            style="padding:4px 10px;border-radius:6px;border:1px solid var(--line);
+            background:var(--surface);font-size:11.5px;cursor:pointer;display:none">🗑 מחק נבחרים</button>
+          <button onclick="_libDelAll(${JSON.stringify(withFile.map(r=>(r.pdf_path||'').split('/').pop()).filter(Boolean))})"
+            style="padding:4px 10px;border-radius:6px;border:1px solid var(--line);
+            background:var(--surface);font-size:11.5px;cursor:pointer">🗑 מחק הכל</button>
+        </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:4px">
         ${sorted.map(row=>{
           const fn = (row.pdf_path||'').split('/').pop();
-          const href = fn ? `/api/verdicts/download/${encodeURIComponent(fn)}` : '';
-          return `<div style="padding:8px 10px;border-radius:7px;background:var(--surface2);direction:rtl;
-            display:flex;align-items:center;justify-content:space-between;gap:8px">
-            <div style="min-width:0">
+          return `<div style="padding:7px 10px;border-radius:7px;background:var(--surface2);direction:rtl;
+            display:flex;align-items:center;gap:8px">
+            ${fn ? `<input type="checkbox" class="v-lib-cb" data-fn="${fn.replace(/"/g,'&quot;')}"
+              onchange="_libCbChange()" style="flex-shrink:0;cursor:pointer;width:14px;height:14px">` : '<span style="width:14px;flex-shrink:0"></span>'}
+            <div style="flex:1;min-width:0">
               <div style="font-size:11.5px;font-weight:600">${row.dec_type||''} · ${row.date||''}</div>
-              <div style="font-size:11px;color:var(--ink-soft);margin-top:2px;
+              <div style="font-size:11px;color:var(--ink-soft);margin-top:1px;
                 white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${row.case_num||''} ${row.court?'· '+row.court:''}</div>
             </div>
-            <div style="display:flex;gap:5px;flex-shrink:0">
+            <div style="display:flex;gap:4px;flex-shrink:0">
             ${fn
               ? `<button onclick="_openVerdictPdf('${fn.replace(/'/g,"\\'").replace(/\\/g,'/')}','${(row.dec_type||'').replace(/'/g,"\\'")} ${row.date||''}')"
-                  style="padding:5px 12px;border-radius:6px;
-                  border:none;background:var(--accent);color:#fff;font-size:12px;
-                  font-weight:600;cursor:pointer;white-space:nowrap">📄 קרא</button>
+                  style="padding:4px 10px;border-radius:6px;border:none;background:var(--accent);
+                  color:#fff;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">📄 קרא</button>
                 <button onclick="_deleteVerdict('${fn.replace(/'/g,"\\'")}')"
-                  style="padding:5px 8px;border-radius:6px;border:1px solid var(--line);
-                  background:var(--surface);font-size:12px;cursor:pointer;white-space:nowrap"
-                  title="מחק קובץ">🗑</button>`
+                  style="padding:4px 7px;border-radius:6px;border:1px solid var(--line);
+                  background:var(--surface);font-size:12px;cursor:pointer" title="מחק">🗑</button>`
               : ''}
             </div>
           </div>`;
         }).join('')}
       </div>
     </div>`;
+}
+
+function _libCbChange(){
+  const n = document.querySelectorAll('.v-lib-cb:checked').length;
+  const btn = $('v-lib-del-sel');
+  if(btn){ btn.style.display = n ? 'inline-block' : 'none'; btn.textContent = `🗑 מחק נבחרים (${n})`; }
+}
+
+async function _libDelSelected(){
+  const files = [...document.querySelectorAll('.v-lib-cb:checked')].map(cb => cb.dataset.fn).filter(Boolean);
+  if(!files.length) return;
+  if(!confirm(`למחוק ${files.length} קבצים?`)) return;
+  await _deleteManyVerdicts(files);
+}
+
+async function _libDelAll(files){
+  if(!files.length) return;
+  if(!confirm(`למחוק את כל ${files.length} הקבצים?`)) return;
+  await _deleteManyVerdicts(files);
+}
+
+async function _deleteManyVerdicts(files){
+  let ok = 0, fail = 0;
+  for(const fn of files){
+    try{
+      const r = await fetch('/api/verdicts/delete', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({filename: fn})
+      });
+      const d = await r.json();
+      if(d.ok) ok++; else fail++;
+    } catch(e){ fail++; }
+  }
+  toast(fail ? `נמחקו ${ok}/${files.length} · ${fail} שגיאות` : `🗑 נמחקו ${ok} קבצים`);
+  _renderLibrary();
 }
 
 // Refresh library after a download completes
