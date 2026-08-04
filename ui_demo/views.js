@@ -1101,7 +1101,10 @@ function renderVerdicts(){
       </div>
     </div>
 
-    <div id="v-results" style="margin-top:12px;width:100%"></div>
+    <div id="v-results" style="margin-top:12px;width:100%">
+      <div style="color:var(--ink-soft);font-size:13px;padding:8px 0">בצע חיפוש כדי לראות תוצאות</div>
+    </div>
+  </div>
   `;
 
   const today = new Date();
@@ -1359,7 +1362,7 @@ async function _showCachedVerdictResults(){
 function _renderVerdictResults(rows){
   const el = $('v-results');
   if(!el) return;
-  if(!rows.length){ el.innerHTML=''; return; }
+  if(!rows.length){ el.innerHTML='<div style="color:var(--ink-soft);font-size:13px;padding:8px 0">לא נמצאו תוצאות</div>'; return; }
   const th = (t,w) => `<th style="padding:6px 10px;text-align:right;font-size:11.5px;font-weight:600;
     white-space:nowrap${w?`;width:${w}`:''};">${t}</th>`;
   const td = (v,extra='') => `<td style="padding:6px 10px;font-size:12.5px;direction:rtl;${extra}">${v||''}</td>`;
