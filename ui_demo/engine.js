@@ -2094,7 +2094,43 @@ async function openProfileManager(){
                <button onclick="_deleteProfile('${p.id}','${p.name}')"
                  style="font-size:12px;padding:3px 8px;border-radius:8px;cursor:pointer;
                  background:rgba(220,38,38,.12);border:1px solid rgba(220,38,38,.3);color:inherit">✕</button>`}
-        </div>`).join('')
+        </div>
+        ${p.id===activeId ? `
+        <div style="margin-top:8px;padding:10px 12px;border-radius:10px;
+          background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2)">
+          <div style="font-size:12px;font-weight:700;margin-bottom:8px">🍪 עוגיות פרופיל</div>
+
+          <div style="font-size:11.5px;font-weight:600;margin-bottom:4px;opacity:.8">ייצוא — שלח ללקוח</div>
+          <div style="font-size:11px;opacity:.6;margin-bottom:6px">
+            מייצא את ה-cookies הפעילות כ-JSON — שלח ללקוח שישתמש בהן דרך session_server.py
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+            ${['NET','BDR','ECA'].map(portal=>`
+              <button onclick="_exportProfileCookies('${portal}')"
+                style="padding:4px 12px;border-radius:8px;font-size:12px;cursor:pointer;
+                background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.35);color:inherit">
+                ⬆ ${portal}</button>`).join('')}
+          </div>
+
+          <div style="border-top:1px solid rgba(255,255,255,.1);padding-top:8px;margin-bottom:4px">
+            <div style="font-size:11.5px;font-weight:600;margin-bottom:4px;opacity:.8">ייבוא — קבל מלקוח</div>
+            <div style="font-size:11px;opacity:.6;margin-bottom:6px">
+              הלקוח מריץ <code style="font-size:10.5px">python tools/session_server.py bdr</code> → שולח JSON
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="file" id="profile-cookie-file" accept=".json"
+                onchange="_onProfileCookieChosen(this)"
+                style="font-size:11.5px;flex:1;min-width:0;cursor:pointer">
+              <button onclick="_importProfileCookies()"
+                style="padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;
+                white-space:nowrap;background:rgba(99,102,241,.3);border:1px solid rgba(99,102,241,.5);
+                color:inherit">ייבא ⬇</button>
+            </div>
+          </div>
+          <div id="profile-cookie-status" style="font-size:11px;margin-top:5px;
+            color:var(--ink-soft);min-height:14px"></div>
+        </div>` : ''}
+        `).join('')
       : `<div style="text-align:center;opacity:.5;padding:12px">אין פרופילי לקוחות עדיין</div>`;
 
     box.innerHTML = `
@@ -2132,6 +2168,56 @@ async function openProfileManager(){
       box.remove(); document.removeEventListener('mousedown',_close); }};
     document.addEventListener('mousedown', _close);
   }, 100);
+}
+
+let _profileCookieData = null;
+function _onProfileCookieChosen(input){
+  _profileCookieData = null;
+  const st = $('profile-cookie-status');
+  if(!input.files?.[0]){ if(st) st.textContent=''; return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    try{
+      const d = JSON.parse(e.target.result);
+      if(!d.portal || !d.storage_state?.cookies?.length)
+        throw new Error('קובץ לא תקין — חסר portal או cookies');
+      _profileCookieData = d;
+      if(st) st.textContent = `✓ ${d.portal} · ${d.storage_state.cookies.length} עוגיות — לחץ "ייבא"`;
+    }catch(err){ if(st) st.textContent = '✗ '+err.message; }
+  };
+  reader.readAsText(input.files[0]);
+}
+
+async function _exportProfileCookies(portal){
+  const st = $('profile-cookie-status');
+  if(st) st.textContent = `מייצא ${portal}…`;
+  try{
+    const r = await fetch(`/api/tools/export_session?portal=${portal}`);
+    if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status);
+    const data = await r.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `session_${portal.toLowerCase()}_${Date.now()}.json`;
+    a.click();
+    if(st) st.textContent = `✓ ${portal} יוצא — שלח ללקוח`;
+  }catch(err){ if(st) st.textContent = '✗ '+err.message; }
+}
+
+async function _importProfileCookies(){
+  const st = $('profile-cookie-status');
+  if(!_profileCookieData){ if(st) st.textContent='בחר קובץ JSON קודם'; return; }
+  if(st) st.textContent = 'מייבא…';
+  try{
+    const r = await fetch('/api/actions/import_session',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(_profileCookieData)
+    });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.detail||d.error||r.status);
+    _profileCookieData = null;
+    if(st) st.textContent = '✓ עוגיות יובאו לפרופיל — ניתן להוריד תיקים';
+  }catch(err){ if(st) st.textContent = '✗ '+err.message; }
 }
 
 async function _createProfile(){

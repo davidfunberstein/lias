@@ -423,6 +423,7 @@ class Handler(BaseHTTPRequestHandler):
                 or path.startswith("/api/stats") \
                 or path.startswith("/api/verdicts/") \
                 or path.startswith("/api/cases") \
+                or path.startswith("/api/tools/") \
                 or path in (
                 "/api/browser/screenshot", "/api/browser/status", "/api/log",
                 "/api/jobs"):
