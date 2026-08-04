@@ -1030,22 +1030,10 @@ function renderVerdicts(){
 
   <div style="display:flex;height:calc(100vh - 110px);min-height:0">
 
-    <!-- LEFT: decisions viewer — empty until a group is selected on the right -->
-    <div style="flex:0 0 46%;min-width:0;border-left:1px solid var(--line);
-                overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:8px">
-      <div style="font-size:14px;font-weight:700;flex-shrink:0;padding-bottom:6px;
-                  border-bottom:1px solid var(--line)">📚 ספריית החלטות</div>
-      <div id="v-lib-decisions" style="flex:1">
-        <div style="color:var(--ink-soft);font-size:12.5px;padding:16px 0;text-align:center">
-          בחר שופט או נושא מהצד הימני
-        </div>
-      </div>
-    </div>
+    <!-- LEFT: download from net.gov.il -->
+    <div style="flex:0 0 44%;min-width:0;border-left:1px solid var(--line);
+                overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px">
 
-    <!-- RIGHT: search form + library browse -->
-    <div style="flex:1;min-width:0;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px">
-
-      <!-- Search / download form -->
       <div class="card" style="padding:14px 16px;flex-shrink:0">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <h2 style="margin:0;font-size:13.5px;font-weight:700">🔍 הורדה מנט המשפט</h2>
@@ -1111,21 +1099,29 @@ function renderVerdicts(){
         </div>
       </div>
 
-      <!-- Compact search results summary (shown after search) -->
+      <!-- Search results — empty until search runs -->
       <div id="v-search-summary" style="display:none"></div>
 
-      <!-- Library browse: toggle + groups -->
-      <div class="card" style="padding:12px 14px;flex:1">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <span style="font-size:13px;font-weight:700">ספרייה</span>
-          <button onclick="_renderLibrary()" title="רענן"
-            style="padding:3px 10px;border-radius:6px;border:1px solid var(--line);
-            background:var(--surface);font-size:12px;cursor:pointer">↺ רענן</button>
-        </div>
-        <div id="v-lib-groups"></div>
+    </div>
+
+    <!-- RIGHT: library browse (groups → decisions → PDF overlay) -->
+    <div style="flex:1;min-width:0;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+        <span style="font-size:14px;font-weight:700">📚 ספריית החלטות שהורדו</span>
+        <button onclick="window._libSelected=null;_renderLibrary()" title="רענן"
+          style="padding:4px 10px;border-radius:7px;border:1px solid var(--line);
+          background:var(--surface);font-size:12px;cursor:pointer">↺ רענן</button>
       </div>
 
+      <!-- Group list (judge/subject toggle + items) -->
+      <div id="v-lib-groups" style="flex-shrink:0"></div>
+
+      <!-- Decisions for selected group — empty until a group is clicked -->
+      <div id="v-lib-decisions"></div>
+
     </div>
+
   </div>
   `;
 
@@ -1137,7 +1133,6 @@ function renderVerdicts(){
 
   _loadVerdictCourts();
   _verdictAC('v-judge','v-judge-drop',[], null);
-  _showCachedVerdictResults();
   _renderLibrary();
 }
 
