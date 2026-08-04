@@ -2162,6 +2162,31 @@ async function openProfileManager(){
         <div id="profile-create-status" style="font-size:11.5px;margin-top:6px;
           color:var(--ink-soft);min-height:16px"></div>
       </div>
+      <div style="border-top:1px solid rgba(255,255,255,.1);padding-top:12px;margin-top:4px">
+        <div style="font-weight:600;margin-bottom:6px;font-size:12px;opacity:.7">📨 הזמן עוגיות מלקוח</div>
+        <div style="font-size:11px;opacity:.6;margin-bottom:8px;line-height:1.5">
+          יוצר קישור — הלקוח פותח, מתחבר, ושולח. אתה מייבא לפרופיל.
+        </div>
+        <button onclick="_inviteCookies()" id="invite-cookies-btn"
+          style="width:100%;padding:7px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;
+          background:rgba(245,158,11,.2);border:1px solid rgba(245,158,11,.4);color:inherit">
+          🔗 צור קישור לכניסה
+        </button>
+        <div id="invite-url-row" style="display:none;margin-top:8px">
+          <div style="display:flex;gap:6px;align-items:center">
+            <input id="invite-url-val" readonly style="flex:1;padding:5px 8px;border-radius:8px;
+              border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);
+              color:inherit;font-size:11.5px;direction:ltr">
+            <button onclick="_copyInviteUrl()" style="padding:5px 10px;border-radius:8px;
+              background:rgba(99,102,241,.3);border:1px solid rgba(99,102,241,.5);
+              color:inherit;font-weight:700;cursor:pointer;white-space:nowrap;font-size:12px">העתק</button>
+          </div>
+          <button onclick="_stopInvite()" style="margin-top:6px;width:100%;padding:5px;border-radius:8px;
+            font-size:11.5px;cursor:pointer;background:rgba(239,68,68,.15);
+            border:1px solid rgba(239,68,68,.3);color:inherit;opacity:.8">⛔ סגור קישור</button>
+        </div>
+        <div id="invite-status" style="font-size:11px;margin-top:5px;min-height:14px;opacity:.8"></div>
+      </div>
       <div style="margin-top:10px;font-size:11px;opacity:.5;border-top:1px solid rgba(255,255,255,.1);padding-top:8px">
         כל פרופיל: תיקיית הורדות נפרדת · פרופיל דפדפן נפרד (cookies) · DB נפרד<br>
         בזמן פרופיל פעיל — הורדות המשתמש הראשי מעוצרות
@@ -2251,6 +2276,40 @@ async function _expDownload(){
     if(st) st.textContent = '✓ קובץ JSON הורד — שלח לעמית';
     setTimeout(()=>{ if(_exportSessionPanel){_exportSessionPanel.remove();_exportSessionPanel=null;} }, 3000);
   }catch(err){ if(st) st.textContent='✗ '+err.message; }
+}
+
+async function _inviteCookies(){
+  const st = $('invite-status'), btn = $('invite-cookies-btn'), row = $('invite-url-row');
+  if(st) st.textContent = 'מפעיל session_server ו-ngrok…';
+  if(btn) btn.disabled = true;
+  try{
+    const r = await fetch('/api/profiles/invite_cookies',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}'});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error || r.status);
+    const inp = $('invite-url-val');
+    if(inp) inp.value = d.url;
+    if(row) row.style.display = 'block';
+    if(st) st.textContent = '✓ קישור פעיל — שלח ללקוח';
+  }catch(err){
+    if(st) st.textContent = '✗ '+err.message;
+    if(btn) btn.disabled = false;
+  }
+}
+
+function _copyInviteUrl(){
+  const v = $('invite-url-val')?.value;
+  if(!v) return;
+  navigator.clipboard.writeText(v).then(()=>toast('הקישור הועתק ✓'));
+}
+
+async function _stopInvite(){
+  await fetch('/api/profiles/invite_stop',{method:'POST'}).catch(()=>{});
+  const row = $('invite-url-row'), st = $('invite-status'), btn = $('invite-cookies-btn');
+  if(row) row.style.display='none';
+  if(st) st.textContent='';
+  if(btn) btn.disabled=false;
+  toast('קישור ה-ngrok נסגר');
 }
 
 async function _profileOpenNet(){

@@ -58,6 +58,7 @@ os.makedirs(TRANSCRIPTIONS_DIR, exist_ok=True)
 # ── client profiles ─────────────────────────────────────────────────────────
 PROFILES_PATH = os.path.join(HERE, "profiles.json")
 _profile_state: dict = {"active": None}  # mutable — no global needed in handlers
+_invite_state:  dict = {"procs": []}     # session_server + ngrok subprocesses
 
 def _active_db_path() -> str:
     """Return the DB path for the currently active profile, or the main DB."""
@@ -831,6 +832,65 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"ok": False, "error": str(exc)}, 500)
             return
+        elif path == "/api/profiles/invite_cookies":
+            # Start session_server.py + ngrok, return the public URL
+            try:
+                import subprocess, urllib.request, time as _time
+                # Kill any previous session_server / ngrok on our ports
+                for _proc in _invite_state.get("procs", []):
+                    try: _proc.terminate()
+                    except Exception: pass
+                _invite_state["procs"] = []
+
+                # Start session_server.py on port 7777
+                ss_proc = subprocess.Popen(
+                    [sys.executable, os.path.join(HERE, "tools", "session_server.py"), "net"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                # Start ngrok http 7777
+                ng_proc = subprocess.Popen(
+                    ["ngrok", "http", "7777"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                _invite_state["procs"] = [ss_proc, ng_proc]
+
+                # Poll ngrok local API for the public URL (up to 10 s)
+                url = None
+                for _ in range(20):
+                    _time.sleep(0.5)
+                    try:
+                        data = json.loads(urllib.request.urlopen(
+                            "http://localhost:4040/api/tunnels", timeout=1).read())
+                        tunnels = data.get("tunnels", [])
+                        https = [t["public_url"] for t in tunnels if t["public_url"].startswith("https")]
+                        if https:
+                            url = https[0]
+                            break
+                    except Exception:
+                        pass
+
+                if url:
+                    self._json({"ok": True, "url": url})
+                else:
+                    # ngrok not installed or not authed — kill what we started
+                    for _p in _invite_state["procs"]:
+                        try: _p.terminate()
+                        except Exception: pass
+                    _invite_state["procs"] = []
+                    self._json({"ok": False, "error": "ngrok לא זמין — התקן עם: brew install ngrok"}, 503)
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
+
+        elif path == "/api/profiles/invite_stop":
+            # Stop session_server + ngrok
+            for _proc in _invite_state.get("procs", []):
+                try: _proc.terminate()
+                except Exception: pass
+            _invite_state["procs"] = []
+            self._json({"ok": True})
+            return
+
         elif path == "/api/profiles/delete":
             try:
                 pid = (payload.get("id") or "").strip()
