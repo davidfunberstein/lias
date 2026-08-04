@@ -1581,6 +1581,13 @@ function _verdictSelectNew(){
 function _verdictSelectAll(){ document.querySelectorAll('.v-row-cb').forEach(cb=>cb.checked=true); _verdictUpdateCount(); }
 function _verdictDeselectAll(){ document.querySelectorAll('.v-row-cb').forEach(cb=>cb.checked=false); _verdictUpdateCount(); }
 
+function verdictDownloadSelected(){
+  const params = [...document.querySelectorAll('.v-row-cb:checked')]
+    .map(cb => cb.dataset.param).filter(Boolean);
+  if(!params.length){ toast('לא נבחרו מסמכים להורדה', true); return; }
+  _startVerdictDownloadJob(params);
+}
+
 // ── Left panel: library of downloaded decisions ───────────────────────────
 // window._libGroupBy:    'judge' | 'subject'
 // window._libSelLevel1:  selected group name (judge name OR subject name)
@@ -1900,20 +1907,28 @@ async function _startVerdictDownloadJob(docParams){
 
 function _pollVerdictDownload(jobId){
   let n=0;
+  // Snapshot court/judge fields before download starts so we can restore them
+  const savedCourt = $('v-court')?.value || '';
+  const savedJudge = $('v-judge')?.value || '';
   const t = setInterval(async ()=>{
     n++;
-    if(n>120){ clearInterval(t); return; }
+    if(n>180){ clearInterval(t); return; }
     try{
       const jobs = await (await fetch('/api/jobs')).json();
       const job = (jobs||[]).find(j=>j.job_id===jobId);
       const st = $('v-dl-status');
       if(!job) return;
       if(job.message && st) st.textContent=`⏳ ${job.message} (${Math.round((job.progress||0)*100)}%)`;
+      // Refresh results table every ~10 s during download so PDF column updates live
+      if(n % 5 === 0) _showCachedVerdictResults();
       if(job.state==='COMPLETED'){
         clearInterval(t);
         if(st) st.textContent='✓ ההורדה הסתיימה';
-        _showCachedVerdictResults();
-        _renderLibrary();
+        await _showCachedVerdictResults();
+        await _renderLibrary();
+        // Restore court/judge fields so user doesn't lose their selection
+        if(savedCourt && $('v-court')) $('v-court').value = savedCourt;
+        if(savedJudge && $('v-judge')) $('v-judge').value = savedJudge;
       } else if(job.state==='FAILED'){
         clearInterval(t);
         if(st) st.textContent=`✗ שגיאה: ${job.error||''}`;

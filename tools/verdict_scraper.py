@@ -474,6 +474,18 @@ def download_selected_verdicts(
                             dl.save_as(str(pdf_path))
                             downloaded.append({"doc_param": dp, "pdf_path": str(pdf_path.relative_to(output_dir))})
                             log(f"    saved: {pdf_path.name}")
+                            # Update run file immediately so UI can show progress
+                            if run_file:
+                                import json as _json
+                                try:
+                                    rp = Path(run_file)
+                                    data = _json.loads(rp.read_text(encoding="utf-8"))
+                                    for v in data.get("verdicts", []):
+                                        if v.get("doc_param") == dp:
+                                            v["pdf_path"] = str(pdf_path.relative_to(output_dir))
+                                    rp.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                                except Exception as _e:
+                                    log(f"    run file live update failed: {_e}")
                         except Exception as e:
                             log(f"    save failed: {e}")
                             downloaded.append({"doc_param": dp, "pdf_path": ""})
