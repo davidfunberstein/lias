@@ -1962,3 +1962,76 @@ try:
     register_verdict_handler()
 except Exception as _ve:
     print(f"[collector_bridge] verdict handler not registered: {_ve}")
+
+
+# ---------------------------------------------------------------------------
+# Judges cache refresh — visible Chrome, no portal login needed
+# ---------------------------------------------------------------------------
+@handler("verdicts_refresh_judges")
+def _refresh_judges_handler(payload: dict, ctx: JobContext) -> str:
+    from .api import _VERDICT_COURTS, _JUDGES_CACHE, _save_judges_cache_to_disk  # noqa: PLC0415
+    from playwright.sync_api import sync_playwright
+
+    COURT_URL = "https://www.court.gov.il/NGCS.Web.Site/LocateDecisions/LocateDecisionQuering.aspx"
+    updated = 0
+
+    ctx.progress(0.02, "פותח דפדפן גלוי לאיסוף שופטים…")
+    courts = [c for c in _VERDICT_COURTS if c["id"] not in ("-1", "")]
+
+    with sync_playwright() as pw:
+        args = ["--disable-blink-features=AutomationControlled",
+                "--no-first-run", "--no-default-browser-check"]
+        try:
+            browser = pw.chromium.launch(channel="chrome", headless=False, args=args)
+            print("[verdicts_refresh] using Google Chrome (visible)")
+        except Exception:
+            browser = pw.chromium.launch(headless=False, args=args)
+            print("[verdicts_refresh] using Chromium (visible)")
+
+        try:
+            bctx = browser.new_context(
+                locale="he-IL",
+                extra_http_headers={"Accept-Language": "he-IL,he;q=0.9"},
+            )
+            page = bctx.new_page()
+            page.set_default_timeout(30_000)
+            ctx.progress(0.05, "מנווט לאיתור החלטות…")
+            page.goto(COURT_URL, wait_until="domcontentloaded", timeout=60_000)
+            page.wait_for_timeout(1000)
+
+            for i, court in enumerate(courts):
+                cid = court["id"]
+                ctx.progress(0.05 + 0.9 * i / len(courts),
+                             f"טוען שופטים: {court['name']}…")
+                try:
+                    try:
+                        page.select_option("#LocateByParameters1_ddlCourt", cid)
+                    except Exception:
+                        page.select_option("#LocateByParameters1_ddlSelectCourt", cid)
+                    page.wait_for_load_state("domcontentloaded", timeout=30_000)
+                    page.wait_for_timeout(1200)
+                    judges = page.evaluate("""
+                        (() => {
+                            const sel = document.querySelector('#LocateByParameters1_ddlJudgeName');
+                            if (!sel) return [];
+                            return Array.from(sel.options)
+                                .filter(o => o.value && o.value !== '0' && o.value !== '-1')
+                                .map(o => ({value: o.value, name: o.text.trim()}));
+                        })()
+                    """)
+                    if judges:
+                        _JUDGES_CACHE[cid] = judges
+                        updated += 1
+                        print(f"[verdicts_refresh] {court['name']}: {len(judges)} שופטים")
+                except Exception as e:
+                    print(f"[verdicts_refresh] {court['name']} נכשל: {e}")
+
+            _save_judges_cache_to_disk()
+        finally:
+            try:
+                browser.close()
+            except Exception:
+                pass
+
+    ctx.progress(1.0, f"הושלם — {updated} בתי משפט עודכנו")
+    return f"judges refreshed — {updated} courts"

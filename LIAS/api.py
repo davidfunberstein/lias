@@ -1425,65 +1425,42 @@ def verdicts_courts():
     return {"courts": _VERDICT_COURTS}
 
 
+_JUDGES_CACHE: dict = {}  # court_id → [{value, name}, ...]
+_JUDGES_CACHE_PATH = config.PROJECT_ROOT / "verdicts_judges_cache.json"
+
+def _load_judges_cache():
+    global _JUDGES_CACHE
+    try:
+        if _JUDGES_CACHE_PATH.exists():
+            import json as _j
+            _JUDGES_CACHE = _j.loads(_JUDGES_CACHE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+
+def _save_judges_cache_to_disk():
+    try:
+        import json as _j
+        _JUDGES_CACHE_PATH.write_text(
+            _j.dumps(_JUDGES_CACHE, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+_load_judges_cache()
+
+
 @app.get("/api/verdicts/judges")
 def verdicts_judges(court_id: str = ""):
-    """Fetch judges list for a court from court.gov.il using requests (no browser)."""
-    import re as _re
-    COURT_URL = "https://www.court.gov.il/NGCS.Web.Site/LocateDecisions/LocateDecisionQuering.aspx"
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/126.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "he-IL,he;q=0.9,en;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Referer": COURT_URL,
-    }
+    """Return cached judges for a court (populated by verdicts_refresh_judges job)."""
     if not court_id or court_id in ("-1", ""):
-        return {"judges": []}
-    try:
-        import requests as _req
-        session = _req.Session()
-        # Step 1: GET to collect __VIEWSTATE
-        r1 = session.get(COURT_URL, headers=HEADERS, timeout=15)
-        r1.raise_for_status()
+        return {"judges": [], "cached": False}
+    judges = _JUDGES_CACHE.get(court_id, [])
+    return {"judges": judges, "cached": bool(judges)}
 
-        def _field(name: str, html: str) -> str:
-            m = _re.search(
-                rf'<input[^>]+name="{_re.escape(name)}"[^>]+value="([^"]*)"', html)
-            return m.group(1) if m else ""
 
-        html1 = r1.text
-        vs        = _field("__VIEWSTATE",          html1)
-        vsg       = _field("__VIEWSTATEGENERATOR", html1)
-        ev_val    = _field("__EVENTVALIDATION",    html1)
-
-        # Step 2: POST to trigger UpdatePanel with court selection
-        data = {
-            "__EVENTTARGET":         "LocateByParameters1$ddlCourt",
-            "__EVENTARGUMENT":       "",
-            "__VIEWSTATE":           vs,
-            "__VIEWSTATEGENERATOR":  vsg,
-            "__EVENTVALIDATION":     ev_val,
-            "LocateByParameters1$ddlCourt": court_id,
-        }
-        headers2 = {**HEADERS,
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"}
-        r2 = session.post(COURT_URL, data=data, headers=headers2, timeout=20)
-        r2.raise_for_status()
-
-        # Parse judges from the returned HTML
-        judges = []
-        for m in _re.finditer(
-            r'<option\s+value="([^"]+)"[^>]*>(.*?)</option>', r2.text, _re.DOTALL):
-            val  = m.group(1).strip()
-            name = _re.sub(r"<[^>]+>", "", m.group(2)).strip()
-            if val and val not in ("0", "-1", "") and name:
-                judges.append({"value": val, "name": name})
-        return {"judges": judges}
-    except Exception as e:
-        return {"judges": [], "error": str(e)}
+@app.post("/api/verdicts/refresh_judges")
+def verdicts_refresh_judges():
+    """Start a job that opens a visible Chrome window and scrapes judges for all courts."""
+    return {"job_id": jobs.submit("verdicts_refresh_judges", {})}
 
 
 @app.post("/api/verdicts/search")
