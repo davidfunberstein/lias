@@ -1094,16 +1094,18 @@ function renderVerdicts(){
           🔍 חפש
         </button>
         <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;cursor:pointer;user-select:none">
-          <input type="checkbox" id="v-headless" style="cursor:pointer">
+          <input type="checkbox" id="v-headless" checked style="cursor:pointer">
           הסתר דפדפן
         </label>
         <span id="v-status" style="font-size:12px;color:var(--ink-soft)"></span>
       </div>
     </div>
 
-    <!-- split: download table (left) + judges panel (right) -->
-    <div id="v-results-dl"     class="c7" style="min-width:0"></div>
-    <div id="v-results-judges" class="c5" style="min-width:0"></div>
+    <!-- split layout in a c12 flex container -->
+    <div class="c12" style="display:flex;gap:16px;align-items:flex-start;min-width:0">
+      <div id="v-results-dl"     style="flex:1 1 60%;min-width:0;overflow:hidden"></div>
+      <div id="v-results-judges" style="flex:0 0 280px;min-width:240px"></div>
+    </div>
   </div>
   `;
 
