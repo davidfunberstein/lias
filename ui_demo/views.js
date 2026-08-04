@@ -1160,6 +1160,7 @@ function _verdictAC(inputId, dropId, items, onSelect, hiddenId){
     if(!filtered.length){ drop.style.display='none'; return; }
     drop.innerHTML = filtered.slice(0,60).map(it=>
       `<div tabindex="0" style="padding:7px 12px;cursor:pointer;font-size:13px;outline:none;
+        direction:rtl;text-align:right;
         white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
         data-val="${it.value}" data-lbl="${it.label.replace(/"/g,'&quot;')}"
         onmouseenter="this.style.background='var(--accent-soft,#e8eeff)'"
@@ -1366,6 +1367,15 @@ function _pollVerdictSearch(jobId){
         if(st) st.textContent = '';
         await _showCachedVerdictResults();
         await _renderLibrary();
+        // Auto-select the searched judge so decisions appear immediately
+        const sp = window._verdictSearchParams || {};
+        const jn = sp.judge || sp.judge_name || '';
+        if(jn && window._libRows?.some(r => r.judge_name === jn)){
+          window._libGroupBy = 'judge';
+          window._libSelLevel1 = jn;
+          window._libSelLevel2 = null;
+          _renderLibGroups(window._libRows);
+        }
       } else if(job.status==='error'){
         clearInterval(t);
         if(st) st.textContent = `✗ ${job.error||'שגיאה'}`;
@@ -1733,12 +1743,18 @@ function _renderLibDecisions(judgeName, rows){
               <div style="font-size:11px;color:var(--ink-soft);margin-top:2px;
                 white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${row.case_num||''} ${row.court?'· '+row.court:''}</div>
             </div>
+            <div style="display:flex;gap:5px;flex-shrink:0">
             ${fn
               ? `<button onclick="_openVerdictPdf('${fn.replace(/'/g,"\\'").replace(/\\/g,'/')}','${(row.dec_type||'').replace(/'/g,"\\'")} ${row.date||''}')"
-                  style="flex-shrink:0;padding:5px 12px;border-radius:6px;
+                  style="padding:5px 12px;border-radius:6px;
                   border:none;background:var(--accent);color:#fff;font-size:12px;
-                  font-weight:600;cursor:pointer;white-space:nowrap">📄 קרא</button>`
+                  font-weight:600;cursor:pointer;white-space:nowrap">📄 קרא</button>
+                <button onclick="_deleteVerdict('${fn.replace(/'/g,"\\'")}')"
+                  style="padding:5px 8px;border-radius:6px;border:1px solid var(--line);
+                  background:var(--surface);font-size:12px;cursor:pointer;white-space:nowrap"
+                  title="מחק קובץ">🗑</button>`
               : ''}
+            </div>
           </div>`;
         }).join('')}
       </div>
@@ -1748,6 +1764,25 @@ function _renderLibDecisions(judgeName, rows){
 // Refresh library after a download completes
 function _refreshLibAfterDownload(){
   _renderLibrary();
+}
+
+async function _deleteVerdict(filename){
+  if(!confirm(`למחוק את הקובץ "${filename}"?`)) return;
+  try{
+    const r = await fetch('/api/verdicts/delete', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({filename})
+    });
+    const d = await r.json();
+    if(d.ok){
+      toast('🗑 הקובץ נמחק');
+      _renderLibrary();
+    } else {
+      toast('שגיאה: ' + (d.detail || d.error || 'מחיקה נכשלה'), true);
+    }
+  } catch(e){
+    toast('שגיאה: ' + e.message, true);
+  }
 }
 
 function _openVerdictPdf(filename, title){

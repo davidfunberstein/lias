@@ -1560,6 +1560,40 @@ def verdicts_download(filename: str):
                         headers={"Content-Disposition": "inline"})
 
 
+@app.post("/api/verdicts/delete")
+async def verdicts_delete(request: Request):
+    """Delete a downloaded verdict PDF and clear its pdf_path in all run JSON files."""
+    import json as _json
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    filename = Path(body.get("filename", "")).name
+    if not filename:
+        raise HTTPException(400, "filename required")
+    path = config.COURT_DOCS_DIR / "verdicts" / "pdfs" / filename
+    if not path.exists():
+        raise HTTPException(404, "file not found")
+    path.unlink()
+    # Clear pdf_path in all run JSON files that reference this file
+    results_dir = config.COURT_DOCS_DIR / "verdicts"
+    for run_file in results_dir.glob("run_*.json"):
+        try:
+            data = _json.loads(run_file.read_text(encoding="utf-8"))
+            changed = False
+            for v in data.get("verdicts", []):
+                if Path(v.get("pdf_path", "")).name == filename:
+                    v["pdf_path"] = ""
+                    changed = True
+            if changed:
+                run_file.write_text(_json.dumps(data, ensure_ascii=False, indent=2),
+                                    encoding="utf-8")
+        except Exception:
+            pass
+    return {"ok": True, "deleted": filename}
+
+
 @app.get("/api/verdicts/library")
 def verdicts_library():
     """Return all downloaded verdicts across all run files, deduplicated by case_num."""
