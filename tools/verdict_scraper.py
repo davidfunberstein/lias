@@ -130,36 +130,50 @@ def scrape_verdicts(
 
             log("מנווט לאיתור החלטות…")
             progress(0.04, "מנווט לאיתור החלטות…")
+            # Try clicking the menu link first; fall back to doPostBack if not found
+            clicked = False
             try:
                 page.click('a:has-text("איתור החלטות"), '
                            'a[href*="LocateDecision"], '
                            'span:has-text("איתור החלטות")',
                            timeout=8_000)
                 page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
+                clicked = True
             except Exception:
+                pass
+
+            if not clicked:
+                # Navigate to the court search page and use doPostBack
                 page.goto(COURT_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+                page.wait_for_timeout(1500)
+                _dismiss_popup()
+                log("clicking איתור החלטות via doPostBack")
+                try:
+                    page.wait_for_function("typeof __doPostBack !== 'undefined'", timeout=10_000)
+                    page.evaluate(
+                        "javascript:__doPostBack('Header1$UpperMenu1$btnVerdictLocalization','')"
+                    )
+                    page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
+                except Exception:
+                    page.goto(COURT_URL + "?tab=verdict", wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+
             page.wait_for_timeout(1000)
             _dismiss_popup()
-
-            # ── Click "איתור החלטות" via doPostBack ──────────────────────────
-            log("clicking איתור החלטות")
-            page.evaluate(
-                "javascript:__doPostBack('Header1$UpperMenu1$btnVerdictLocalization','')"
-            )
-            page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
             progress(0.05, "עובר למסך איתור החלטות…")
 
             # ── Switch to "איתור לפי פרמטרים" tab ───────────────────────────
             log("switching to parameters tab")
             try:
-                page.click("a[href='#tabOrderDetails']", timeout=10_000)
+                page.wait_for_selector("a[href='#tabOrderDetails']", timeout=12_000)
+                page.click("a[href='#tabOrderDetails']", timeout=8_000)
             except Exception:
-                page.evaluate("javascript:$('#tabOrderDetails').click()")
+                pass  # tab may not exist or page is already on correct tab
             page.wait_for_timeout(800)
             progress(0.08, "בחירת טאב איתור לפי פרמטרים…")
 
             # ── Select court ─────────────────────────────────────────────────
             log(f"selecting court {court_id}")
+            page.wait_for_selector("#LocateByParameters1_ddlSelectCourt", timeout=12_000)
             page.select_option("#LocateByParameters1_ddlSelectCourt", court_id)
             page.wait_for_timeout(1200)  # judge list loads dynamically
             progress(0.12, "בחירת בית משפט…")
@@ -215,7 +229,11 @@ def scrape_verdicts(
 
             # ── Click search ─────────────────────────────────────────────────
             log("clicking איתור")
-            page.evaluate("javascript:__doPostBack('ButtonsGroup1$btnLocate','')")
+            try:
+                page.click("#ButtonsGroup1_btnLocate", timeout=5_000)
+            except Exception:
+                page.wait_for_function("typeof __doPostBack !== 'undefined'", timeout=10_000)
+                page.evaluate("javascript:__doPostBack('ButtonsGroup1$btnLocate','')")
             page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT)
             page.wait_for_timeout(2000)
             progress(0.25, "מחפש החלטות…")
@@ -408,7 +426,9 @@ def download_selected_verdicts(
             try:
                 page.click("a[href='#tabOrderDetails']", timeout=10_000)
             except Exception:
-                page.evaluate("javascript:$('#tabOrderDetails').click()")
+                page.evaluate(
+                    "document.querySelector(\"a[href='#tabOrderDetails']\").click()"
+                )
             page.wait_for_timeout(800)
 
             progress(0.10, "מגדיר פרמטרי חיפוש…")

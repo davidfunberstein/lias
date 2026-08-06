@@ -1895,7 +1895,7 @@ def import_session(payload: dict, ctx: JobContext) -> str:
             if d and not d.startswith(".") and d.endswith("gov.il"):
                 c["domain"] = "." + d
             # Normalize sameSite case (Playwright requires Strict/Lax/None)
-            ss = c.get("sameSite", "Lax")
+            ss = str(c.get("sameSite", "Lax")).lower()
             c["sameSite"] = _SAMESITE_MAP.get(ss, "Lax")
             # Skip empty-name cookies (artifact of malformed Set-Cookie headers)
             if not c.get("name", "").strip():
@@ -1940,6 +1940,17 @@ def import_session(payload: dict, ctx: JobContext) -> str:
         raise RuntimeError("אין דפדפן מחובר — הפעל את המנוע קודם")
 
     ctx.progress(0.2, f"מזריק עוגיות ל-{portal}…")
+
+    _SS_MAP2 = {"strict": "Strict", "lax": "Lax", "none": "None",
+                 "Strict": "Strict", "Lax": "Lax", "None": "None"}
+    def _sanitize(c):
+        c = dict(c)
+        ss = c.get("sameSite", "Lax")
+        c["sameSite"] = _SS_MAP2.get(ss, "Lax")
+        if not c.get("name", "").strip():
+            return None
+        return c
+    cookies = [sc for c in cookies if (sc := _sanitize(c)) is not None]
 
     def _run(page):
         context = page.context
