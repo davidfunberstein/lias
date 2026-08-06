@@ -316,6 +316,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self._html(404, "לא נמצא"); return
 
         target_url = f"https://{host}{rpath}"
+
+        # Bypass static assets — redirect browser directly to origin (faster, no proxy overhead)
+        _STATIC_EXT = ('.png','.jpg','.jpeg','.gif','.svg','.ico',
+                       '.css','.woff','.woff2','.ttf','.eot',
+                       '.js','.map','.webp','.avif')
+        _rpath_lower = rpath.split('?')[0].lower()
+        if method == 'GET' and any(_rpath_lower.endswith(e) for e in _STATIC_EXT):
+            self.send_response(302)
+            self.send_header('Location', target_url)
+            self.send_header('ngrok-skip-browser-warning', '1')
+            self.end_headers(); return
+
         # Forward headers
         fwd = {}
         for k, v in self.headers.items():
