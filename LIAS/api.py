@@ -228,12 +228,20 @@ def browser_status():
 
 
 @app.post("/api/actions/browser/show")
-def act_browser_show():
+async def act_browser_show(request: Request):
     b = jobs._pool._browser if hasattr(jobs, "_pool") and jobs._pool else None
     if not b:
         raise HTTPException(503, "browser not available")
-    b.show()
-    return {"ok": True, "headless": b.headless}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    force = body.get("force", False)
+    result = b.show(force=force)
+    if result == "busy":
+        return {"ok": False, "busy": True,
+                "message": "הדפדפן headless ולא ניתן להציג כרגע — הורדה פעילה. נסה שוב לאחר סיום."}
+    return {"ok": True, "headless": b.headless, "result": result}
 
 
 @app.get("/api/browser/screenshot")
@@ -374,7 +382,10 @@ async def act_toggle_browser_visible(request: Request):
         raise HTTPException(404, "no browser for portal")
     try:
         if visible:
-            bm.show()
+            result = bm.show()
+            if result == "busy":
+                return {"ok": False, "busy": True,
+                        "message": "הדפדפן headless — לא ניתן להציג כרגע"}
         else:
             bm.hide()
     except Exception as e:

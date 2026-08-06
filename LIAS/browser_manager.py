@@ -150,16 +150,28 @@ class BrowserManager:
         if self._thread.is_alive():
             self._thread.join(timeout=20)
 
-    def show(self) -> None:
-        """Relaunch as visible (non-headless). Interrupts any running job."""
+    def show(self, force: bool = False) -> str:
+        """Make the browser visible.
+
+        If already visible → bring to front (cheap).
+        If headless AND a job is running → refuse unless *force* (would kill
+        the running download).  If headless and idle → relaunch visible.
+
+        Returns a status string: "front", "relaunched", "busy".
+        """
         import threading as _threading
         if not self._headless:
             if self._alive.is_set():
                 self.bring_to_front()
-                return
+                return "front"
             # Browser died while visible — fall through to relaunch
+
+        # Headless → need restart.  Check if a job is running first.
+        if self.busy and not force:
+            return "busy"
+
         self._headless = False
-        self._generation += 1            # invalidate every existing loop NOW
+        self._generation += 1
         old_watchdog = self._watchdog
         if self._thread.is_alive() or (self._watchdog and self._watchdog.is_alive()):
             self.shutdown()
@@ -175,6 +187,7 @@ class BrowserManager:
         self._watchdog = _threading.Thread(target=self._watchdog_loop, name="lias-watchdog", daemon=True)
         self.start()
         self._alive.wait(timeout=15)
+        return "relaunched"
 
     # The automation browser is real Google Chrome (channel="chrome"); only the
     # bundled fallback is "Chromium". Try both app names.

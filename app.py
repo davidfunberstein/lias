@@ -110,7 +110,12 @@ def _cookie_status(slug: str) -> dict:
 def _load_profiles() -> list:
     try:
         if os.path.exists(PROFILES_PATH):
-            return json.loads(open(PROFILES_PATH, encoding="utf-8").read())
+            profiles = json.loads(open(PROFILES_PATH, encoding="utf-8").read())
+            # Backfill defaults for profiles created before type/cookie_fallback fields
+            for p in profiles:
+                p.setdefault("type", "guest")
+                p.setdefault("cookie_fallback", "none")
+            return profiles
     except Exception:
         pass
     return []

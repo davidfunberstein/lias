@@ -851,14 +851,17 @@ async function toggleRealBrowser(){
     if(!ok){ toast('המנוע לא עלה', true); return; }
   }
   try{
-    // Sync with actual server state before toggling to avoid double-open
     const status = await fetch('/api/browser/status').then(r=>r.json()).catch(()=>({}));
-    // headless=true means browser is hidden; headless=false or window visible means shown
     const currentlyVisible = status.available && !status.headless;
     _realBrowserVisible = currentlyVisible;
     const path = _realBrowserVisible ? 'browser/hide' : 'browser/show';
     const r = await fetch('/api/proxy/actions/'+path, {method:'POST'});
-    if(!r.ok) throw 0;
+    const d = await r.json().catch(()=>({}));
+    if(d.busy){
+      toast('הדפדפן headless — לא ניתן להציג כרגע כי הורדה רצה. נסה שוב אחרי שיסתיים.', true);
+      return;
+    }
+    if(!d.ok && !r.ok) throw 0;
     _realBrowserVisible = !_realBrowserVisible;
     const btn = $('browser-toggle');
     if(btn) btn.textContent = _realBrowserVisible ? '🙈 הסתר דפדפן' : '🖥 הצג דפדפן';
@@ -1707,15 +1710,18 @@ async function _togglePause(jobId){
 }
 
 async function _toggleBubbleBrowser(portal){
-  // Detect current visibility from browser status
   const r = await fetch('/api/browser/status').then(r=>r.json()).catch(()=>({}));
   const portalKey = portal==='BDR'?'bdr':portal==='ECA'?'eca':'main';
   const vis = !(r[portalKey]?.headless ?? true);
-  await fetch('/api/proxy/actions/toggle_browser_visible',{
+  const resp = await fetch('/api/proxy/actions/toggle_browser_visible',{
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({portal, visible:!vis})
-  }).catch(()=>{});
-  toast(vis ? 'דפדפן הוסתר' : 'דפדפן נפתח');
+  }).then(r=>r.json()).catch(()=>({}));
+  if(resp.busy){
+    toast('הדפדפן headless — לא ניתן להציג תוך כדי הורדה', true);
+  } else {
+    toast(vis ? 'דפדפן הוסתר' : 'דפדפן נפתח');
+  }
 }
 
 function _renderPortalCard(portal, s){
@@ -2350,18 +2356,27 @@ function _resumeInvitePoller(profileId){
         if(st) st.textContent = `✅ ${n} עוגיות התקבלו — מייבא לפרופיל…`;
         if(btn) btn.disabled = false;
         fetch('/api/profiles/invite_stop',{method:'POST'}).catch(()=>{});
-        // Auto-import to this profile
+        // Activate this profile first, then import cookies into its browsers
         const ck = s.cookies;
         if(ck){
           try{
+            // Step 1: activate profile so browsers belong to this client
+            if(st) st.textContent = `✅ ${n} עוגיות — מפעיל פרופיל…`;
+            const actR = await fetch('/api/profiles/activate',{
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({id: profileId})
+            }).then(r=>r.json());
+            if(!actR.ok) throw new Error('הפעלת פרופיל נכשלה: '+(actR.error||''));
+            _updateProfileBanner(actR.profile);
+            // Step 2: import cookies into the now-active profile's browsers
+            if(st) st.textContent = `✅ ${n} עוגיות — מייבא…`;
             const r2 = await fetch('/api/actions/import_session',{
               method:'POST', headers:{'Content-Type':'application/json'},
               body: JSON.stringify({portal:'AUTO', storage_state: ck.storage_state||{}, exported_at: ck.exported_at||0})
             });
             const d2 = await r2.json().catch(()=>({}));
             if(r2.ok) {
-              if(st) st.textContent = `✅ ${n} עוגיות — ייבוא הושלם (job ${d2.job_id})`;
-              // Refresh to show updated cookie_status badge
+              if(st) st.textContent = `✅ ${n} עוגיות — ייבוא הושלם · פרופיל ${actR.profile?.name||''} פעיל`;
               setTimeout(()=>{ $('profile-mgr')?.remove(); openProfileManager(); }, 2000);
             } else throw new Error(d2.detail||d2.error||r2.status);
           }catch(e2){
