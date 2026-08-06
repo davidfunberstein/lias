@@ -1907,9 +1907,19 @@ async function _startVerdictDownloadJob(docParams){
 
 function _pollVerdictDownload(jobId){
   let n=0;
-  // Snapshot court/judge fields before download starts so we can restore them
-  const savedCourt = $('v-court')?.value || '';
-  const savedJudge = $('v-judge')?.value || '';
+  // Freeze current search context so live refreshes don't clobber the user's view
+  const savedCourt        = $('v-court')?.value || '';
+  const savedJudge        = $('v-judge')?.value || '';
+  const savedSearchParams = JSON.parse(JSON.stringify(window._verdictSearchParams || {}));
+  const savedRunFile      = window._verdictRunFile || '';
+
+  async function _refreshKeepContext(){
+    await _showCachedVerdictResults();
+    // Restore search context overwritten by _showCachedVerdictResults
+    window._verdictSearchParams = savedSearchParams;
+    window._verdictRunFile      = savedRunFile;
+  }
+
   const t = setInterval(async ()=>{
     n++;
     if(n>180){ clearInterval(t); return; }
@@ -1920,13 +1930,12 @@ function _pollVerdictDownload(jobId){
       if(!job) return;
       if(job.message && st) st.textContent=`⏳ ${job.message} (${Math.round((job.progress||0)*100)}%)`;
       // Refresh results table every ~10 s during download so PDF column updates live
-      if(n % 5 === 0) _showCachedVerdictResults();
+      if(n % 5 === 0) _refreshKeepContext();
       if(job.state==='COMPLETED'){
         clearInterval(t);
         if(st) st.textContent='✓ ההורדה הסתיימה';
         await _showCachedVerdictResults();
         await _renderLibrary();
-        // Restore court/judge fields so user doesn't lose their selection
         if(savedCourt && $('v-court')) $('v-court').value = savedCourt;
         if(savedJudge && $('v-judge')) $('v-judge').value = savedJudge;
       } else if(job.state==='FAILED'){
