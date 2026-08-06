@@ -334,7 +334,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         try:
             with _httpx.Client(transport=_httpx_transport,
-                               cookies=None, follow_redirects=False, timeout=30) as _c:
+                               cookies=None, follow_redirects=False,
+                               timeout=_httpx.Timeout(60.0, connect=15.0)) as _c:
                 _resp = _c.request(
                     method, target_url,
                     content=req_body if req_body else None,
