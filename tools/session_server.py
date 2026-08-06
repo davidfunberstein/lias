@@ -201,13 +201,17 @@ def _check_login_success(cookies_dict: dict) -> bool:
 def _build_payload_from_proxy() -> dict:
     import time as _t
     cookies_list = []
-    for raw in _state["cookies"].values():
-        # Parse raw Set-Cookie into simple dict for storage_state format
+    for info in _state["cookies"].values():
+        # info may be {"raw": ..., "host": ...} or plain string (legacy)
+        if isinstance(info, dict):
+            raw, cookie_host = info["raw"], info["host"]
+        else:
+            raw, cookie_host = info, "my.gov.il"
         parts = [p.strip() for p in raw.split(';')]
         kv    = parts[0].split('=', 1)
         name  = kv[0].strip()
         value = kv[1] if len(kv) > 1 else ''
-        c = {"name": name, "value": value, "domain": "gov.il",
+        c = {"name": name, "value": value, "domain": cookie_host,
              "path": "/", "httpOnly": False, "secure": True, "sameSite": "Lax"}
         for p in parts[1:]:
             pl = p.lower()
@@ -354,13 +358,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 and b"SAMLResponse" in req_body):
             _state["posted_saml"] = True
 
-        # Capture & collect cookies (keyed by cookie name)
-        # httpx uses get_list; urllib uses get_all — support both
+        # Capture & collect cookies (keyed by cookie name, with issuing host)
         _sc_list = (rh.get_list('set-cookie') if hasattr(rh, 'get_list')
                     else (rh.get_all('Set-Cookie') or []))
         for ck in _sc_list:
             name = ck.split('=')[0].strip()
-            _state["cookies"][name] = ck
+            _state["cookies"][name] = {"raw": ck, "host": host}
 
         location = rh.get('Location', '')
         # Detect successful login — require visited_login + auth cookies.
@@ -609,11 +612,21 @@ def main():
         webbrowser.open(url)
 
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), HandlerClass)
-    try:
+
+    def _watchdog():
         while not _state["ready"]:
-            srv.handle_request()
-        for _ in range(10):
-            srv.handle_request()
+            time.sleep(0.3)
+        # Wait for callback POST to complete (or timeout after 8 s)
+        for _ in range(40):
+            if _state.get("sent_ok") or not callback_url:
+                break
+            time.sleep(0.2)
+        time.sleep(1.0)   # let /done_proxy page load in client browser
+        srv.shutdown()
+
+    threading.Thread(target=_watchdog, daemon=True).start()
+    try:
+        srv.serve_forever()
     except KeyboardInterrupt:
         pass
 

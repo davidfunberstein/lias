@@ -1872,10 +1872,43 @@ def import_session(payload: dict, ctx: JobContext) -> str:
     storage_state = payload.get("storage_state", {})
     url = payload.get("url", "")
     cookies = storage_state.get("cookies", [])
-    if portal not in ("BDR", "NET", "ECA"):
+    if portal not in ("BDR", "NET", "ECA", "AUTO"):
         raise RuntimeError(f"פורטל לא נתמך: {portal}")
     if not cookies:
         raise RuntimeError("storage_state.cookies ריק — ייצוא הסשן נכשל")
+
+    # AUTO = my.gov.il SSO cookies — inject into all available portal browsers
+    # so each portal can silently complete SSO using the client's credentials.
+    if portal == "AUTO":
+        _portal_map = [
+            ("NET", ctx.browser,
+             "https://www.court.gov.il/ngcs.web.site/homepage.aspx"),
+            ("BDR", getattr(ctx, "bdr_browser", None),
+             "https://sides.rbc.gov.il/Pages/FilesList.aspx"),
+            ("ECA", getattr(ctx, "eca_browser", None),
+             "https://publicsso.eca.gov.il/he/home/OpenCase"),
+        ]
+        injected = []
+        for pname, pbrowser, purl in _portal_map:
+            if pbrowser is None:
+                continue
+            try:
+                pages = pbrowser.pages
+                page = pages[0] if pages else pbrowser.new_page()
+                page.context.add_cookies(cookies)
+                page.goto(url or purl, wait_until="domcontentloaded", timeout=30000)
+                try: pbrowser.show()
+                except Exception: pass
+                injected.append(pname)
+                ctx.progress(0.5, f"✓ {pname} — SSO הושלם")
+            except Exception as e:
+                ctx.progress(0.5, f"⚠ {pname}: {e}")
+        if not injected:
+            raise RuntimeError("אין דפדפן פעיל — הפעל את המנוע קודם")
+        ctx.progress(1.0, f"עוגיות gov.il הוזרקו ל: {', '.join(injected)}")
+        jobs.broadcast({"type": "session_imported", "portal": "AUTO",
+                        "portals": injected})
+        return f"סשן gov.il יובא — {len(cookies)} עוגיות · פורטלים: {', '.join(injected)}"
 
     target = (ctx.bdr_browser or ctx.browser) if portal == "BDR" \
              else (ctx.eca_browser or ctx.browser) if portal == "ECA" \
@@ -1886,7 +1919,6 @@ def import_session(payload: dict, ctx: JobContext) -> str:
     ctx.progress(0.2, f"מזריק עוגיות ל-{portal}…")
 
     def _run(page):
-        # Inject cookies directly into the browser context (same as apply_to_context)
         context = page.context
         try:
             context.add_cookies(cookies)
@@ -1896,15 +1928,14 @@ def import_session(payload: dict, ctx: JobContext) -> str:
         ctx.progress(0.6, f"ניווט ל-{portal}…")
         nav_url = url or {
             "ECA": "https://publicsso.eca.gov.il/he/home/OpenCase",
-            "NET": "https://www.nethamishpat.gov.il/",
-            "BDR": "https://bdr.court.gov.il/",
+            "NET": "https://www.court.gov.il/ngcs.web.site/homepage.aspx",
+            "BDR": "https://sides.rbc.gov.il/Pages/FilesList.aspx",
         }.get(portal, "")
         if nav_url:
             try:
                 page.goto(nav_url, wait_until="domcontentloaded", timeout=30000)
             except Exception:
                 pass
-        # Show browser so user can verify the session works
         try:
             target.show()
         except Exception:

@@ -749,7 +749,7 @@ async def act_import_session(request: Request):
     except Exception:
         raise HTTPException(400, "Invalid JSON")
     portal = (body.get("portal") or "").upper()
-    if portal not in ("BDR", "NET", "ECA"):
+    if portal not in ("BDR", "NET", "ECA", "AUTO"):
         raise HTTPException(400, f"Unknown portal: {portal}")
     storage_state = body.get("storage_state")
     if not storage_state or not isinstance(storage_state.get("cookies"), list):
@@ -1546,12 +1546,31 @@ def verdicts_results(limit: int = 200):
         return {"verdicts": [], "run_file": "", "search_params": {}}
     try:
         data = _json.loads(runs[0].read_text(encoding="utf-8"))
-        # Verify pdf_path existence so front-end can mark downloaded
         pdf_base = results_dir / "pdfs"
+
+        # Build doc_param → pdf_path lookup from all older runs (so re-scraping
+        # doesn't forget what was already downloaded in a previous run).
+        existing_dl: dict = {}
+        for older in runs[1:]:
+            try:
+                od = _json.loads(older.read_text(encoding="utf-8"))
+                for v in od.get("verdicts", []):
+                    dp = v.get("doc_param", "")
+                    pp = v.get("pdf_path", "")
+                    if dp and pp and dp not in existing_dl:
+                        existing_dl[dp] = pp
+            except Exception:
+                pass
+
         for v in data.get("verdicts", []):
             p = v.get("pdf_path", "")
             if p and not (pdf_base / Path(p).name).exists():
-                v["pdf_path"] = ""  # stale path — file was deleted
+                v["pdf_path"] = ""   # stale path — file was deleted
+            elif not p:
+                # Check if this doc_param was downloaded in an older run
+                candidate = existing_dl.get(v.get("doc_param", ""), "")
+                if candidate and (pdf_base / Path(candidate).name).exists():
+                    v["pdf_path"] = candidate
         return {
             "verdicts": data.get("verdicts", [])[:limit],
             "run_file": data.get("run_file", str(runs[0])),
