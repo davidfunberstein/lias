@@ -58,7 +58,7 @@ os.makedirs(TRANSCRIPTIONS_DIR, exist_ok=True)
 # ── client profiles ─────────────────────────────────────────────────────────
 PROFILES_PATH = os.path.join(HERE, "profiles.json")
 _profile_state: dict = {"active": None}  # mutable — no global needed in handlers
-_invite_state:  dict = {"procs": []}     # session_server + ngrok subprocesses
+_invite_state:  dict = {"procs": [], "profile_id": None}  # session_server + ngrok
 
 def _active_db_path() -> str:
     """Return the DB path for the currently active profile, or the main DB."""
@@ -66,6 +66,46 @@ def _active_db_path() -> str:
     if active:
         return os.path.join(HERE, "profiles_db", active["slug"], "lias.db")
     return DB_PATH
+
+def _profile_cookies_path(slug: str) -> str:
+    return os.path.join(HERE, "profiles_db", slug, "session_cookies.json")
+
+def _load_profile_cookies(slug: str) -> dict | None:
+    p = _profile_cookies_path(slug)
+    try:
+        if os.path.exists(p):
+            return json.loads(open(p, encoding="utf-8").read())
+    except Exception:
+        pass
+    return None
+
+def _save_profile_cookies(slug: str, payload: dict) -> None:
+    import time as _t
+    payload = dict(payload)
+    payload["saved_at"] = _t.time()
+    with open(_profile_cookies_path(slug), "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+
+def _cookie_status(slug: str) -> dict:
+    """Return cookie validity info for a guest profile."""
+    import time as _t
+    data = _load_profile_cookies(slug)
+    if not data:
+        return {"has_cookies": False, "valid": False, "count": 0, "saved_at": None}
+    cookies = (data.get("storage_state") or {}).get("cookies", [])
+    # F5_ST encodes expiry in its value: "1z1z1z{unix_ts}z{session_id}"
+    # We also check age: gov.il sessions last ~8 hours
+    saved_at = data.get("saved_at") or data.get("exported_at") or 0
+    age_hours = (_t.time() - saved_at) / 3600 if saved_at else 999
+    has_f5 = any(c.get("name") == "F5_ST" for c in cookies)
+    valid = bool(cookies and has_f5 and age_hours < 7.5)
+    return {
+        "has_cookies": bool(cookies),
+        "valid": valid,
+        "count": len(cookies),
+        "saved_at": saved_at or None,
+        "age_hours": round(age_hours, 1) if saved_at else None,
+    }
 
 def _load_profiles() -> list:
     try:
@@ -457,13 +497,29 @@ class Handler(BaseHTTPRequestHandler):
             return
         elif path == "/api/profiles":
             profiles = _load_profiles()
-            self._json({"profiles": profiles, "active": _profile_state["active"]})
+            # Enrich guest profiles with live cookie_status
+            enriched = []
+            for p in profiles:
+                p2 = dict(p)
+                if p2.get("type", "guest") == "guest":
+                    p2["cookie_status"] = _cookie_status(p2["slug"])
+                enriched.append(p2)
+            self._json({"profiles": enriched, "active": _profile_state["active"]})
         elif path == "/api/profiles/invite_status":
             self._json({
                 "waiting": len(_invite_state.get("procs", [])) > 0,
                 "received": _invite_state.get("cookies") is not None,
                 "cookies": _invite_state.get("cookies"),
+                "profile_id": _invite_state.get("profile_id"),
             })
+        elif path == "/api/profiles/cookie_status":
+            pid = params.get("id", "")
+            profiles = _load_profiles()
+            prof = next((p for p in profiles if p["id"] == pid), None)
+            if not prof:
+                self._json({"error": "not found"}, 404)
+            else:
+                self._json(_cookie_status(prof["slug"]))
         elif path == "/api/docs":
             self._json(docs_list(params, _active_db_path()))
         elif path == "/api/search":
@@ -780,10 +836,17 @@ class Handler(BaseHTTPRequestHandler):
                 i = 2
                 while slug in existing_slugs:
                     slug = f"{base_slug}_{i}"; i += 1
+                profile_type = (payload.get("type") or "guest").lower()
+                if profile_type not in ("guest", "owner"):
+                    profile_type = "guest"
                 profile = {
                     "id": uuid.uuid4().hex[:12],
                     "slug": slug,
                     "name": name,
+                    "type": profile_type,
+                    # guest-only: what to do when cookies expire
+                    # "none" = don't auto-login  |  "standard" = use owner credentials
+                    "cookie_fallback": payload.get("cookie_fallback", "none"),
                     "created_at": datetime.now().isoformat(timespec="seconds"),
                 }
                 # pre-create dirs so the UI can show them
@@ -823,7 +886,27 @@ class Handler(BaseHTTPRequestHandler):
                     engine_inproc.switch_profile(profile, HERE)
                 except Exception:
                     pass
-                self._json({"ok": True, "profile": profile, "paused": paused})
+                # Auto-inject cookies if this is a guest profile with valid cookies
+                auto_inject = None
+                if profile.get("type", "guest") == "guest":
+                    cs = _cookie_status(profile["slug"])
+                    if cs["valid"]:
+                        saved = _load_profile_cookies(profile["slug"])
+                        if saved:
+                            try:
+                                import_payload = json.dumps({
+                                    "portal": "AUTO",
+                                    "storage_state": saved.get("storage_state", {}),
+                                    "exported_at": saved.get("exported_at", 0),
+                                }).encode()
+                                code, body, _ = engine_inproc.request(
+                                    "POST", "/api/actions/import_session", import_payload)
+                                result = json.loads(body) if body else {}
+                                auto_inject = result.get("job_id")
+                            except Exception as e:
+                                auto_inject = f"error: {e}"
+                self._json({"ok": True, "profile": profile, "paused": paused,
+                            "auto_inject_job": auto_inject})
             except Exception as exc:
                 self._json({"ok": False, "error": str(exc)}, 500)
             return
@@ -849,6 +932,7 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception: pass
                 _invite_state["procs"] = []
                 _invite_state["cookies"] = None
+                _invite_state["profile_id"] = (payload.get("profile_id") or "").strip() or None
 
                 # callback URL: expose THIS app (8500) via ngrok so session_server
                 # can POST cookies back. Then start session_server on port 7777
@@ -871,26 +955,44 @@ class Handler(BaseHTTPRequestHandler):
                 )
 
                 # Start ngrok http 7777 (exposes the login form to the internet)
-                ng_proc = subprocess.Popen(
-                    ["ngrok", "http", "7777"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-                _invite_state["procs"] = [ss_proc, ng_proc]
+                import shutil as _shutil
 
-                # Poll ngrok local API for the public URL (up to 12 s)
-                public_url = None
-                for _ in range(24):
-                    _time.sleep(0.5)
+                def _ngrok_url_for_port(port):
+                    """Return existing ngrok public URL for given port, or None."""
                     try:
                         data = json.loads(urllib.request.urlopen(
                             "http://localhost:4040/api/tunnels", timeout=1).read())
-                        tunnels = data.get("tunnels", [])
-                        https = [t["public_url"] for t in tunnels if t["public_url"].startswith("https")]
-                        if https:
-                            public_url = https[0]
-                            break
+                        for t in data.get("tunnels", []):
+                            cfg = t.get("config", {})
+                            addr = cfg.get("addr", "")
+                            if str(port) in addr and t["public_url"].startswith("https"):
+                                return t["public_url"]
                     except Exception:
                         pass
+                    return None
+
+                # Check if ngrok tunnel for 7777 already exists
+                public_url = _ngrok_url_for_port(7777)
+                ng_proc = None
+                if not public_url:
+                    # Kill any stale ngrok and start fresh
+                    subprocess.run(["pkill", "-f", "ngrok"], capture_output=True)
+                    _time.sleep(1)
+                    _ngrok_bin = _shutil.which("ngrok") or "/opt/homebrew/bin/ngrok"
+                    ng_proc = subprocess.Popen(
+                        [_ngrok_bin, "http", "7777",
+                         "--request-header-add", "ngrok-skip-browser-warning:1"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    )
+                _invite_state["procs"] = [p for p in [ss_proc, ng_proc] if p]
+
+                # Poll ngrok local API for the public URL (up to 15 s)
+                if not public_url:
+                    for _ in range(30):
+                        _time.sleep(0.5)
+                        public_url = _ngrok_url_for_port(7777)
+                        if public_url:
+                            break
 
                 if public_url:
                     # Wait until session_server.py is actually listening on 7777
@@ -907,7 +1009,8 @@ class Handler(BaseHTTPRequestHandler):
                         try: _p.terminate()
                         except Exception: pass
                     _invite_state["procs"] = []
-                    self._json({"ok": False, "error": "ngrok לא זמין — הרץ: brew install ngrok && ngrok config add-authtoken TOKEN"}, 503)
+                    ng_exit = ng_proc.poll() if ng_proc else "not started"
+                    self._json({"ok": False, "error": f"ngrok לא זמין (exit={ng_exit}) — הרץ: brew install ngrok && ngrok config add-authtoken TOKEN"}, 503)
             except Exception as exc:
                 self._json({"ok": False, "error": str(exc)}, 500)
             return
@@ -918,6 +1021,14 @@ class Handler(BaseHTTPRequestHandler):
                 _invite_state["cookies"] = payload
                 n = len((payload.get("storage_state") or {}).get("cookies", []))
                 print(f"[invite] received {n} cookies from client")
+                # Persist to the profile that started the invite (if any)
+                invited_pid = _invite_state.get("profile_id")
+                if invited_pid:
+                    profiles = _load_profiles()
+                    prof = next((p for p in profiles if p["id"] == invited_pid), None)
+                    if prof:
+                        _save_profile_cookies(prof["slug"], payload)
+                        print(f"[invite] saved {n} cookies to profile {prof['name']}")
                 self._json({"ok": True, "cookies": n})
             except Exception as exc:
                 self._json({"ok": False, "error": str(exc)}, 500)
@@ -928,6 +1039,7 @@ class Handler(BaseHTTPRequestHandler):
                 "waiting": len(_invite_state.get("procs", [])) > 0,
                 "received": _invite_state.get("cookies") is not None,
                 "cookies": _invite_state.get("cookies"),
+                "profile_id": _invite_state.get("profile_id"),
             })
             return
 
@@ -938,6 +1050,38 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception: pass
             _invite_state["procs"] = []
             self._json({"ok": True})
+            return
+
+        elif path == "/api/profiles/update":
+            # Update mutable profile fields: type, cookie_fallback, name
+            try:
+                pid = (payload.get("id") or "").strip()
+                profiles = _load_profiles()
+                prof = next((p for p in profiles if p["id"] == pid), None)
+                if not prof:
+                    self._json({"ok": False, "error": "פרופיל לא נמצא"}, 404); return
+                for k in ("name", "type", "cookie_fallback"):
+                    if k in payload:
+                        prof[k] = payload[k]
+                _save_profiles(profiles)
+                self._json({"ok": True, "profile": prof})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
+
+        elif path == "/api/profiles/clear_cookies":
+            try:
+                pid = (payload.get("id") or "").strip()
+                profiles = _load_profiles()
+                prof = next((p for p in profiles if p["id"] == pid), None)
+                if not prof:
+                    self._json({"ok": False, "error": "פרופיל לא נמצא"}, 404); return
+                p = _profile_cookies_path(prof["slug"])
+                if os.path.exists(p):
+                    os.remove(p)
+                self._json({"ok": True})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
             return
 
         elif path == "/api/profiles/delete":

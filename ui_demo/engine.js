@@ -2053,10 +2053,8 @@ function _updateProfileBanner(profile){
 async function openProfileManager(){
   if($('profile-mgr')) { $('profile-mgr').remove(); return; }
 
-  // Load current profiles
   let data = {profiles:[], active:null};
   try{ data = await fetch('/api/profiles').then(r=>r.json()); }catch{}
-
   _updateProfileBanner(data.active);
 
   const box = document.createElement('div');
@@ -2066,93 +2064,138 @@ async function openProfileManager(){
   box.style.cssText = `position:fixed;top:60px;left:50%;transform:translateX(-50%);
     z-index:200;background:${_isDark?'#1e2130':'#ffffff'};
     border:1.5px solid rgba(99,102,241,.4);
-    border-radius:16px;padding:20px 24px;width:420px;max-width:96vw;
-    box-shadow:0 20px 60px rgba(0,0,0,.45);direction:rtl;font-size:13px;
+    border-radius:16px;padding:20px 24px;width:460px;max-width:96vw;max-height:88vh;
+    overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.45);direction:rtl;font-size:13px;
     color:${_isDark?'#e2e8f0':'#1a1a2e'}`;
+
+  // ── cookie status badge helper ──────────────────────────────────────────
+  function _ckBadge(cs){
+    if(!cs) return '';
+    if(cs.valid)
+      return `<span style="font-size:10px;padding:2px 7px;border-radius:12px;font-weight:700;
+        background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.4);color:#4ade80">
+        ✓ עוגיות תקפות</span>`;
+    if(cs.has_cookies)
+      return `<span style="font-size:10px;padding:2px 7px;border-radius:12px;font-weight:700;
+        background:rgba(245,158,11,.18);border:1px solid rgba(245,158,11,.4);color:#fbbf24">
+        ⚠ עוגיות פגו</span>`;
+    return `<span style="font-size:10px;padding:2px 7px;border-radius:12px;font-weight:700;
+      background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:#f87171">
+      ✕ אין עוגיות</span>`;
+  }
+
+  function _ckDetails(cs){
+    if(!cs || !cs.has_cookies) return '';
+    const ago = cs.age_hours != null
+      ? (cs.age_hours < 1 ? `לפני ${Math.round(cs.age_hours*60)} דק׳`
+         : cs.age_hours < 24 ? `לפני ${cs.age_hours.toFixed(1)} שע׳`
+         : `לפני ${(cs.age_hours/24).toFixed(1)} ימים`)
+      : '';
+    return `<div style="font-size:10.5px;opacity:.6;margin-top:3px">${cs.count} עוגיות · ${ago}</div>`;
+  }
 
   const _render = (profiles, active) => {
     const activeId = active?.id;
+
     const rows = profiles.length
-      ? profiles.map(p => `
-        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;
-          border-radius:10px;background:${p.id===activeId?'rgba(99,102,241,.18)':'rgba(255,255,255,.04)'};
-          border:1px solid ${p.id===activeId?'rgba(99,102,241,.5)':'rgba(255,255,255,.1)'}">
-          <span style="font-size:20px">👤</span>
-          <div style="flex:1;min-width:0">
-            <div style="font-weight:700">${p.name}</div>
-            <div style="font-size:11px;opacity:.6">${p.slug}</div>
-          </div>
-          ${p.id===activeId
-            ? `<span style="font-size:11px;color:rgba(99,102,241,1);font-weight:700">● פעיל</span>
-               <button onclick="_deactivateAndRefreshMgr()" style="font-size:12px;padding:3px 10px;
-                 border-radius:8px;cursor:pointer;background:rgba(99,102,241,.22);
-                 border:1px solid rgba(99,102,241,.5);color:inherit">חזור</button>`
-            : `<button onclick="_activateProfile('${p.id}')"
-                 style="font-size:12px;padding:3px 10px;border-radius:8px;cursor:pointer;
-                 background:rgba(99,102,241,.14);border:1px solid rgba(99,102,241,.35);color:inherit">
-                 הפעל ▶</button>
-               <button onclick="_deleteProfile('${p.id}','${p.name}')"
-                 style="font-size:12px;padding:3px 8px;border-radius:8px;cursor:pointer;
-                 background:rgba(220,38,38,.12);border:1px solid rgba(220,38,38,.3);color:inherit">✕</button>`}
-        </div>
-        ${p.id===activeId ? `
-        <div style="margin-top:8px;padding:10px 12px;border-radius:10px;
-          background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2)">
-          <div style="font-size:12px;font-weight:700;margin-bottom:10px">🍪 עוגיות פרופיל</div>
-
-          <!-- Step 1: connect to NET -->
-          <div style="font-size:11px;opacity:.7;margin-bottom:6px;line-height:1.5">
-            <b>שלב 1</b> — כנס לנט המשפט עם פרטי הלקוח (עוגיות אחידות לכל הפורטלים)
-          </div>
-          <button onclick="_profileOpenNet()"
-            style="width:100%;padding:7px;border-radius:8px;font-size:12.5px;font-weight:700;
-            cursor:pointer;background:rgba(59,130,246,.2);border:1px solid rgba(59,130,246,.4);
-            color:inherit;margin-bottom:10px">
-            🌐 פתח נט המשפט לכניסה
-          </button>
-
-          <!-- Step 2: export -->
-          <div style="font-size:11px;opacity:.7;margin-bottom:6px;line-height:1.5">
-            <b>שלב 2</b> — לאחר כניסה מוצלחת, ייצא את העוגיות כ-JSON ושלח ללקוח
-          </div>
-          <button onclick="_exportProfileCookies('NET')"
-            style="width:100%;padding:7px;border-radius:8px;font-size:12.5px;font-weight:700;
-            cursor:pointer;background:rgba(99,102,241,.2);border:1px solid rgba(99,102,241,.4);
-            color:inherit;margin-bottom:12px">
-            ⬆ ייצא עוגיות → JSON להורדה
-          </button>
-
-          <div style="border-top:1px solid rgba(255,255,255,.1);padding-top:10px">
-            <div style="font-size:11px;opacity:.7;margin-bottom:6px">
-              <b>ייבוא</b> — קיבלת JSON מהלקוח (דרך session_server.py)?
+      ? profiles.map(p => {
+          const isActive = p.id === activeId;
+          const cs = p.cookie_status || {};
+          const fallback = p.cookie_fallback || 'none';
+          return `
+        <div style="border-radius:12px;overflow:hidden;border:1px solid ${isActive?'rgba(99,102,241,.5)':'rgba(255,255,255,.1)'};
+          background:${isActive?'rgba(99,102,241,.08)':'rgba(255,255,255,.03)'}">
+          <!-- profile header row -->
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 12px">
+            <span style="font-size:18px">👤</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:700;display:flex;align-items:center;gap:6px">
+                ${p.name}
+                ${isActive?'<span style="font-size:10px;color:rgba(99,102,241,1);font-weight:700">● פעיל</span>':''}
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;margin-top:2px">
+                ${_ckBadge(cs)}
+              </div>
+              ${_ckDetails(cs)}
             </div>
-            <div style="display:flex;gap:8px;align-items:center">
-              <input type="file" id="profile-cookie-file" accept=".json"
-                onchange="_onProfileCookieChosen(this)"
-                style="font-size:11.5px;flex:1;min-width:0;cursor:pointer">
-              <button onclick="_importProfileCookies()"
-                style="padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;
-                white-space:nowrap;background:rgba(34,197,94,.2);border:1px solid rgba(34,197,94,.4);
-                color:inherit">ייבא ⬇</button>
+            ${isActive
+              ? `<button onclick="_deactivateAndRefreshMgr()" style="font-size:11.5px;padding:4px 10px;
+                   border-radius:8px;cursor:pointer;background:rgba(99,102,241,.22);
+                   border:1px solid rgba(99,102,241,.5);color:inherit;white-space:nowrap">↩ חזור</button>`
+              : `<button onclick="_activateProfile('${p.id}')"
+                   style="font-size:11.5px;padding:4px 10px;border-radius:8px;cursor:pointer;
+                   background:rgba(99,102,241,.14);border:1px solid rgba(99,102,241,.35);color:inherit;white-space:nowrap">
+                   הפעל ▶</button>
+                 <button onclick="_deleteProfile('${p.id}','${p.name}')"
+                   style="font-size:12px;padding:4px 8px;border-radius:8px;cursor:pointer;
+                   background:rgba(220,38,38,.1);border:1px solid rgba(220,38,38,.25);color:inherit">✕</button>`}
+          </div>
+
+          <!-- guest cookie panel — always visible for guest profiles -->
+          <div style="border-top:1px solid rgba(255,255,255,.08);padding:10px 12px;
+            background:rgba(0,0,0,.12)">
+
+            <!-- Invite row -->
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <button onclick="_inviteCookiesForProfile('${p.id}')" id="invite-btn-${p.id}"
+                style="flex:1;padding:6px 10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;
+                background:rgba(245,158,11,.2);border:1px solid rgba(245,158,11,.4);color:inherit">
+                🔗 הזמן כניסה מהלקוח
+              </button>
+              ${cs.has_cookies
+                ? `<button onclick="_clearProfileCookies('${p.id}')"
+                     style="padding:6px 9px;border-radius:8px;font-size:11px;cursor:pointer;
+                     background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.28);color:inherit;opacity:.8"
+                     title="נקה עוגיות">🗑</button>` : ''}
+            </div>
+
+            <!-- Invite URL row (hidden until invite started for this profile) -->
+            <div id="invite-row-${p.id}" style="display:none;margin-bottom:8px">
+              <div style="font-size:10.5px;opacity:.6;margin-bottom:4px">שלח ללקוח (וואצאפ/מייל):</div>
+              <div style="display:flex;gap:6px">
+                <input id="invite-url-${p.id}" readonly style="flex:1;padding:4px 8px;border-radius:7px;
+                  border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.25);
+                  color:inherit;font-size:11px;direction:ltr">
+                <button onclick="_copyInviteUrlFor('${p.id}')" style="padding:4px 9px;border-radius:7px;
+                  background:rgba(99,102,241,.3);border:1px solid rgba(99,102,241,.5);
+                  color:inherit;font-weight:700;cursor:pointer;font-size:11px;white-space:nowrap">העתק</button>
+              </div>
+              <button onclick="_stopInvite()" style="margin-top:5px;width:100%;padding:4px;border-radius:7px;
+                font-size:11px;cursor:pointer;background:rgba(239,68,68,.12);
+                border:1px solid rgba(239,68,68,.28);color:inherit;opacity:.7">⛔ בטל קישור</button>
+            </div>
+            <div id="invite-st-${p.id}" style="font-size:11px;min-height:13px;opacity:.8;margin-bottom:6px"></div>
+
+            <!-- Fallback setting -->
+            <div style="display:flex;align-items:center;gap:8px;font-size:11px;opacity:.75">
+              <span>כשהעוגיות פגות:</span>
+              <select onchange="_updateFallback('${p.id}',this.value)"
+                style="flex:1;padding:3px 6px;border-radius:6px;font-size:11px;
+                background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.2);color:inherit">
+                <option value="none" ${fallback==='none'?'selected':''}>אל תתחבר אוטומטית</option>
+                <option value="standard" ${fallback==='standard'?'selected':''}>השתמש בפרטי הכניסה הראשיים</option>
+              </select>
             </div>
           </div>
-          <div id="profile-cookie-status" style="font-size:11px;margin-top:6px;
-            color:var(--ink-soft);min-height:14px"></div>
-        </div>` : ''}
-        `).join('')
-      : `<div style="text-align:center;opacity:.5;padding:12px">אין פרופילי לקוחות עדיין</div>`;
+        </div>`;
+        }).join('')
+      : `<div style="text-align:center;opacity:.5;padding:14px;font-size:12px">אין לקוחות עדיין — צור פרופיל למטה</div>`;
 
     box.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-        <b style="font-size:15px">👤 פרופילי לקוחות</b>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <b style="font-size:15px">👥 לקוחות</b>
         <button onclick="$('profile-mgr').remove()" style="background:none;border:none;
           font-size:18px;cursor:pointer;color:var(--ink-soft)">✕</button>
       </div>
-      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">${rows}</div>
-      <div style="border-top:1px solid rgba(255,255,255,.1);padding-top:12px">
-        <div style="font-weight:600;margin-bottom:8px;font-size:12px;opacity:.7">+ צור פרופיל חדש</div>
+
+      <!-- profiles list -->
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">${rows}</div>
+
+      <!-- create new profile -->
+      <div style="border-top:1px solid rgba(255,255,255,.12);padding-top:12px">
+        <div style="font-weight:600;margin-bottom:8px;font-size:12px;opacity:.7">+ הוסף לקוח חדש</div>
         <div style="display:flex;gap:8px">
-          <input id="profile-new-name" placeholder="שם הלקוח / התיק" style="flex:1;
+          <input id="profile-new-name" placeholder="שם הלקוח" style="flex:1;
             padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.2);
             background:rgba(255,255,255,.07);color:inherit;font-size:13px;direction:rtl">
           <button onclick="_createProfile()" style="padding:7px 14px;border-radius:8px;
@@ -2162,40 +2205,28 @@ async function openProfileManager(){
         <div id="profile-create-status" style="font-size:11.5px;margin-top:6px;
           color:var(--ink-soft);min-height:16px"></div>
       </div>
-      <div style="border-top:1px solid rgba(255,255,255,.1);padding-top:12px;margin-top:4px">
-        <div style="font-weight:600;margin-bottom:6px;font-size:12px;opacity:.7">📨 הזמן עוגיות מלקוח</div>
-        <div style="font-size:11px;opacity:.6;margin-bottom:8px;line-height:1.5">
-          מייצר קישור — שלח לג׳רמי. הוא פותח בדפדפן, מזין פרטים, העוגיות מגיעות אוטומטית.
-        </div>
-        <button onclick="_inviteCookies()" id="invite-cookies-btn"
-          style="width:100%;padding:7px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;
-          background:rgba(245,158,11,.2);border:1px solid rgba(245,158,11,.4);color:inherit">
-          🔗 צור קישור לכניסה
-        </button>
-        <div id="invite-url-row" style="display:none;margin-top:8px">
-          <div style="font-size:11px;opacity:.6;margin-bottom:4px">שלח את הקישור לג׳רמי (וואצאפ/מייל):</div>
-          <div style="display:flex;gap:6px;align-items:center">
-            <input id="invite-url-val" readonly style="flex:1;padding:5px 8px;border-radius:8px;
-              border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.2);
-              color:inherit;font-size:11px;direction:ltr">
-            <button onclick="_copyInviteUrl()" style="padding:5px 10px;border-radius:8px;
-              background:rgba(99,102,241,.3);border:1px solid rgba(99,102,241,.5);
-              color:inherit;font-weight:700;cursor:pointer;white-space:nowrap;font-size:12px">העתק</button>
-          </div>
-          <button onclick="_stopInvite()" style="margin-top:6px;width:100%;padding:5px;border-radius:8px;
-            font-size:11.5px;cursor:pointer;background:rgba(239,68,68,.15);
-            border:1px solid rgba(239,68,68,.3);color:inherit;opacity:.8">⛔ סגור קישור</button>
-        </div>
-        <div id="invite-status" style="font-size:11px;margin-top:5px;min-height:14px;opacity:.8"></div>
-      </div>
-      <div style="margin-top:10px;font-size:11px;opacity:.5;border-top:1px solid rgba(255,255,255,.1);padding-top:8px">
-        כל פרופיל: תיקיית הורדות נפרדת · פרופיל דפדפן נפרד (cookies) · DB נפרד<br>
-        בזמן פרופיל פעיל — הורדות המשתמש הראשי מעוצרות
+
+      <!-- owner note -->
+      <div style="margin-top:10px;font-size:10.5px;opacity:.45;border-top:1px solid rgba(255,255,255,.1);padding-top:8px;line-height:1.6">
+        כל לקוח: תיקיית הורדות · פרופיל דפדפן · DB — נפרדים.<br>
+        הגדרות כניסה של המשתמש הראשי אינן מועתקות ללקוחות אורחים.
       </div>`;
   };
 
   _render(data.profiles, data.active);
   document.body.appendChild(box);
+
+  // Resume any active invite poller if invite is for one of these profiles
+  try{
+    const s = await fetch('/api/profiles/invite_status').then(r=>r.json());
+    if(s.waiting && s.profile_id){
+      const pid = s.profile_id;
+      const row = $(`invite-row-${pid}`), inp = $(`invite-url-${pid}`);
+      if(row){ row.style.display='block'; }
+      if(inp){ inp.value = '(ממתין לכתובת…)'; }
+      _resumeInvitePoller(pid);
+    }
+  }catch{}
 
   // close on outside click
   setTimeout(()=>{
@@ -2280,55 +2311,109 @@ async function _expDownload(){
 }
 
 let _invitePoller = null;
-async function _inviteCookies(){
-  const st = $('invite-status'), btn = $('invite-cookies-btn'), row = $('invite-url-row');
+let _inviteForProfileId = null;
+
+async function _inviteCookiesForProfile(profileId){
+  const st = $(`invite-st-${profileId}`);
+  const btn = $(`invite-btn-${profileId}`);
+  const row = $(`invite-row-${profileId}`);
   if(st) st.textContent = 'פותח ngrok…';
   if(btn) btn.disabled = true;
+  _inviteForProfileId = profileId;
   try{
     const r = await fetch('/api/profiles/invite_cookies',{method:'POST',
-      headers:{'Content-Type':'application/json'}, body:'{}'});
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({profile_id: profileId})});
     const d = await r.json();
     if(!d.ok) throw new Error(d.error || r.status);
-    // Show the command to send to Jeremy
-    const inp = $('invite-url-val');
+    const inp = $(`invite-url-${profileId}`);
     if(inp) inp.value = d.url;
     if(row) row.style.display = 'block';
-    if(st) st.textContent = '⏳ ממתין לעוגיות מג׳רמי…';
-    // Poll for received cookies
-    clearInterval(_invitePoller);
-    _invitePoller = setInterval(async ()=>{
-      try{
-        const s = await fetch('/api/profiles/invite_status').then(r=>r.json());
-        if(s.received){
-          clearInterval(_invitePoller); _invitePoller = null;
-          if(st) st.textContent = `✅ עוגיות התקבלו! (${s.cookies?.storage_state?.cookies?.length||'?'} עוגיות) — כעת ייבא לפרופיל`;
-          // Store in global so import button can use them
-          _profileCookieData = s.cookies;
-          // Auto-stop ngrok
-          fetch('/api/profiles/invite_stop',{method:'POST'}).catch(()=>{});
-        }
-      }catch{}
-    }, 3000);
+    if(st) st.textContent = '⏳ ממתין לכניסת הלקוח…';
+    _resumeInvitePoller(profileId);
   }catch(err){
     if(st) st.textContent = '✗ '+err.message;
     if(btn) btn.disabled = false;
   }
 }
 
-function _copyInviteUrl(){
-  const v = $('invite-url-val')?.value;
+function _resumeInvitePoller(profileId){
+  clearInterval(_invitePoller);
+  _invitePoller = setInterval(async ()=>{
+    try{
+      const s = await fetch('/api/profiles/invite_status').then(r=>r.json());
+      const st = $(`invite-st-${profileId}`);
+      const btn = $(`invite-btn-${profileId}`);
+      if(s.received){
+        clearInterval(_invitePoller); _invitePoller = null;
+        const n = s.cookies?.storage_state?.cookies?.length || '?';
+        if(st) st.textContent = `✅ ${n} עוגיות התקבלו — מייבא לפרופיל…`;
+        if(btn) btn.disabled = false;
+        fetch('/api/profiles/invite_stop',{method:'POST'}).catch(()=>{});
+        // Auto-import to this profile
+        const ck = s.cookies;
+        if(ck){
+          try{
+            const r2 = await fetch('/api/actions/import_session',{
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({portal:'AUTO', storage_state: ck.storage_state||{}, exported_at: ck.exported_at||0})
+            });
+            const d2 = await r2.json().catch(()=>({}));
+            if(r2.ok) {
+              if(st) st.textContent = `✅ ${n} עוגיות — ייבוא הושלם (job ${d2.job_id})`;
+              // Refresh to show updated cookie_status badge
+              setTimeout(()=>{ $('profile-mgr')?.remove(); openProfileManager(); }, 2000);
+            } else throw new Error(d2.detail||d2.error||r2.status);
+          }catch(e2){
+            if(st) st.textContent = `⚠ עוגיות התקבלו אך ייבוא נכשל: ${e2.message}`;
+          }
+        }
+      }
+    }catch{}
+  }, 3000);
+}
+
+function _copyInviteUrlFor(profileId){
+  const v = $(`invite-url-${profileId}`)?.value;
   if(!v) return;
   navigator.clipboard.writeText(v).then(()=>toast('הקישור הועתק ✓'));
+}
+
+// Legacy alias kept for any remaining inline references
+function _copyInviteUrl(){
+  if(_inviteForProfileId) _copyInviteUrlFor(_inviteForProfileId);
 }
 
 async function _stopInvite(){
   clearInterval(_invitePoller); _invitePoller = null;
   await fetch('/api/profiles/invite_stop',{method:'POST'}).catch(()=>{});
-  const row = $('invite-url-row'), st = $('invite-status'), btn = $('invite-cookies-btn');
-  if(row) row.style.display='none';
-  if(st) st.textContent='';
-  if(btn) btn.disabled=false;
+  if(_inviteForProfileId){
+    const row = $(`invite-row-${_inviteForProfileId}`);
+    const st  = $(`invite-st-${_inviteForProfileId}`);
+    const btn = $(`invite-btn-${_inviteForProfileId}`);
+    if(row) row.style.display='none';
+    if(st)  st.textContent='';
+    if(btn) btn.disabled=false;
+  }
+  _inviteForProfileId = null;
   toast('ngrok נסגר');
+}
+
+async function _clearProfileCookies(profileId){
+  if(!confirm('למחוק את העוגיות השמורות לפרופיל זה?')) return;
+  try{
+    await fetch('/api/profiles/clear_cookies',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: profileId})});
+    $('profile-mgr')?.remove(); openProfileManager();
+  }catch(e){ toast('שגיאה: '+e.message, true); }
+}
+
+async function _updateFallback(profileId, val){
+  try{
+    await fetch('/api/profiles/update',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id: profileId, cookie_fallback: val})});
+  }catch{}
 }
 
 async function _profileOpenNet(){
@@ -2423,7 +2508,7 @@ async function _createProfile(){
   try{
     const r = await fetch('/api/profiles/create',{
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({name})
+      body: JSON.stringify({name, type:'guest', cookie_fallback:'none'})
     }).then(d=>d.json());
     if(r.ok){
       if(st) st.textContent = `✓ נוצר: ${r.profile.name}`;
@@ -2437,7 +2522,7 @@ async function _createProfile(){
 
 async function _activateProfile(id){
   const st = $('profile-create-status');
-  if(st) st.textContent = 'מפעיל פרופיל (עוצר הורדות פעילות)…';
+  if(st) st.textContent = 'מפעיל פרופיל…';
   try{
     const r = await fetch('/api/profiles/activate',{
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -2445,7 +2530,8 @@ async function _activateProfile(id){
     }).then(d=>d.json());
     if(r.ok){
       _updateProfileBanner(r.profile);
-      if(r.paused?.length) toast(`עצרתי ${r.paused.length} הורדות — ניתן לחדש לאחר מכן`, false);
+      if(r.paused?.length) toast(`עצרתי ${r.paused.length} הורדות`, false);
+      if(r.auto_inject_job) toast('עוגיות שמורות מוזרקות אוטומטית ✓', false);
       $('profile-mgr')?.remove();
       openProfileManager();
     } else {
