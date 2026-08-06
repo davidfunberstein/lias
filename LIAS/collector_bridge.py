@@ -1880,6 +1880,18 @@ def import_session(payload: dict, ctx: JobContext) -> str:
     # AUTO = my.gov.il SSO cookies — inject into all available portal browsers
     # so each portal can silently complete SSO using the client's credentials.
     if portal == "AUTO":
+        # Normalize cookie domains: bare "gov.il" → ".gov.il" so Playwright
+        # sends them to my.gov.il, login.gov.il etc. (subdomain matching).
+        # Also strip any ngrok-domain cookies that are irrelevant.
+        def _fix_domain(c: dict) -> dict | None:
+            d = c.get("domain", "")
+            if "ngrok" in d or "localhost" in d:
+                return None  # skip proxy-specific cookies
+            if d and not d.startswith(".") and d.endswith("gov.il"):
+                c = dict(c); c["domain"] = "." + d
+            return c
+        cookies = [fc for c in cookies if (fc := _fix_domain(dict(c))) is not None]
+
         _portal_map = [
             ("NET", ctx.browser,
              "https://www.court.gov.il/ngcs.web.site/homepage.aspx"),
