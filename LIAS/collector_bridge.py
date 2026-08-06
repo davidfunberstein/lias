@@ -1893,34 +1893,33 @@ def import_session(payload: dict, ctx: JobContext) -> str:
         cookies = [fc for c in cookies if (fc := _fix_domain(dict(c))) is not None]
 
         _portal_map = [
-            ("NET", ctx.browser,
-             "https://www.court.gov.il/ngcs.web.site/homepage.aspx"),
-            ("BDR", getattr(ctx, "bdr_browser", None),
-             "https://sides.rbc.gov.il/Pages/FilesList.aspx"),
-            ("ECA", getattr(ctx, "eca_browser", None),
-             "https://publicsso.eca.gov.il/he/home/OpenCase"),
+            ("NET", ctx.browser),
+            ("BDR", getattr(ctx, "bdr_browser", None)),
+            ("ECA", getattr(ctx, "eca_browser", None)),
         ]
         injected = []
-        for pname, pbrowser, purl in _portal_map:
+        _saved = ctx.browser
+        for pname, pbrowser in _portal_map:
             if pbrowser is None:
                 continue
+            ctx.progress(0.2 + 0.25 * len(injected), f"מזריק ל-{pname}…")
+            # Use BrowserManager.run() so cookies are added on the browser thread
+            def _inject(page, _ck=cookies):
+                page.context.add_cookies(_ck)
+                return True
+            ctx.browser = pbrowser
             try:
-                pages = pbrowser.pages
-                page = pages[0] if pages else pbrowser.new_page()
-                page.context.add_cookies(cookies)
-                page.goto(url or purl, wait_until="domcontentloaded", timeout=30000)
-                try: pbrowser.show()
-                except Exception: pass
+                _run_portal(ctx, "inject_sso_cookies", _inject, timeout=30)
                 injected.append(pname)
-                ctx.progress(0.5, f"✓ {pname} — SSO הושלם")
             except Exception as e:
                 ctx.progress(0.5, f"⚠ {pname}: {e}")
+        ctx.browser = _saved
         if not injected:
             raise RuntimeError("אין דפדפן פעיל — הפעל את המנוע קודם")
         ctx.progress(1.0, f"עוגיות gov.il הוזרקו ל: {', '.join(injected)}")
         jobs.broadcast({"type": "session_imported", "portal": "AUTO",
                         "portals": injected})
-        return f"סשן gov.il יובא — {len(cookies)} עוגיות · פורטלים: {', '.join(injected)}"
+        return f"סשן gov.il יובא — {len(cookies)} עוגיות · {', '.join(injected)}"
 
     target = (ctx.bdr_browser or ctx.browser) if portal == "BDR" \
              else (ctx.eca_browser or ctx.browser) if portal == "ECA" \
