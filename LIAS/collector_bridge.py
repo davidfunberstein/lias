@@ -1883,14 +1883,25 @@ def import_session(payload: dict, ctx: JobContext) -> str:
         # Normalize cookie domains: bare "gov.il" → ".gov.il" so Playwright
         # sends them to my.gov.il, login.gov.il etc. (subdomain matching).
         # Also strip any ngrok-domain cookies that are irrelevant.
-        def _fix_domain(c: dict) -> dict | None:
+        _SAMESITE_MAP = {"strict": "Strict", "lax": "Lax", "none": "None",
+                         "Strict": "Strict", "Lax": "Lax", "None": "None"}
+
+        def _fix_cookie(c: dict) -> dict | None:
             d = c.get("domain", "")
             if "ngrok" in d or "localhost" in d:
                 return None  # skip proxy-specific cookies
+            c = dict(c)
+            # Bare gov.il → .gov.il so Playwright sends to all subdomains
             if d and not d.startswith(".") and d.endswith("gov.il"):
-                c = dict(c); c["domain"] = "." + d
+                c["domain"] = "." + d
+            # Normalize sameSite case (Playwright requires Strict/Lax/None)
+            ss = c.get("sameSite", "Lax")
+            c["sameSite"] = _SAMESITE_MAP.get(ss, "Lax")
+            # Skip empty-name cookies (artifact of malformed Set-Cookie headers)
+            if not c.get("name", "").strip():
+                return None
             return c
-        cookies = [fc for c in cookies if (fc := _fix_domain(dict(c))) is not None]
+        cookies = [fc for c in cookies if (fc := _fix_cookie(dict(c))) is not None]
 
         _portal_map = [
             ("NET", ctx.browser),
@@ -1912,10 +1923,11 @@ def import_session(payload: dict, ctx: JobContext) -> str:
                 _run_portal(ctx, "inject_sso_cookies", _inject, timeout=30)
                 injected.append(pname)
             except Exception as e:
-                ctx.progress(0.5, f"⚠ {pname}: {e}")
+                ctx.progress(0.5, f"⚠ {pname} דולג: {e}")
         ctx.browser = _saved
         if not injected:
             raise RuntimeError("אין דפדפן פעיל — הפעל את המנוע קודם")
+        # Always succeed even if only NET was injected (BDR/ECA start lazily)
         ctx.progress(1.0, f"עוגיות gov.il הוזרקו ל: {', '.join(injected)}")
         jobs.broadcast({"type": "session_imported", "portal": "AUTO",
                         "portals": injected})
