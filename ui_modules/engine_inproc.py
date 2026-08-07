@@ -260,23 +260,15 @@ def switch_profile(profile: dict | None, project_root: str) -> None:
             from LIAS.run import _restore
             from LIAS import jobs
 
-            _headless = True
-            try:
-                import json as _json3
-                _sd = config.PROJECT_ROOT / "session_defaults.json"
-                if _sd.exists():
-                    _cfg = _json3.loads(_sd.read_text(encoding="utf-8"))
-                    if _cfg.get("browser_visible") is True:
-                        _headless = False
-            except Exception:
-                pass
-
-            net_mgr = BrowserManager(headless=_headless, restore=_restore,
+            # Always start headless here — cookie injection doesn't need
+            # a visible window.  The show/hide toggle flips visibility later
+            # when the user actually runs a sync.
+            net_mgr = BrowserManager(headless=True, restore=_restore,
                                      profile_dir=config.BROWSER_PROFILE_DIR)
-            bdr_mgr = BrowserManager(headless=_headless, restore=_restore,
+            bdr_mgr = BrowserManager(headless=True, restore=_restore,
                                      profile_dir=config.BROWSER_PROFILE_BDR_DIR,
                                      log=lambda m: print(f"[BDR] {m}"))
-            eca_mgr = BrowserManager(headless=_headless, restore=_restore,
+            eca_mgr = BrowserManager(headless=True, restore=_restore,
                                      profile_dir=config.BROWSER_PROFILE_ECA_DIR,
                                      log=lambda m: print(f"[ECA] {m}"))
 
