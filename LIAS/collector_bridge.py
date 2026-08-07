@@ -1909,22 +1909,21 @@ def import_session(payload: dict, ctx: JobContext) -> str:
             ("ECA", getattr(ctx, "eca_browser", None)),
         ]
         injected = []
-        _saved = ctx.browser
         for pname, pbrowser in _portal_map:
             if pbrowser is None:
                 continue
             ctx.progress(0.2 + 0.25 * len(injected), f"מזריק ל-{pname}…")
-            # Use BrowserManager.run() so cookies are added on the browser thread
+            # Call browser.run() directly — NOT _run_portal — because cookie
+            # injection is a local Playwright call that doesn't need portal
+            # locks, retry ladders, or the auto-show-browser logic.
             def _inject(page, _ck=cookies):
                 page.context.add_cookies(_ck)
                 return True
-            ctx.browser = pbrowser
             try:
-                _run_portal(ctx, "inject_sso_cookies", _inject, timeout=30)
+                pbrowser.run("inject_sso_cookies", _inject, timeout=30)
                 injected.append(pname)
             except Exception as e:
                 ctx.progress(0.5, f"⚠ {pname} דולג: {e}")
-        ctx.browser = _saved
         if not injected:
             raise RuntimeError("אין דפדפן פעיל — הפעל את המנוע קודם")
         # Always succeed even if only NET was injected (BDR/ECA start lazily)
