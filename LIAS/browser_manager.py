@@ -103,6 +103,13 @@ class BrowserManager:
     def start(self) -> None:
         if self._thread.is_alive():
             return
+        # Thread objects can only be started once; recreate if the old one died
+        if self._thread.ident is not None:
+            self._thread = threading.Thread(
+                target=self._browser_loop, name="lias-browser", daemon=True)
+        if self._watchdog.ident is not None:
+            self._watchdog = threading.Thread(
+                target=self._watchdog_loop, name="lias-watchdog", daemon=True)
         self._thread.start()
         self._watchdog.start()
 

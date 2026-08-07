@@ -100,8 +100,13 @@ _PROXY_DOMAINS = {
     "eform.gov.il",
 }
 
-# httpx transport — no shared cookie jar (cookies come only from the browser)
-_httpx_transport = _httpx.HTTPTransport(http2=False, verify=False)
+# Shared httpx client — connection pooling avoids repeated TLS handshakes
+# (the per-request Client() approach was the main cause of slow proxy responses)
+_shared_client = _httpx.Client(
+    verify=False, follow_redirects=False, http2=False,
+    timeout=_httpx.Timeout(60.0, connect=15.0),
+    limits=_httpx.Limits(max_connections=20, max_keepalive_connections=10),
+)
 
 # Cookies that indicate ACTUAL authentication (not just session start)
 # ASP.NET_SessionId is excluded — it's created on any first visit
@@ -264,6 +269,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def _handle(self, method, req_body):
         try:
             self._handle_inner(method, req_body)
+        except BrokenPipeError:
+            pass  # client already disconnected — nothing to send
         except Exception as e:
             import traceback
             _log.error(f"unhandled: {method} {self.path}\n{traceback.format_exc()}")
@@ -317,12 +324,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         target_url = f"https://{host}{rpath}"
 
-        # Bypass static assets — redirect browser directly to origin (faster, no proxy overhead)
+        # Bypass static assets — redirect browser directly to origin (faster).
+        # Only for domains whose static resources are truly public (no session
+        # cookie needed). login.gov.il resources require JSESSIONID, so they
+        # must stay proxied — otherwise the redirect loses cookies.
         _STATIC_EXT = ('.png','.jpg','.jpeg','.gif','.svg','.ico',
-                       '.css','.woff','.woff2','.ttf','.eot',
-                       '.js','.map','.webp','.avif')
+                       '.woff','.woff2','.ttf','.eot',
+                       '.map','.webp','.avif')
+        _BYPASS_HOSTS = {'static.gov.il', 'cdn.gov.il', 'www.gstatic.com'}
         _rpath_lower = rpath.split('?')[0].lower()
-        if method == 'GET' and any(_rpath_lower.endswith(e) for e in _STATIC_EXT):
+        if (method == 'GET' and host in _BYPASS_HOSTS
+                and any(_rpath_lower.endswith(e) for e in _STATIC_EXT)):
             self.send_response(302)
             self.send_header('Location', target_url)
             self.send_header('ngrok-skip-browser-warning', '1')
@@ -345,14 +357,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
         fwd['Host'] = host
 
         try:
-            with _httpx.Client(transport=_httpx_transport,
-                               cookies=None, follow_redirects=False,
-                               timeout=_httpx.Timeout(60.0, connect=15.0)) as _c:
-                _resp = _c.request(
-                    method, target_url,
-                    content=req_body if req_body else None,
-                    headers=fwd,
-                )
+            _resp = _shared_client.request(
+                method, target_url,
+                content=req_body if req_body else None,
+                headers=fwd,
+            )
             status = _resp.status_code
             rh     = _resp.headers
             rbody  = _resp.content
@@ -463,7 +472,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.send_header('ngrok-skip-browser-warning', '1')
         self.end_headers()
         if method != 'HEAD':
-            self.wfile.write(rbody)
+            try:
+                self.wfile.write(rbody)
+            except BrokenPipeError:
+                pass  # client closed connection before we finished
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
