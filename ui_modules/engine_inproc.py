@@ -13,8 +13,8 @@ from __future__ import annotations
 import threading
 
 _state: dict = {"started": False, "starting": False, "client": None,
-                "browser": None, "bdr": None, "pool": None, "err": "",
-                "fatal": False}
+                "browser": None, "bdr": None, "eca": None, "pool": None,
+                "err": "", "fatal": False}
 _lock = threading.Lock()
 
 
@@ -160,7 +160,7 @@ def stop() -> bool:
             _state[key] and _state[key].shutdown()
         except Exception:
             pass
-    _state.update(client=None, browser=None, bdr=None, pool=None)
+    _state.update(client=None, browser=None, bdr=None, eca=None, pool=None)
     print("[engine] in-process engine stopped")
     return True
 
@@ -242,7 +242,10 @@ def switch_profile(profile: dict | None, project_root: str) -> None:
         except Exception:
             pass
 
-    # If browser managers are live, stop them so they relaunch with new profile dirs
+    # Shut down old browser managers and create new ones with the updated
+    # profile dirs.  The WorkerPool holds its own references (self._browser
+    # etc.) so we must update those too — otherwise jobs keep using the
+    # dead/wrong-profile managers.
     if _state["started"]:
         for key in ("browser", "bdr", "eca"):
             mgr = _state.get(key)
@@ -251,4 +254,44 @@ def switch_profile(profile: dict | None, project_root: str) -> None:
                     mgr.shutdown()
                 except Exception:
                     pass
-                _state[key] = None
+
+        try:
+            from LIAS.browser_manager import BrowserManager
+            from LIAS.run import _restore
+            from LIAS import jobs
+
+            _headless = True
+            try:
+                import json as _json3
+                _sd = config.PROJECT_ROOT / "session_defaults.json"
+                if _sd.exists():
+                    _cfg = _json3.loads(_sd.read_text(encoding="utf-8"))
+                    if _cfg.get("browser_visible") is True:
+                        _headless = False
+            except Exception:
+                pass
+
+            net_mgr = BrowserManager(headless=_headless, restore=_restore,
+                                     profile_dir=config.BROWSER_PROFILE_DIR)
+            bdr_mgr = BrowserManager(headless=_headless, restore=_restore,
+                                     profile_dir=config.BROWSER_PROFILE_BDR_DIR,
+                                     log=lambda m: print(f"[BDR] {m}"))
+            eca_mgr = BrowserManager(headless=_headless, restore=_restore,
+                                     profile_dir=config.BROWSER_PROFILE_ECA_DIR,
+                                     log=lambda m: print(f"[ECA] {m}"))
+
+            _state["browser"] = net_mgr
+            _state["bdr"]     = bdr_mgr
+            _state["eca"]     = eca_mgr
+
+            pool = _state.get("pool")
+            if pool is not None:
+                pool._browser     = net_mgr
+                pool._bdr_browser = bdr_mgr
+                pool._eca_browser = eca_mgr
+
+            print(f"[engine] browser managers recreated for profile "
+                  f"{profile['name'] if profile else 'main'}")
+        except Exception as _e:
+            print(f"[engine] browser recreate failed: {_e}")
+            _state["browser"] = _state["bdr"] = _state["eca"] = None

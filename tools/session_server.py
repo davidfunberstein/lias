@@ -66,16 +66,19 @@ OUT = Path(f"session_{portal_key}.json")
 
 import logging as _logging
 _LOG_FILE = Path(f"/tmp/session_server_{PORT}.log")
+_file_handler = _logging.FileHandler(_LOG_FILE, encoding="utf-8")
+_file_handler.setLevel(_logging.DEBUG)
+_console_handler = _logging.StreamHandler(sys.stdout)
+_console_handler.setLevel(_logging.INFO)
 _logging.basicConfig(
     level=_logging.DEBUG,
     format="%(asctime)s %(levelname)s %(message)s",
-    handlers=[
-        _logging.FileHandler(_LOG_FILE, encoding="utf-8"),
-        _logging.StreamHandler(sys.stdout),
-    ],
+    handlers=[_file_handler, _console_handler],
     force=True,
 )
 _log = _logging.getLogger("proxy")
+_logging.getLogger("httpx").setLevel(_logging.WARNING)
+_logging.getLogger("httpcore").setLevel(_logging.WARNING)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROXY MODE
