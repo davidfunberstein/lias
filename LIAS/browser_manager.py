@@ -287,15 +287,11 @@ class BrowserManager:
         kwargs: dict = dict(
             user_data_dir=str(profile),
             accept_downloads=True,
-            headless=False,
-            # EN: service workers bypass Playwright route interception — the
-            #     ECA CDN workaround (and any future one) needs them off.
-            # HE: service workers עוקפים את יירוט הבקשות — חוסמים אותם כדי
-            #     שעוקף ה-CDN של הוצל"פ יעבוד.
+            headless=self._headless,
             service_workers="block",
         )
         if self._headless:
-            args.append("--headless=new")    # new headless — real fingerprint
+            args.append("--headless=new")
 
         # EN: NET's WAF resets connections from Playwright's bundled Chromium
         #     (ERR_CONNECTION_RESET). Real Google Chrome has a genuine TLS
